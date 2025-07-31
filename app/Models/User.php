@@ -18,9 +18,21 @@ class User extends Authenticatable
      * @var list<string>
      */
     protected $fillable = [
-        'name',
+        'first_name',
+        'middle_name',
+        'last_name',
+        'username',
         'email',
         'password',
+        'birthday',
+        'sex',
+        'contact_number',
+        'barangay',
+        'city',
+        'province',
+        'zip_code',
+        'profile_photo',
+        'role_id',
     ];
 
     /**
@@ -44,5 +56,88 @@ class User extends Authenticatable
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
         ];
+    }
+
+    /**
+     * Relationships
+     */
+    public function role()
+    {
+        return $this->belongsTo(Role::class);
+    }
+
+    public function userProfile()
+    {
+        return $this->hasOne(UserProfile::class);
+    }
+
+    public function userCertifications()
+    {
+        return $this->hasMany(UserCertification::class);
+    }
+
+    public function userAdditionalSports()
+    {
+        return $this->hasMany(UserAdditionalSport::class);
+    }
+
+    public function venueUsers()
+    {
+        return $this->hasMany(VenueUser::class);
+    }
+
+    public function teamMembers()
+    {
+        return $this->hasMany(TeamMember::class);
+    }
+
+    public function eventParticipants()
+    {
+        return $this->hasMany(EventParticipant::class);
+    }
+
+    public function eventCheckins()
+    {
+        return $this->hasMany(EventCheckin::class);
+    }
+
+    public function playerCredits()
+    {
+        return $this->hasMany(PlayerCredit::class);
+    }
+
+    public function playerReportsMade()
+    {
+        return $this->hasMany(PlayerReport::class, 'reported_by_user_id');
+    }
+
+    public function playerReportsReceived()
+    {
+        return $this->hasMany(PlayerReport::class, 'reported_user_id');
+    }
+
+    public function playerBans()
+    {
+        return $this->hasMany(PlayerBan::class);
+    }
+
+    public function supportTicketsSubmitted()
+    {
+        return $this->hasMany(SupportTicket::class, 'submitted_by');
+    }
+
+    public function supportTicketsAssigned()
+    {
+        return $this->hasMany(SupportTicket::class, 'assigned_to');
+    }
+
+    public function messagesSent()
+    {
+        return $this->hasMany(Message::class, 'sender_id');
+    }
+
+    public function messagesReceived()
+    {
+        return $this->hasMany(Message::class, 'receiver_id');
     }
 }
