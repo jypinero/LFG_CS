@@ -3,6 +3,7 @@
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
+use App\Http\Controllers\EventController;
 
 /*
 |--------------------------------------------------------------------------
@@ -27,7 +28,7 @@ Route::get('/roles', [AuthController::class, 'getRoles']);
 // Protected routes
 Route::middleware('auth:api')->group(function () {
 
-    
+
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
@@ -38,6 +39,7 @@ Route::middleware('auth:api')->group(function () {
         Route::post('/photo', [AuthController::class, 'updateProfilePhoto']);
     });
 
+    Route::post('/event', [EventController::class, 'store']);
 
 
 }); 

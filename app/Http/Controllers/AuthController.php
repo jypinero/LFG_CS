@@ -173,7 +173,7 @@ class AuthController extends Controller
                 'token' => $token,
                 'type' => 'bearer',
             ],
-            'user' => $user->load('role', 'userProfile')
+            'user' => $user->load('role', 'userProfile', 'userAdditionalSports.sport')
         ]);
     }
 

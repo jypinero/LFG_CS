@@ -10,7 +10,7 @@ class Event extends Model
     use HasFactory;
 
     protected $fillable = [
-        'name', 'description', 'event_type', 'venue_id', 'scheduled_at', 'created_by'
+        'name', 'description', 'event_type', 'venue_id', 'start_at', 'end_at', 'created_by'
     ];
 
     public function venue()

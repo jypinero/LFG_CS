@@ -15,9 +15,10 @@ return new class extends Migration
             $table->id();
             $table->string('name');
             $table->text('description')->nullable();
-            $table->enum('event_type', ['free_for_all', 'team_vs_team', 'tournament', 'multisport']);
+            $table->string('event_type', 30); 
             $table->foreignId('venue_id')->constrained();
-            $table->timestamp('scheduled_at');
+            $table->timestamp('start_at');
+            $table->timestamp('end_at');
             $table->foreignId('created_by')->constrained('users');
             //boolean friendly game -> no need verification
             $table->timestamps();
