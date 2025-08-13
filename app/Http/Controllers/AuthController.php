@@ -9,6 +9,8 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use App\Models\User;
 use App\Models\Role;
+use App\Models\UserProfile;
+use App\Models\UserAdditionalSport;
 
 class AuthController extends Controller
 {
@@ -46,6 +48,9 @@ class AuthController extends Controller
             'zip_code' => 'required|string|max:255',
             'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'role_id' => 'required|exists:roles,id',
+            'sports' => 'required|array|min:1',
+            'sports.*.id' => 'required|exists:sports,id',
+            'sports.*.level' => 'required|in:beginner,competitive,professional',
         ]);
 
         if ($validator->fails()) {
@@ -79,16 +84,39 @@ class AuthController extends Controller
                 'city' => $request->city,
                 'province' => $request->province,
                 'zip_code' => $request->zip_code,
-                'profile_photo' => $profilePhotoPath,
                 'role_id' => $request->role_id,
+                'profile_photo' => $profilePhotoPath,
             ]);
+
+            $sports = $request->sports;
+            $mainSport = $sports[0];
+
+            // Create user profile with main sport
+            $userProfile = UserProfile::create([
+                'user_id' => $user->id,
+                'main_sport_id' => $mainSport['id'],
+                'main_sport_level' => $mainSport['level'],
+                // Add other profile fields if needed
+            ]);
+
+            // Save additional sports (if any)
+            if (count($sports) > 1) {
+                $additionalSports = array_slice($sports, 1);
+                foreach ($additionalSports as $sport) {
+                    UserAdditionalSport::create([
+                        'user_id' => $user->id,
+                        'sport_id' => $sport['id'],
+                        'level' => $sport['level'],
+                    ]);
+                }
+            }
 
             $token = Auth::guard('api')->login($user);
 
             return response()->json([
                 'status' => 'success',
                 'message' => 'User registered successfully',
-                'user' => $user->load('role'),
+                'user' => $user->load('userProfile', 'userProfile.mainSport', 'userAdditionalSports.sport'),
                 'authorization' => [
                     'token' => $token,
                     'type' => 'bearer',
@@ -160,7 +188,7 @@ class AuthController extends Controller
         
         return response()->json([
             'status' => 'success',
-            'user' => $user->load('role', 'userProfile', 'userCertifications', 'userAdditionalSports')
+            'user' => $user->load('role', 'userProfile', 'userCertifications', 'userAdditionalSports.sport')
         ]);
     }
 
@@ -262,4 +290,4 @@ class AuthController extends Controller
             ], 500);
         }
     }
-} 
+}

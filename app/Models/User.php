@@ -92,8 +92,6 @@ class User extends Authenticatable implements JWTSubject
         return [];
     }
 
-
-
     /**
      * Relationships
      */
@@ -175,5 +173,15 @@ class User extends Authenticatable implements JWTSubject
     public function messagesReceived()
     {
         return $this->hasMany(Message::class, 'receiver_id');
+    }
+
+    // public function sports()
+    // {
+    //     return $this->belongsToMany(Sport::class, 'sports');
+    // }
+
+    public function mainSport()
+    {
+        return $this->belongsTo(Sport::class, 'main_sport_id');
     }
 }
