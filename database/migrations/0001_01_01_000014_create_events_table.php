@@ -19,6 +19,7 @@ return new class extends Migration
             $table->foreignId('venue_id')->constrained();
             $table->timestamp('scheduled_at');
             $table->foreignId('created_by')->constrained('users');
+            //boolean friendly game -> no need verification
             $table->timestamps();
         });
     }

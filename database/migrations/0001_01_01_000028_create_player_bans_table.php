@@ -23,6 +23,10 @@ return new class extends Migration
             $table->timestamps();
         });
     }
+    
+    // automated star warnings, <=  3 warning for suspension 
+    // < 0, suspension
+    // allow support agent to add suspensions/bans
 
     /**
      * Reverse the migrations.

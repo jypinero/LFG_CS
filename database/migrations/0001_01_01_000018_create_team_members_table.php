@@ -18,6 +18,7 @@ return new class extends Migration
             $table->enum('role', ['captain', 'member']);
             $table->timestamp('joined_at')->useCurrent();
             $table->timestamps();
+            //role in team eg: spiker, small forward etc. consideration
             
             $table->unique(['team_id', 'user_id']);
         });

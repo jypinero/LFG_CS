@@ -15,6 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('venue_id')->constrained();
             $table->foreignId('user_id')->constrained();
+            //relate event id & sport
             $table->timestamp('start_time');
             $table->timestamp('end_time');
             $table->text('purpose');

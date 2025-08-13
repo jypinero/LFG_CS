@@ -17,7 +17,7 @@ return new class extends Migration
             $table->foreignId('team_id')->constrained()->onDelete('cascade');
             $table->string('group')->nullable();
             $table->timestamps();
-            
+            // explain how it works w team matchups
             $table->unique(['event_id', 'team_id']);
         });
     }

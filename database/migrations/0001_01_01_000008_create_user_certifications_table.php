@@ -19,7 +19,7 @@ return new class extends Migration
             $table->string('issued_by'); // UAAP, PSC, PBA
             $table->date('issue_date');
             $table->date('expires_at')->nullable();
-            $table->string('cert_file')->nullable(); // file path
+            $table->string('cert_file'); // file path
             $table->enum('status', ['pending', 'approved', 'rejected'])->default('pending');
             $table->foreignId('verified_by')->nullable()->constrained('users');
             $table->timestamp('verified_at')->nullable();
