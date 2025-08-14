@@ -4,6 +4,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EventController;
+use App\Http\Controllers\VenueController;
 
 /*
 |--------------------------------------------------------------------------
@@ -28,18 +29,23 @@ Route::get('/roles', [AuthController::class, 'getRoles']);
 // Protected routes
 Route::middleware('auth:api')->group(function () {
 
-
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
-    
+
     // User profile routes
     Route::prefix('profile')->group(function () {
         Route::get('/', [AuthController::class, 'me']);
         Route::post('/photo', [AuthController::class, 'updateProfilePhoto']);
     });
 
-    Route::post('/event', [EventController::class, 'store']);
+    Route::get('/events',[EventController::class, 'index']);
+    Route::post('/events/create', [EventController::class, 'store']);
+    Route::post('/events/join', [EventController::class, 'joinEvent']);
+    Route::get('/events/{id}/participants', [EventController::class , 'eventlist']);
+
+
+    Route::get('/venues', [VenueController::class, 'index']);
 
 
 }); 

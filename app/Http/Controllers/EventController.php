@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use App\Models\User;
 use App\Models\Venue;
 use App\Models\Event;
+use App\Models\EventParticipant;
 use App\Models\EventCheckin;
 use App\Models\EventScore;
 use App\Models\EventTeam;
@@ -17,7 +18,12 @@ class EventController extends Controller
      */
     public function index()
     {
-        //
+         $event = Event::all();
+
+        return response()->json([
+            'status' => 'success',
+            'events' => $event
+        ]);
     }
 
     /**
@@ -27,6 +33,81 @@ class EventController extends Controller
     {
         
     }
+
+    public function eventlist($event_id){
+        $event = Event::find($event_id);
+
+        if (!$event){
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found'
+            ], 404);
+        }
+
+        $participant = EventParticipant::where('event_id', $event_id)->with('user')->get();
+
+        return response()->json([
+            'status' => 'success',
+            'event' => $event,
+            'participant' => $participant
+        ]);
+    }
+
+    public function joinEvent(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        if ($event->created_by == $userId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You cannot join your own event.'
+            ], 403);
+        }
+
+        $alreadyJoined = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->exists();
+
+        if ($alreadyJoined) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have already joined this event.'
+            ], 409);
+        }
+
+        $participant = EventParticipant::create([
+            'event_id' => $event->id,
+            'user_id' => $userId,
+            'status' => 'confirmed',
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Successfully joined the event.',
+            'participant' => $participant
+        ], 201);
+    }
+
 
     /**
      * Store a newly created resource in storage.
@@ -50,6 +131,8 @@ class EventController extends Controller
             ], 422);
         }
 
+        $userId = auth()->user()->id;
+
         $event = Event::create([
             'name' => $request->name,
             'description' => $request->description,
@@ -57,13 +140,21 @@ class EventController extends Controller
             'venue_id' => $request->venue_id,
             'start_at' => $request->start_at,
             'end_at' => $request->end_at,
-            'created_by' => auth()->user()->id,
+            'created_by' => $userId,
+        ]);
+
+        // Automatically add creator as participant
+        $participant = EventParticipant::create([
+            'event_id' => $event->id,
+            'user_id' => $userId,
+            'status' => 'confirmed',
         ]);
 
         return response()->json([
             'status' => 'success',
             'message' => 'Event created successfully',
-            'event' => $event
+            'event' => $event,
+            'creator_participant' => $participant
         ], 201);
     }
 
