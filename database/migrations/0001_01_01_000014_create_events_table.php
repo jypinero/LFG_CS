@@ -18,7 +18,7 @@ return new class extends Migration
             $table->string('event_type', 30); 
             $table->foreignId('venue_id')->constrained();
             $table->timestamp('start_at');
-            $table->timestamp('end_at');
+            $table->timestamp('end_at')->nullable();
             $table->foreignId('created_by')->constrained('users');
             //boolean friendly game -> no need verification
             $table->timestamps();
@@ -32,4 +32,4 @@ return new class extends Migration
     {
         Schema::dropIfExists('events');
     }
-}; 
+};

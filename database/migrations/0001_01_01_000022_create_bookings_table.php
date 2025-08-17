@@ -17,7 +17,7 @@ return new class extends Migration
             $table->foreignId('user_id')->constrained();
             //relate event id & sport
             $table->timestamp('start_time');
-            $table->timestamp('end_time');
+            $table->timestamp('end_time')->nullable();
             $table->text('purpose');
             $table->enum('status', ['pending', 'approved', 'denied'])->default('pending');
             $table->timestamps();
