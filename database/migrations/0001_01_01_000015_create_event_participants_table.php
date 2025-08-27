@@ -15,6 +15,7 @@ return new class extends Migration
             $table->id();
             $table->foreignId('event_id')->constrained()->onDelete('cascade');
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
+            $table->BigInteger('team_id')->nullable();
             $table->enum('status', ['confirmed', 'checked_in'])->default('confirmed');
             $table->timestamps();
             

@@ -10,7 +10,12 @@ class Team extends Model
     use HasFactory;
 
     protected $fillable = [
-        'name', 'created_by'
+        'name',
+        'created_by',
+        'team_photo',
+        'certification',
+        'certified',
+        'team_type',
     ];
 
     public function creator()

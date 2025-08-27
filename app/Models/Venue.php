@@ -9,8 +9,16 @@ class Venue extends Model
 {
     use HasFactory;
 
-    protected $fillable = [
-        'name', 'description', 'address', 'latitude', 'longitude', 'verified_at', 'verification_expires_at', 'created_by'
+     protected $fillable = [
+        'name',
+        'description',
+        'price_per_hr',
+        'address',
+        'latitude',
+        'longitude',
+        'verified_at',
+        'verification_expires_at',
+        'created_by',
     ];
 
     public function creator()

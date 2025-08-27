@@ -16,9 +16,12 @@ return new class extends Migration
             $table->string('name');
             $table->text('description')->nullable();
             $table->string('event_type', 30); 
+            $table->string('sport');
             $table->foreignId('venue_id')->constrained();
-            $table->timestamp('start_at');
-            $table->timestamp('end_at')->nullable();
+            $table->unsignedInteger('slots');
+            $table->date('date');
+            $table->time('start_time');
+            $table->time('end_time')->nullable();
             $table->foreignId('created_by')->constrained('users');
             //boolean friendly game -> no need verification
             $table->timestamps();

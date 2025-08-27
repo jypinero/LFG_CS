@@ -119,8 +119,10 @@ class EventController extends Controller
             'description' => 'nullable|string',
             'event_type' => 'required|in:free for all,team vs team,tournament,multisport',
             'venue_id' => 'required|exists:venues,id',
-            'start_at' => 'required|date',
-            'end_at' => 'required|date',
+            'slots' => 'required|integer|min:1',
+            'date' => 'required|date',
+            'start_time' => 'required|date_format:H:i:s',
+            'end_time' => 'required|date_format:H:i:s|after:start_time',
         ]);
 
         if ($validator->fails()) {
@@ -131,22 +133,44 @@ class EventController extends Controller
             ], 422);
         }
 
-        $userId = auth()->user()->id;
+        $user = auth()->user();
+        $userProfile = $user->userProfile;
 
-        $event = Event::create([
+        if (!$userProfile) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User profile not found'
+            ], 404);
+        }
+
+        // Get main sport name from user's profile
+        $mainSport = \App\Models\Sport::find($userProfile->main_sport_id);
+        if (!$mainSport) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User main sport not found'
+            ], 404);
+        }
+
+        $start_at = $request->date . ' ' . $request->start_time;
+        $end_at = $request->date . ' ' . $request->end_time;
+
+       $event = Event::create([
             'name' => $request->name,
             'description' => $request->description,
             'event_type' => $request->event_type,
+            'sport' => $mainSport->name,
             'venue_id' => $request->venue_id,
-            'start_at' => $request->start_at,
-            'end_at' => $request->end_at,
-            'created_by' => $userId,
+            'slots' => $request->slots,
+            'date' => $request->date,
+            'start_time' => $request->start_time,
+            'end_time' => $request->end_time,
+            'created_by' => $user->id,
         ]);
 
-        // Automatically add creator as participant
         $participant = EventParticipant::create([
             'event_id' => $event->id,
-            'user_id' => $userId,
+            'user_id' => $user->id,
             'status' => 'confirmed',
         ]);
 

@@ -10,7 +10,15 @@ class Booking extends Model
     use HasFactory;
 
     protected $fillable = [
-        'venue_id', 'user_id', 'start_time', 'end_time', 'purpose', 'status'
+        'venue_id',
+        'user_id',
+        'event_id',
+        'sport',
+        'date',
+        'start_time',
+        'end_time',
+        'purpose',
+        'status',
     ];
 
     public function venue()
