@@ -93,6 +93,7 @@ class CreateMessagingTables extends Migration
         });
     }
 
+    
     /**
      * Reverse the migrations.
      */
