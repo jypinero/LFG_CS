@@ -47,13 +47,13 @@ class CreateMessagingTables extends Migration
             $table->string('location')->nullable();
             $table->string('image_url')->nullable();
             $table->text('caption');
-            $table->timestamp('created_at');
+            $table->timestamp('created_at')->useCurrent(); // FIXED
         });
 
         Schema::create('post_likes', function (Blueprint $table) {
             $table->foreignUuid('post_id')->constrained('posts');
             $table->foreignId('user_id')->constrained('users'); // FIXED
-            $table->timestamp('created_at');
+            $table->timestamp('created_at')->useCurrent(); // FIXED
             $table->primary(['post_id', 'user_id']);
         });
 
@@ -62,7 +62,7 @@ class CreateMessagingTables extends Migration
             $table->foreignUuid('post_id')->constrained('posts');
             $table->foreignId('author_id')->constrained('users'); // FIXED
             $table->text('body');
-            $table->timestamp('created_at');
+            $table->timestamp('created_at')->useCurrent(); // FIXED
         });
 
         Schema::create('notifications', function (Blueprint $table) {
@@ -70,7 +70,7 @@ class CreateMessagingTables extends Migration
             $table->string('type');
             $table->json('data');
             $table->foreignId('created_by')->nullable()->constrained('users'); // FIXED
-            $table->timestamp('created_at');
+            $table->timestamp('created_at')->useCurrent(); // FIXED
         });
 
         Schema::create('user_notifications', function (Blueprint $table) {
@@ -81,16 +81,7 @@ class CreateMessagingTables extends Migration
             $table->boolean('pinned')->default(false);
             $table->enum('action_state', ['none', 'pending', 'accepted', 'ignored', 'completed'])->default('none');
             $table->timestamp('action_taken_at')->nullable();
-            $table->timestamp('created_at');
-        });
-
-        Schema::create('notification_actions', function (Blueprint $table) {
-            $table->uuid('id')->primary();
-            $table->foreignUuid('notification_id')->constrained('notifications');
-            $table->string('key');
-            $table->string('label');
-            $table->timestamp('expires_at')->nullable();
-            $table->boolean('requires_confirmation')->default(false);
+            $table->timestamp('created_at')->useCurrent(); // FIXED
         });
 
         Schema::create('user_notification_action_events', function (Blueprint $table) {
