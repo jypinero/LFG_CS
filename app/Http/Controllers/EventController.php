@@ -108,7 +108,6 @@ class EventController extends Controller
         ], 201);
     }
 
-
     /**
      * Store a newly created resource in storage.
      */

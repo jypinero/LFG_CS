@@ -65,6 +65,8 @@ class CreateMessagingTables extends Migration
             $table->timestamp('created_at')->useCurrent(); // FIXED
         });
 
+        //inform user no actions
+
         Schema::create('notifications', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->string('type');
@@ -73,6 +75,7 @@ class CreateMessagingTables extends Migration
             $table->timestamp('created_at')->useCurrent(); // FIXED
         });
 
+        //actions that user can take on notification
         Schema::create('user_notifications', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->foreignUuid('notification_id')->constrained('notifications');
@@ -84,6 +87,7 @@ class CreateMessagingTables extends Migration
             $table->timestamp('created_at')->useCurrent(); // FIXED
         });
 
+        //possible actions on a notification
         Schema::create('user_notification_action_events', function (Blueprint $table) {
             $table->uuid('id')->primary();
             $table->foreignUuid('user_notification_id')->constrained('user_notifications');

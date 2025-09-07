@@ -1,30 +1,41 @@
 <?php
 
+
 namespace App\Models;
 
-use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 
 class Message extends Model
 {
     use HasFactory;
 
+    public $incrementing = false;
+    protected $keyType = 'string';
+
     protected $fillable = [
-        'event_id', 'sender_id', 'receiver_id', 'content', 'chat_room_id', 'sent_at'
+        'id',
+        'thread_id',
+        'sender_id',
+        'body',
+        'sent_at',
+        'edited_at',
+        'deleted_at',
     ];
 
-    public function event()
+    protected $casts = [
+        'sent_at' => 'datetime',
+        'edited_at' => 'datetime',
+        'deleted_at' => 'datetime',
+    ];
+
+    public function thread()
     {
-        return $this->belongsTo(Event::class);
+        return $this->belongsTo(MessageThread::class, 'thread_id');
     }
 
     public function sender()
     {
         return $this->belongsTo(User::class, 'sender_id');
     }
-
-    public function receiver()
-    {
-        return $this->belongsTo(User::class, 'receiver_id');
-    }
-} 
+}

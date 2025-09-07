@@ -5,6 +5,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\VenueController;
+use App\Http\Controllers\PostController;
 
 /*
 |--------------------------------------------------------------------------
@@ -44,6 +45,12 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/events/join', [EventController::class, 'joinEvent']);
     Route::get('/events/{id}/participants', [EventController::class , 'eventlist']);
 
+    Route::get('/posts', [PostController::class, 'index']);
+    Route::post('/posts/create', [PostController::class, 'createpost']);
+    Route::post('/posts/{postId}/like', [PostController::class, 'likepost']);
+    Route::get('/posts/{postId}/view_likes', [PostController::class, 'seelike']);
+    Route::post('/posts/{postId}/comment', [PostController::class, 'commentpost']);
+    Route::get('/posts/{postId}/view_comments', [PostController::class, 'seecomments']);
 
     Route::get('/venues', [VenueController::class, 'index']);
 
