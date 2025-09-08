@@ -46,11 +46,14 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/events/{id}/participants', [EventController::class , 'eventlist']);
 
     Route::get('/posts', [PostController::class, 'index']);
+    Route::delete('/posts/{postId}', [PostController::class, 'deletepost']);
     Route::post('/posts/create', [PostController::class, 'createpost']);
     Route::post('/posts/{postId}/like', [PostController::class, 'likepost']);
     Route::get('/posts/{postId}/view_likes', [PostController::class, 'seelike']);
     Route::post('/posts/{postId}/comment', [PostController::class, 'commentpost']);
     Route::get('/posts/{postId}/view_comments', [PostController::class, 'seecomments']);
+
+    
 
     Route::get('/venues', [VenueController::class, 'index']);
 

@@ -4,6 +4,10 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use App\Models\Post;
+use App\Models\PostLike;
+use App\Models\PostComment;
+use App\Models\Notification;
+use App\Models\UserNotification;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
 
@@ -91,8 +95,11 @@ class PostController extends Controller
     {
         $userId = auth()->id();
 
-        // Prevent duplicate likes
-        $alreadyLiked = \App\Models\PostLike::where('post_id', $postId)
+        // ✅ Make sure the post exists
+        $post = Post::findOrFail($postId);
+
+        // ✅ Prevent duplicate likes
+        $alreadyLiked = PostLike::where('post_id', $postId)
             ->where('user_id', $userId)
             ->exists();
 
@@ -100,14 +107,39 @@ class PostController extends Controller
             return response()->json(['message' => 'Already liked'], 409);
         }
 
-        $like = \App\Models\PostLike::create([
+        // ✅ Create like
+        $like = PostLike::create([
             'post_id' => $postId,
             'user_id' => $userId,
             'created_at' => now(),
         ]);
 
-        return response()->json(['message' => 'Post liked', 'like' => $like], 201);
+        // ✅ Notify post owner (but not if the liker is the same user)
+        if ($post->author_id != $userId) {
+            $notification = Notification::create([
+                'type' => 'post_liked',
+                'data' => [
+                    'message' => auth()->user()->username . ' liked your post.',
+                    'post_id' => $post->id,
+                    'user_id' => $userId,
+                ],
+                'created_by' => $userId,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $post->author_id, // ✅ FIX: use author_id, not user_id/created_by
+                'pinned' => false,
+                'action_state' => 'none',
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Post liked',
+            'like' => $like,
+        ], 201);
     }
+
 
     public function commentpost(Request $request, $postId)
     {
@@ -115,15 +147,41 @@ class PostController extends Controller
             'body' => 'required|string|max:1000',
         ]);
 
+        $userId = auth()->id();
+        $post = Post::findOrFail($postId);
+
         $comment = \App\Models\PostComment::create([
             'id' => (string) Str::uuid(),
             'post_id' => $postId,
-            'author_id' => auth()->id(),
+            'author_id' => $userId,
             'body' => $validated['body'],
             'created_at' => now(),
         ]);
 
-        return response()->json(['message' => 'Comment added', 'comment' => $comment], 201);
+        // ✅ Notify post owner (but not if they commented on their own post)
+        if ($post->author_id != $userId) {
+            $notification = Notification::create([
+                'type' => 'post_commented',
+                'data' => [
+                    'message' => auth()->user()->username . ' commented on your post.',
+                    'post_id' => $post->id,
+                    'user_id' => $userId,
+                ],
+                'created_by' => $userId,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $post->author_id, // ✅ owner of the post
+                'pinned' => false,
+                'action_state' => 'none',
+            ]);
+        }
+
+        return response()->json([
+            'message' => 'Comment added',
+            'comment' => $comment,
+        ], 201);
     }
 
     public function seecomments($postId)
@@ -147,5 +205,42 @@ class PostController extends Controller
             'comments_count' => $post->comments->count(),
             'comments_by' => $comments
         ]);
+    }
+
+    public function deletepost($postId)
+    {
+        $userId = auth()->id();
+        $post = Post::findOrFail($postId);
+
+        // ✅ Make sure only the post owner can delete
+        if ($post->author_id !== $userId) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // ✅ Delete related likes
+        \App\Models\PostLike::where('post_id', $post->id)->delete();
+
+        // ✅ Delete related comments
+        \App\Models\PostComment::where('post_id', $post->id)->delete();
+
+        // ✅ Delete related notifications
+        $notifications = \App\Models\Notification::where('data->post_id', $post->id)->get();
+
+        foreach ($notifications as $notif) {
+            \App\Models\UserNotification::where('notification_id', $notif->id)->delete();
+            $notif->delete();
+        }
+
+        // ✅ Delete the post image (if exists)
+        if ($post->image_url && \Illuminate\Support\Facades\Storage::disk('public')->exists($post->image_url)) {
+            \Illuminate\Support\Facades\Storage::disk('public')->delete($post->image_url);
+        }
+
+        // ✅ Finally delete the post
+        $post->delete();
+
+        return response()->json([
+            'message' => 'Post and related data deleted successfully'
+        ], 200);
     }
 }

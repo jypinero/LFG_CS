@@ -10,6 +10,9 @@ use App\Models\EventParticipant;
 use App\Models\EventCheckin;
 use App\Models\EventScore;
 use App\Models\EventTeam;
+use App\Models\Notification;
+use App\Models\UserNotification;
+
 
 class EventController extends Controller
 {
@@ -51,6 +54,7 @@ class EventController extends Controller
             'event' => $event,
             'participant' => $participant
         ]);
+    
     }
 
     public function joinEvent(Request $request)
@@ -88,6 +92,9 @@ class EventController extends Controller
             ->where('user_id', $userId)
             ->exists();
 
+            
+        
+
         if ($alreadyJoined) {
             return response()->json([
                 'status' => 'error',
@@ -99,6 +106,27 @@ class EventController extends Controller
             'event_id' => $event->id,
             'user_id' => $userId,
             'status' => 'confirmed',
+        ]);
+
+        //send notif to event creator
+
+        $creatorid = $event->created_by;
+
+        $notification = Notification::create([
+            'type' => 'event_joined',
+            'data' => [
+                'message' => auth()->user()->username . ' has joined your event: ' . $event->name,
+                'event_id' => $event->id,
+                'user_id' => $userId,
+            ],
+            'created_by' => $userId,
+        ]);
+
+        UserNotification::create([
+            'notification_id' => $notification->id,
+            'user_id' => $creatorid,
+            'pinned' => false,
+            'action_state' => 'none',
         ]);
 
         return response()->json([
