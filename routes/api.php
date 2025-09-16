@@ -34,6 +34,8 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
 
+    Route::get('/users/{id}', [AuthController::class, 'showprofile']);
+
     // User profile routes
     Route::prefix('profile')->group(function () {
         Route::get('/', [AuthController::class, 'me']);
@@ -53,9 +55,11 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/posts/{postId}/comment', [PostController::class, 'commentpost']);
     Route::get('/posts/{postId}/view_comments', [PostController::class, 'seecomments']);
 
-    
 
     Route::get('/venues', [VenueController::class, 'index']);
+    Route::post('/venues/create', [VenueController::class, 'store']);
+    Route::post('/venues/{venue}/facilities', [VenueController::class, 'storeFacility']);
+    
 
 
 }); 

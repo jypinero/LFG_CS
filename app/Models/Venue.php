@@ -12,7 +12,6 @@ class Venue extends Model
      protected $fillable = [
         'name',
         'description',
-        'price_per_hr',
         'address',
         'latitude',
         'longitude',

@@ -11,6 +11,9 @@ use App\Models\User;
 use App\Models\Role;
 use App\Models\UserProfile;
 use App\Models\UserAdditionalSport;
+use App\Models\Event;
+use App\Models\Post;
+use App\Models\EventParticipant;
 
 class AuthController extends Controller
 {
@@ -189,6 +192,120 @@ class AuthController extends Controller
         return response()->json([
             'status' => 'success',
             'user' => $user->load('role', 'userProfile', 'userCertifications', 'userAdditionalSports.sport')
+        ]);
+    }
+
+    public function showprofile($id)
+    {
+        $user = \App\Models\User::with([
+            'role',
+            'userProfile.mainSport',
+            'userCertifications',
+            'userAdditionalSports.sport'
+        ])->find($id);
+
+        if (!$user) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User not found',
+            ], 404);
+        }
+
+        // Posts
+        $posts = \App\Models\Post::where('author_id', $id)->get();
+
+        // Events participated
+        $eventParticipants = \App\Models\EventParticipant::where('user_id', $id)->with('event')->get();
+        $eventIds = $eventParticipants->pluck('event_id');
+
+        // Games played
+        $gamesPlayed = $eventParticipants->count();
+
+        // Total hours played (fix: use event date + time, only add if end > start)
+        $totalHours = 0;
+        foreach ($eventParticipants as $ep) {
+            $event = $ep->event;
+            if ($event && $event->start_time && $event->end_time) {
+                $eventDate = $event->date ?? now()->toDateString();
+                $start = \Carbon\Carbon::parse($eventDate . ' ' . $event->start_time);
+                $end = \Carbon\Carbon::parse($eventDate . ' ' . $event->end_time);
+                $diff = $start->diffInMinutes($end) / 60;
+                // Debug output
+                \Log::info([
+                    'event_id' => $event->id,
+                    'start' => $start,
+                    'end' => $end,
+                    'diff' => $diff,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                ]);
+                if ($diff > 0) {
+                    $totalHours += $diff;
+                }
+            } else {
+                \Log::info([
+                    'event_id' => $event ? $event->id : null,
+                    'reason' => 'Missing event or times',
+                    'start_time' => $event->start_time ?? null,
+                    'end_time' => $event->end_time ?? null,
+                ]);
+            }
+        }
+
+        // All sports (main + additional)
+        $sports = [];
+        if ($user->userProfile && $user->userProfile->mainSport) {
+            $sports[] = [
+                'id' => $user->userProfile->mainSport->id,
+                'name' => $user->userProfile->mainSport->name,
+                'level' => $user->userProfile->main_sport_level,
+                'main' => true,
+            ];
+        }
+        foreach ($user->userAdditionalSports as $additional) {
+            if ($additional->sport) {
+                $sports[] = [
+                    'id' => $additional->sport->id,
+                    'name' => $additional->sport->name,
+                    'level' => $additional->level,
+                    'main' => false,
+                ];
+            }
+        }
+
+        // Recently played with (distinct users from same events, excluding self)
+        $recentPlayers = \App\Models\EventParticipant::whereIn('event_id', $eventIds)
+            ->where('user_id', '!=', $id)
+            ->with('user')
+            ->get()
+            ->pluck('user')
+            ->unique('id')
+            ->values()
+            ->map(function($u) {
+                return [
+                    'id' => $u->id,
+                    'first_name' => $u->first_name,
+                    'last_name' => $u->last_name,
+                    'profile_photo' => $u->profile_photo ? \Storage::url($u->profile_photo) : null,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'username' => $user->username,
+                'city' => $user->city,
+                'province' => $user->province,
+                'profile_photo' => $user->profile_photo ? \Storage::url($user->profile_photo) : null,
+                'first_name' => $user->first_name,
+                'last_name' => $user->last_name,
+                'bio' => optional($user->userProfile)->bio,
+                'sports' => $sports,
+                'games_played' => $gamesPlayed,
+                'total_hours_played' => round($totalHours, 2),
+                'recent_players' => $recentPlayers,
+                'posts' => $posts,
+            ],
         ]);
     }
 

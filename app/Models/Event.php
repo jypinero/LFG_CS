@@ -15,6 +15,7 @@ class Event extends Model
         'event_type',
         'sport',
         'venue_id',
+        'facility_id',
         'slots',
         'date',
         'start_time',
