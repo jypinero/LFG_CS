@@ -35,6 +35,34 @@ class PostController extends Controller
 
         return response()->json($posts);
     }
+
+    public function seepost($id)
+    {
+        $userId = auth()->id();
+
+        // Eager load author, likes, and comments
+        $post = Post::with(['author', 'likes', 'comments'])
+            ->withCount(['likes', 'comments'])
+            ->findOrFail($id);
+
+        return response()->json([
+            'message' => 'See Post successfully',
+            'post' => [
+                'id' => $post->id,
+                'author' => [
+                    'id' => $post->author->id,
+                    'username' => $post->author->username,
+                    'profile_photo' => $post->author->profile_photo ? \Storage::url($post->author->profile_photo) : null,
+                ],
+                'location' => $post->location,
+                'image_url' => $post->image_url ? \Storage::url($post->image_url) : null,
+                'caption' => $post->caption,
+                'created_at' => $post->created_at,
+                'likes_count' => $post->likes_count,
+                'comments_count' => $post->comments_count,
+            ],
+        ], 200);
+    }
     
     public function createpost(Request $request)
     {

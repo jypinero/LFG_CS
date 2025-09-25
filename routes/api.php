@@ -34,7 +34,11 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
 
-    Route::get('/users/{id}', [AuthController::class, 'showprofile']);
+    Route::get('/users', [AuthController::class, 'showprofile']);
+    Route::get('/profile/me', [AuthController::class, 'myprofile']);
+    Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);
+
+    Route::get('/schedules/{date}', [EventController::class, 'userschedule']);
 
     // User profile routes
     Route::prefix('profile')->group(function () {
@@ -48,7 +52,9 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/events/{id}/participants', [EventController::class , 'eventlist']);
 
     Route::get('/posts', [PostController::class, 'index']);
-    Route::delete('/posts/{postId}', [PostController::class, 'deletepost']);
+    Route::get('/posts/see/{id}', [PostController::class, 'seepost']);
+    Route::delete('/posts/delete/{postId}', [PostController::class, 'deletepost']);
+
     Route::post('/posts/create', [PostController::class, 'createpost']);
     Route::post('/posts/{postId}/like', [PostController::class, 'likepost']);
     Route::get('/posts/{postId}/view_likes', [PostController::class, 'seelike']);

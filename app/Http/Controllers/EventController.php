@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Venue;
 use App\Models\Event;
@@ -21,11 +22,40 @@ class EventController extends Controller
      */
     public function index()
     {
-         $event = Event::all();
+        $events = Event::with(['venue', 'facility'])
+            ->withCount('participants')
+            ->get()
+            ->map(function($event) {
+                // Calculate hours
+                $start = Carbon::parse($event->start_time);
+                $end = Carbon::parse($event->end_time);
+                $hours = $start->diffInMinutes($end) / 60;
+
+                // Calculate total cost
+                $pricePerHour = $event->facility->price_per_hr ?? 0;
+                $totalCost = $hours * $pricePerHour;
+
+                $divide = $totalCost / $event->participants_count;
+                $dividedpay = round($divide, 2);
+
+                return [
+                    'id' => $event->id,
+                    'name' => $event->name,
+                    'start_time' => $event->start_time,
+                    'participants_count' => $event->participants_count,
+                    'total_slots' => $event->slots,
+                    'venue' => $event->venue->name,
+                    'hours' => $hours,
+                    'total_cost' => $totalCost,
+                    'cost_per_slot' => $dividedpay,
+                    'host' => User::find($event->created_by)->username,
+                    // add more fields as needed
+                ];
+            });
 
         return response()->json([
             'status' => 'success',
-            'events' => $event
+            'events' => $events
         ]);
     }
 
@@ -37,24 +67,93 @@ class EventController extends Controller
         
     }
 
-    public function eventlist($event_id){
-        $event = Event::find($event_id);
+    public function eventlist($event_id)
+    {
+        $event = Event::with(['venue', 'facility'])
+            ->withCount('participants')
+            ->find($event_id);
 
-        if (!$event){
+        if (!$event) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Event not found'
             ], 404);
         }
 
-        $participant = EventParticipant::where('event_id', $event_id)->with('user')->get();
+        // Calculate hours
+        $start = \Carbon\Carbon::parse($event->start_time);
+        $end = \Carbon\Carbon::parse($event->end_time);
+        $hours = $start->diffInMinutes($end) / 60;
+
+        // Calculate total cost
+        $pricePerHour = $event->facility->price_per_hr ?? 0;
+        $totalCost = $hours * $pricePerHour;
+
+        $divide = $event->participants_count > 0 ? $totalCost / $event->participants_count : 0;
+        $dividedpay = round($divide, 2);
+
+        // Get participants with user info
+        $participants = EventParticipant::where('event_id', $event_id)
+            ->with('user')
+            ->get();
 
         return response()->json([
             'status' => 'success',
-            'event' => $event,
-            'participant' => $participant
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'date' => $event->date,
+                'time' => $event->start_time . ' - ' . $event->end_time,
+                'slots' => $event->participants_count . '/' . $event->slots,
+                'creator' => User::find($event->created_by)->username,
+                'venue' => [
+                    'name' => $event->venue->name,
+                    'address' => $event->venue->address,
+                ],
+                'Price/hour' => $event->facility->price_per_hr ?? 0,
+                'Chip-in approx' => $dividedpay,
+                'participants' => [
+                    'name' => $participants->map(function($participant) {
+                        return $participant->user ? $participant->user->username : 'Unknown User';
+                    })
+                ],
+                // add more fields as needed
+            ],
         ]);
-    
+    }
+
+    public function userschedule($date)
+    {
+        $user = auth()->user();
+
+        // Get events where user is a participant or creator, and date matches the input
+        $events = Event::with(['venue', 'facility'])
+            ->where(function($q) use ($user) {
+                $q->where('created_by', $user->id)
+                  ->orWhereHas('participants', function($q2) use ($user) {
+                      $q2->where('user_id', $user->id);
+                  });
+            })
+            ->where('date', $date) // <-- filter by input date
+            ->orderBy('start_time')
+            ->get()
+            ->map(function($event) {
+                return [
+                    'id' => $event->id,
+                    'date' => $event->date,
+                    'sport' => $event->sport,
+                    'host' => User::find($event->created_by)->username ?? null,
+                    'venue' => $event->venue->name ?? null,
+                    'facility' => $event->facility->name ?? null,
+                    'start_time' => $event->start_time,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'schedule' => $events
+        ]);
     }
 
     public function joinEvent(Request $request)

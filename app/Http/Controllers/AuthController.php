@@ -195,6 +195,31 @@ class AuthController extends Controller
         ]);
     }
 
+    public function myprofile()
+    {
+        $user = \Auth::guard('api')->user();
+        if (!$user) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User not authenticated',
+            ], 401);
+        }
+        // Reuse the showprofile logic
+        return $this->showprofile($user->id);
+    }
+
+    public function showprofileByUsername($username)
+    {
+        $user = \App\Models\User::where('username', $username)->first();
+        if (!$user) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User not found',
+            ], 404);
+        }
+        return $this->showprofile($user->id);
+    }
+
     public function showprofile($id)
     {
         $user = \App\Models\User::with([
@@ -284,6 +309,7 @@ class AuthController extends Controller
             ->map(function($u) {
                 return [
                     'id' => $u->id,
+                    'username' => $u->username,
                     'first_name' => $u->first_name,
                     'last_name' => $u->last_name,
                     'profile_photo' => $u->profile_photo ? \Storage::url($u->profile_photo) : null,
