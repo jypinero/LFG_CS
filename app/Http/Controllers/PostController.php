@@ -30,10 +30,30 @@ class PostController extends Controller
 
         // Get posts from those users with like and comment counts
         $posts = Post::whereIn('author_id', $userIds)
-            ->withCount(['likes', 'comments']) // adds likes_count, comments_count
-            ->get();
+            ->with(['author'])
+            ->withCount(['likes', 'comments'])
+            ->get()
+            ->map(function($post) {
+                return [
+                    'id' => $post->id,
+                    'author' => [
+                        'id' => $post->author->id,
+                        'username' => $post->author->username,
+                        'profile_photo' => $post->author->profile_photo ? \Storage::url($post->author->profile_photo) : null,
+                    ],
+                    'location' => $post->location,
+                    'image_url' => $post->image_url ? \Storage::url($post->image_url) : null,
+                    'caption' => $post->caption,
+                    'created_at' => $post->created_at,
+                    'likes_count' => $post->likes_count,
+                    'comments_count' => $post->comments_count,
+                ];
+            });
 
-        return response()->json($posts);
+        return response()->json([
+            'message' => 'See Posts successfully',
+            'posts' => $posts
+        ], 200);
     }
 
     public function seepost($id)
