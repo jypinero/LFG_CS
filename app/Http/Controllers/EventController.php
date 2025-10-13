@@ -41,10 +41,12 @@ class EventController extends Controller
                 return [
                     'id' => $event->id,
                     'name' => $event->name,
+                    'date' => $event->date,
                     'start_time' => $event->start_time,
                     'participants_count' => $event->participants_count,
                     'total_slots' => $event->slots,
                     'venue' => $event->venue->name,
+                    'facility' => $event->facility->type ?? null,
                     'hours' => $hours,
                     'total_cost' => $totalCost,
                     'cost_per_slot' => $dividedpay,
@@ -123,6 +125,40 @@ class EventController extends Controller
         ]);
     }
 
+
+    public function allschedule(){
+        $user = auth()->user();
+
+        // Get all events where user is a participant or creator
+        $events = Event::with(['venue', 'facility'])
+            ->where(function($q) use ($user) {
+                $q->where('created_by', $user->id)
+                ->orWhereHas('participants', function($q2) use ($user) {
+                    $q2->where('user_id', $user->id);
+                });
+            })
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get()
+            ->map(function($event) {
+                return [
+                    'id' => $event->id,
+                    'date' => $event->date,
+                    'sport' => $event->sport,
+                    'host' => User::find($event->created_by)->username ?? null,
+                    'venue' => $event->venue->name ?? null,
+                    'facility' => $event->facility->type ?? null,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'schedule' => $events
+        ]);
+    }
+
     public function userschedule($date)
     {
         $user = auth()->user();
@@ -145,7 +181,7 @@ class EventController extends Controller
                     'sport' => $event->sport,
                     'host' => User::find($event->created_by)->username ?? null,
                     'venue' => $event->venue->name ?? null,
-                    'facility' => $event->facility->name ?? null,
+                    'facility' => $event->facility->type ?? null,
                     'start_time' => $event->start_time,
                 ];
             });
@@ -191,13 +227,32 @@ class EventController extends Controller
             ->where('user_id', $userId)
             ->exists();
 
-            
-        
-
         if ($alreadyJoined) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'You have already joined this event.'
+            ], 409);
+        }
+
+        // Check for conflicting events
+        $conflict = Event::whereHas('participants', function($q) use ($userId) {
+                $q->where('user_id', $userId);
+            })
+            ->where('date', $event->date)
+            ->where(function($q) use ($event) {
+                $q->whereBetween('start_time', [$event->start_time, $event->end_time])
+                  ->orWhereBetween('end_time', [$event->start_time, $event->end_time])
+                  ->orWhere(function($q2) use ($event) {
+                      $q2->where('start_time', '<=', $event->start_time)
+                         ->where('end_time', '>=', $event->end_time);
+                  });
+            })
+            ->exists();
+
+        if ($conflict) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have already joined another event with a conflicting date and time.'
             ], 409);
         }
 
@@ -208,7 +263,6 @@ class EventController extends Controller
         ]);
 
         //send notif to event creator
-
         $creatorid = $event->created_by;
 
         $notification = Notification::create([
@@ -260,6 +314,27 @@ class EventController extends Controller
             ], 422);
         }
 
+        // Double booking validation
+        $doubleBooking = Event::where('venue_id', $request->venue_id)
+            ->where('facility_id', $request->facility_id)
+            ->where('date', $request->date)
+            ->where(function($q) use ($request) {
+                $q->whereBetween('start_time', [$request->start_time, $request->end_time])
+                  ->orWhereBetween('end_time', [$request->start_time, $request->end_time])
+                  ->orWhere(function($q2) use ($request) {
+                      $q2->where('start_time', '<=', $request->start_time)
+                         ->where('end_time', '>=', $request->end_time);
+                  });
+            })
+            ->exists();
+
+        if ($doubleBooking) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Venue and facility are already booked for the selected date and time.'
+            ], 409);
+        }
+
         $user = auth()->user();
         $userProfile = $user->userProfile;
 
@@ -282,7 +357,7 @@ class EventController extends Controller
         $start_at = $request->date . ' ' . $request->start_time;
         $end_at = $request->date . ' ' . $request->end_time;
 
-       $event = Event::create([
+        $event = Event::create([
             'name' => $request->name,
             'description' => $request->description,
             'event_type' => $request->event_type,

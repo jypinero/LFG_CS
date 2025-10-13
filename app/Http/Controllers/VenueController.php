@@ -16,14 +16,36 @@ class VenueController extends Controller
      */
     public function index()
     {
-        $venue = Venue::all();
-        $facilities = Facilities::all();
+        $venues = Venue::all()->map(function ($venue) {
+            return [
+                'id' => $venue->id,
+                'name' => $venue->name,
+                'description' => $venue->description,
+                'address' => $venue->address,
+                'latitude' => $venue->latitude,
+                'longitude' => $venue->longitude,
+                'verified_at' => $venue->verified_at,
+                'verification_expires_at' => $venue->verification_expires_at,
+                'created_by' => $venue->created_by,
+                'created_at' => $venue->created_at,
+                'updated_at' => $venue->updated_at,
+                'facilities' => $venue->facilities()->get()->map(function ($facility) {
+                    return [
+                        'id' => $facility->id,
+                        'venue_id' => $facility->venue_id,
+                        'price_per_hr' => $facility->price_per_hr,
+                        'type' => $facility->type,
+                        'created_at' => $facility->created_at,
+                        'updated_at' => $facility->updated_at,
+                    ];
+                }),
+            ];
+        });
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'venue' => $venue,
-                'facilities' => $facilities
+                'venues' => $venues
             ]
         ]);
     }

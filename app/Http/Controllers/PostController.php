@@ -28,8 +28,9 @@ class PostController extends Controller
         // Make sure the user sees their own posts too
         $userIds->push($userId);
 
-        // Get posts from those users with like and comment counts
+        // Get posts from those users with like and comment counts, only not archived
         $posts = Post::whereIn('author_id', $userIds)
+            ->where('is_archived', false) // Only show not archived posts
             ->with(['author'])
             ->withCount(['likes', 'comments'])
             ->get()
@@ -159,6 +160,7 @@ class PostController extends Controller
         $like = PostLike::create([
             'post_id' => $postId,
             'user_id' => $userId,
+            'is_liked' => true,
             'created_at' => now(),
         ]);
 
@@ -186,6 +188,44 @@ class PostController extends Controller
             'message' => 'Post liked',
             'like' => $like,
         ], 201);
+    }
+
+    public function unlikepost(Request $request, $postId)
+    {
+        $userId = auth()->id();
+
+        // Make sure the post exists
+        $post = Post::findOrFail($postId);
+
+        // Find the like record
+        $like = PostLike::where('post_id', $postId)
+            ->where('user_id', $userId)
+            ->where('is_liked', true)
+            ->first();
+
+        if (!$like) {
+            return response()->json(['message' => 'You have not liked this post'], 404);
+        }
+
+        // Delete the like record
+        PostLike::where('post_id', $postId)
+            ->where('user_id', $userId)
+            ->delete();
+
+        // Delete related notification
+        $notification = Notification::where('type', 'post_liked')
+            ->where('data->post_id', $postId)
+            ->where('data->user_id', $userId)
+            ->first();
+
+        if ($notification) {
+            UserNotification::where('notification_id', $notification->id)->delete();
+            $notification->delete();
+        }
+
+        return response()->json([
+            'message' => 'Post unliked and notification deleted',
+        ], 200);
     }
 
 
@@ -237,8 +277,8 @@ class PostController extends Controller
         // Find post and eager load users who liked it
         $post = \App\Models\Post::with(['comments.author'])->findOrFail($postId);
 
-        // Extract the users from likes
-        $comments = $post->comments->map(function ($comment) {
+        // Sort comments by created_at ascending
+        $comments = $post->comments->sortByDesc('created_at')->map(function ($comment) {
             return [
                 'id' => $comment->id,
                 'author_id' => $comment->author->id,
@@ -246,7 +286,7 @@ class PostController extends Controller
                 'body' => $comment->body,
                 'commented_at' => $comment->created_at,
             ];
-        });
+        })->values();
 
         return response()->json([
             'post_id' => $post->id,
@@ -260,35 +300,68 @@ class PostController extends Controller
         $userId = auth()->id();
         $post = Post::findOrFail($postId);
 
-        // ✅ Make sure only the post owner can delete
+        // Only the post owner can archive
         if ($post->author_id !== $userId) {
             return response()->json(['message' => 'Unauthorized'], 403);
         }
 
-        // ✅ Delete related likes
-        \App\Models\PostLike::where('post_id', $post->id)->delete();
-
-        // ✅ Delete related comments
-        \App\Models\PostComment::where('post_id', $post->id)->delete();
-
-        // ✅ Delete related notifications
-        $notifications = \App\Models\Notification::where('data->post_id', $post->id)->get();
-
-        foreach ($notifications as $notif) {
-            \App\Models\UserNotification::where('notification_id', $notif->id)->delete();
-            $notif->delete();
-        }
-
-        // ✅ Delete the post image (if exists)
-        if ($post->image_url && \Illuminate\Support\Facades\Storage::disk('public')->exists($post->image_url)) {
-            \Illuminate\Support\Facades\Storage::disk('public')->delete($post->image_url);
-        }
-
-        // ✅ Finally delete the post
-        $post->delete();
+        // Archive the post
+        $post->is_archived = true;
+        $post->save();
 
         return response()->json([
-            'message' => 'Post and related data deleted successfully'
+            'message' => 'Post archived successfully'
         ], 200);
     }
+
+
+    public function archivedPosts()
+    {
+        $userId = auth()->id();
+
+        // Get archived posts for the user
+        $posts = Post::where('author_id', $userId)
+            ->where('is_archived', true)
+            ->get();
+
+        // Delete posts archived more than 15 days ago
+        $posts->each(function ($post) {
+            // Use updated_at if you don't have archived_at
+            $archivedDate = $post->updated_at;
+            if ($archivedDate && $archivedDate->lt(now()->subDays(15))) {
+                $post->delete();
+            }
+        });
+
+        // Get posts again after deletion
+        $posts = Post::where('author_id', $userId)
+            ->where('is_archived', true)
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'archived_posts' => $posts
+        ]);
+    }
+
+    public function restorePost($postId)
+    {
+        $userId = auth()->id();
+        $post = Post::findOrFail($postId);
+
+        // Only the post owner can restore
+        if ($post->author_id !== $userId) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Restore the post
+        $post->is_archived = false;
+        $post->save();
+
+        return response()->json([
+            'message' => 'Post restored successfully'
+        ], 200);
+    }
+
+
 }

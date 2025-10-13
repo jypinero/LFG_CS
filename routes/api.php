@@ -6,6 +6,7 @@ use App\Http\Controllers\AuthController;
 use App\Http\Controllers\EventController;
 use App\Http\Controllers\VenueController;
 use App\Http\Controllers\PostController;
+use App\Http\Controllers\NotifController;
 
 /*
 |--------------------------------------------------------------------------
@@ -18,14 +19,18 @@ use App\Http\Controllers\PostController;
 |
 */
 
-Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
-    return $request->user();
-});
-
 // Public routes
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::get('/roles', [AuthController::class, 'getRoles']);
+Route::get('/sports', [AuthController::class, 'getSports']);
+
+
+Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
+    return $request->user();
+});
+
+
 
 // Protected routes
 Route::middleware('auth:api')->group(function () {
@@ -36,15 +41,20 @@ Route::middleware('auth:api')->group(function () {
 
     Route::get('/users', [AuthController::class, 'showprofile']);
     Route::get('/profile/me', [AuthController::class, 'myprofile']);
+    Route::post('/profile/update', [AuthController::class, 'updateProfile']);
     Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);
 
-    Route::get('/schedules/{date}', [EventController::class, 'userschedule']);
+    // Route::get('/notifications', [NotifController::class, 'index']);
+    Route::get('/users/notifications', [NotifController::class, 'userNotifications']);
 
-    // User profile routes
+     // User profile routes
     Route::prefix('profile')->group(function () {
         Route::get('/', [AuthController::class, 'me']);
         Route::post('/photo', [AuthController::class, 'updateProfilePhoto']);
     });
+
+    Route::get('/schedules', [EventController::class, 'allschedule']);
+    Route::get('/schedules/{date}', [EventController::class, 'userschedule']);
 
     Route::get('/events',[EventController::class, 'index']);
     Route::post('/events/create', [EventController::class, 'store']);
@@ -53,10 +63,13 @@ Route::middleware('auth:api')->group(function () {
 
     Route::get('/posts', [PostController::class, 'index']);
     Route::get('/posts/see/{id}', [PostController::class, 'seepost']);
-    Route::delete('/posts/delete/{postId}', [PostController::class, 'deletepost']);
+    Route::delete('/posts/archived/{postId}', [PostController::class, 'deletepost']);
+    Route::get('/posts/archived', [PostController::class, 'archivedPosts']);
+    Route::put('/posts/restore/{postId}', [PostController::class, 'restorepost']);
 
     Route::post('/posts/create', [PostController::class, 'createpost']);
     Route::post('/posts/{postId}/like', [PostController::class, 'likepost']);
+    Route::post('/posts/{postId}/unlike', [PostController::class, 'unlikepost']);
     Route::get('/posts/{postId}/view_likes', [PostController::class, 'seelike']);
     Route::post('/posts/{postId}/comment', [PostController::class, 'commentpost']);
     Route::get('/posts/{postId}/view_comments', [PostController::class, 'seecomments']);
@@ -65,6 +78,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/venues', [VenueController::class, 'index']);
     Route::post('/venues/create', [VenueController::class, 'store']);
     Route::post('/venues/{venue}/facilities', [VenueController::class, 'storeFacility']);
+
     
 
 

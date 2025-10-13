@@ -48,4 +48,9 @@ class UserNotification extends Model
     {
         return $this->hasMany(UserNotificationActionEvent::class);
     }
+
+    public function notification()
+    {
+        return $this->belongsTo(Notification::class, 'notification_id');
+    }
 }

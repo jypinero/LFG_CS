@@ -22,6 +22,7 @@ class Post extends Model
         'image_url',
         'caption',
         'created_at',
+        'is_archived', // new field
     ];
 
     protected $casts = [

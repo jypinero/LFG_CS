@@ -13,6 +13,7 @@ use App\Models\UserProfile;
 use App\Models\UserAdditionalSport;
 use App\Models\Event;
 use App\Models\Post;
+use App\Models\Sport;
 use App\Models\EventParticipant;
 
 class AuthController extends Controller
@@ -24,7 +25,7 @@ class AuthController extends Controller
      */
     public function __construct()
     {
-        $this->middleware('auth:api', ['except' => ['login', 'register', 'getRoles']]);
+        $this->middleware('auth:api', ['except' => ['login', 'register', 'getRoles', 'getSports']]);
     }
 
     /**
@@ -384,52 +385,81 @@ class AuthController extends Controller
         ]);
     }
 
-    /**
-     * Update user profile photo.
-     *
-     * @param  \Illuminate\Http\Request  $request
-     * @return \Illuminate\Http\JsonResponse
-     */
-    public function updateProfilePhoto(Request $request)
+    public function getSports(){
+
+        $sports = Sport::all();
+
+        return response()->json([
+            'status' => 'success',
+            'sports' => $sports
+        ]);
+    }
+    
+    public function updateProfile(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'profile_photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048',
+        $user = Auth::guard('api')->user(); // Authenticated user via API guard
+
+        $validator = \Validator::make($request->all(), [
+            'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
+            'city' => 'nullable|string|max:255',
+            'province' => 'nullable|string|max:255',
+            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'bio' => 'nullable|string|max:1000',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Validation failed',
-                'errors' => $validator->errors()
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
-            $user = Auth::user();
+            // ✅ Update simple user fields
+            $user->fill($request->only(['username', 'city', 'province']));
 
-            // Delete old profile photo if exists
-            if ($user->profile_photo) {
-                Storage::disk('public')->delete($user->profile_photo);
+            // ✅ Handle profile photo upload
+            if ($request->hasFile('profile_photo')) {
+                $oldPhoto = $user->profile_photo;
+
+                // Delete old photo if it exists
+                if ($oldPhoto && \Storage::disk('public')->exists($oldPhoto)) {
+                    \Storage::disk('public')->delete($oldPhoto);
+                }
+
+                $file = $request->file('profile_photo');
+                $fileName = time() . '_' . $file->getClientOriginalName();
+                $path = $file->storeAs('userpfp', $fileName, 'public');
+                $user->profile_photo = $path;
             }
 
-            // Upload new profile photo
-            $file = $request->file('profile_photo');
-            $fileName = time() . '_' . $file->getClientOriginalName();
-            $profilePhotoPath = $file->storeAs('userpfp', $fileName, 'public');
+            $user->save();
 
-            $user->update(['profile_photo' => $profilePhotoPath]);
+            // ✅ Update or create UserProfile for bio
+            if ($request->filled('bio')) {
+                $userProfile = $user->userProfile ?: new \App\Models\UserProfile(['user_id' => $user->id]);
+                $userProfile->bio = $request->bio;
+                $userProfile->save();
+            }
+
+            // ✅ Include profile photo full URL for frontend
+            $userData = $user->load('userProfile')->toArray();
+            $userData['profile_photo_url'] = $user->profile_photo
+                ? asset('storage/' . $user->profile_photo)
+                : null;
 
             return response()->json([
                 'status' => 'success',
-                'message' => 'Profile photo updated successfully',
-                'profile_photo' => Storage::url($profilePhotoPath)
+                'message' => 'Profile updated successfully!',
+                'user' => $userData,
             ]);
 
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
-                'message' => 'Failed to update profile photo',
-                'error' => $e->getMessage()
+                'message' => 'Failed to update profile',
+                'error' => $e->getMessage(),
             ], 500);
         }
     }
