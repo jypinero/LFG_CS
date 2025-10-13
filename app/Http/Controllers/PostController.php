@@ -34,7 +34,10 @@ class PostController extends Controller
             ->with(['author'])
             ->withCount(['likes', 'comments'])
             ->get()
-            ->map(function($post) {
+            ->map(function($post) use ($userId) {
+                // Check if the current user liked this post
+                $isLiked = $post->likes()->where('user_id', $userId)->where('is_liked', true)->exists();
+
                 return [
                     'id' => $post->id,
                     'author' => [
@@ -48,6 +51,7 @@ class PostController extends Controller
                     'created_at' => $post->created_at,
                     'likes_count' => $post->likes_count,
                     'comments_count' => $post->comments_count,
+                    'is_liked' => $isLiked, // Add this field
                 ];
             });
 
