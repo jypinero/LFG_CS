@@ -41,8 +41,10 @@ class EventController extends Controller
                 return [
                     'id' => $event->id,
                     'name' => $event->name,
+                    'description' => $event->description,
                     'date' => $event->date,
                     'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
                     'participants_count' => $event->participants_count,
                     'total_slots' => $event->slots,
                     'venue' => $event->venue->name,
