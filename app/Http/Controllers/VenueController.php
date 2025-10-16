@@ -25,6 +25,7 @@ class VenueController extends Controller
                 'address' => $venue->address,
                 'latitude' => $venue->latitude,
                 'longitude' => $venue->longitude,
+                'image_url' => $venue->photo ? Storage::url($venue->photo->image_path) : null,
                 'verified_at' => $venue->verified_at,
                 'verification_expires_at' => $venue->verification_expires_at,
                 'created_by' => $venue->created_by,
@@ -36,6 +37,7 @@ class VenueController extends Controller
                         'venue_id' => $facility->venue_id,
                         'price_per_hr' => $facility->price_per_hr,
                         'type' => $facility->type,
+                        'image_url' => $facility->photo ? Storage::url($facility->photo->image_path) : null,
                         'created_at' => $facility->created_at,
                         'updated_at' => $facility->updated_at,
                     ];
