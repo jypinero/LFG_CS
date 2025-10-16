@@ -426,6 +426,98 @@ class TeamController extends Controller
     }
 
     /**
+     * Allow a user to request to join a team.
+     * Validations:
+     * - User can't join if already in any team.
+     * - User can't join if already in the requested team.
+     */
+    public function requestJoinTeam(Request $request, string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Check if user is already in any team
+        $existingMembership = TeamMember::where('user_id', $user->id)->first();
+        if ($existingMembership) {
+            // If already in this team
+            if ($existingMembership->team_id == $team->id) {
+                return response()->json(['status' => 'error', 'message' => 'You are already on this team'], 409);
+            }
+            return response()->json(['status' => 'error', 'message' => 'You are already a member of another team'], 409);
+        }
+
+        // Check if user already requested (optional: if you have a requests table, check there)
+        // For now, just add as member with 'pending' role/status
+        $pending = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'pending')
+            ->first();
+
+        if ($pending) {
+            return response()->json(['status' => 'error', 'message' => 'You have already requested to join this team'], 409);
+        }
+
+        $member = TeamMember::create([
+            'team_id' => $team->id,
+            'user_id' => $user->id,
+            'role' => 'pending', // or use a status column if you have one
+            'joined_at' => now(),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Join request sent. Waiting for approval.',
+            'member' => $member,
+        ], 201);
+    }
+
+    /**
+     * Owner can accept or decline a user's join request.
+    */
+    public function handleJoinRequest(Request $request, string $teamId, string $memberId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner can accept/decline requests
+        if ($user->id !== $team->created_by) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'action' => 'required|in:accept,decline',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $member = TeamMember::where('team_id', $team->id)
+            ->where('id', $memberId)
+            ->where('role', 'pending')
+            ->first();
+
+        if (! $member) {
+            return response()->json(['status' => 'error', 'message' => 'Pending join request not found'], 404);
+        }
+
+        if ($request->action === 'accept') {
+            $member->role = 'member';
+            $member->save();
+            return response()->json(['status'=>'success','message'=>'Request accepted','member'=>$member], 200);
+        } else {
+            $member->delete();
+            return response()->json(['status'=>'success','message'=>'Request declined'], 200);
+        }
+    }
+
+    /**
      * Remove the specified resource from storage.
      */
     public function destroy(string $id)
