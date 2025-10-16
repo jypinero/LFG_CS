@@ -58,6 +58,7 @@ Route::middleware('auth:api')->group(function () {
     });
 
     Route::get('/schedules', [EventController::class, 'allschedule']);
+    Route::get('/schedules/user-created', [EventController::class, 'allusercreated']);
     Route::get('/schedules/{date}', [EventController::class, 'userschedule']);
 
     Route::get('/events',[EventController::class, 'index']);
@@ -85,8 +86,12 @@ Route::middleware('auth:api')->group(function () {
 
     Route::get('/teams', [TeamController::class, 'index']);
     Route::post('/teams/create', [TeamController::class, 'store']);
-
+    Route::patch('/teams/{teamId}', [TeamController::class, 'update']);
+    Route::post('/teams/{teamId}/addmembers', [TeamController::class, 'addMember']);
+    Route::post('/teams/{teamId}/transfer-ownership', [TeamController::class, 'transferOwnership']);
+    Route::patch('/teams/{teamId}/members/{memberId}/role', [TeamController::class, 'editMemberRole']);
+    Route::get('teams/{teamId}/members', [TeamController::class, 'members']);
+    Route::delete('teams/{teamId}/members/{memberId}', [TeamController::class, 'removeMember']);
     
-
 
 }); 

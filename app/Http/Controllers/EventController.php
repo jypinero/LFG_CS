@@ -163,6 +163,37 @@ class EventController extends Controller
         ]);
     }
 
+    public function allusercreated()
+    {
+        $user = auth()->user();
+
+        // Get all events where user is the creator only
+        $events = Event::with(['venue', 'facility'])
+            ->where('created_by', $user->id)
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get()
+            ->map(function($event) {
+                return [
+                    'id' => $event->id,
+                    'date' => $event->date,
+                    'sport' => $event->sport,
+                    'host' => User::find($event->created_by)->username ?? null,
+                    'venue' => $event->venue->name ?? null,
+                    'longitude' => $event->venue->longitude ?? null,
+                    'latitude' => $event->venue->latitude ?? null,
+                    'facility' => $event->facility->type ?? null,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'schedule' => $events
+        ]);
+    }
+
     public function userschedule($date)
     {
         $user = auth()->user();
@@ -197,6 +228,8 @@ class EventController extends Controller
             'schedule' => $events
         ]);
     }
+
+    
 
     public function joinEvent(Request $request)
     {
