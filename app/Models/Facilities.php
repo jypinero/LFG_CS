@@ -19,4 +19,9 @@ class Facilities extends Model
     {
         return $this->belongsTo(Venue::class);
     }
+
+    public function photos()
+    {
+        return $this->hasMany(FacilityPhoto::class, 'facility_id');
+    }
 }

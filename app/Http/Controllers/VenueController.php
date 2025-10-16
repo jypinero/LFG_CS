@@ -17,7 +17,7 @@ class VenueController extends Controller
      */
     public function index()
     {
-        $venues = Venue::all()->map(function ($venue) {
+        $venues = Venue::with(['photos', 'facilities.photos'])->get()->map(function ($venue) {
             return [
                 'id' => $venue->id,
                 'name' => $venue->name,
@@ -25,19 +25,33 @@ class VenueController extends Controller
                 'address' => $venue->address,
                 'latitude' => $venue->latitude,
                 'longitude' => $venue->longitude,
-                'image_url' => $venue->photo ? Storage::url($venue->photo->image_path) : null,
+                // Show all venue photos
+                'photos' => $venue->photos->map(function ($photo) {
+                    return [
+                        'id' => $photo->id,
+                        'image_url' => Storage::url($photo->image_path),
+                        'uploaded_at' => $photo->uploaded_at,
+                    ];
+                }),
                 'verified_at' => $venue->verified_at,
                 'verification_expires_at' => $venue->verification_expires_at,
                 'created_by' => $venue->created_by,
                 'created_at' => $venue->created_at,
                 'updated_at' => $venue->updated_at,
-                'facilities' => $venue->facilities()->get()->map(function ($facility) {
+                'facilities' => $venue->facilities->map(function ($facility) {
                     return [
                         'id' => $facility->id,
                         'venue_id' => $facility->venue_id,
                         'price_per_hr' => $facility->price_per_hr,
                         'type' => $facility->type,
-                        'image_url' => $facility->photo ? Storage::url($facility->photo->image_path) : null,
+                        // Show all facility photos
+                        'photos' => $facility->photos->map(function ($photo) {
+                            return [
+                                'id' => $photo->id,
+                                'image_url' => Storage::url($photo->image_path),
+                                'uploaded_at' => $photo->uploaded_at,
+                            ];
+                        }),
                         'created_at' => $facility->created_at,
                         'updated_at' => $facility->updated_at,
                     ];
