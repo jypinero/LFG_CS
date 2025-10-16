@@ -61,6 +61,10 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/schedules/user-created', [EventController::class, 'allusercreated']);
     Route::get('/schedules/{date}', [EventController::class, 'userschedule']);
 
+
+    Route::post('/venues/games-played', [EventController::class, 'eventsByVenue']);
+
+
     Route::get('/events',[EventController::class, 'index']);
     Route::post('/events/create', [EventController::class, 'store']);
     Route::post('/events/join', [EventController::class, 'joinEvent']);

@@ -194,6 +194,46 @@ class EventController extends Controller
         ]);
     }
 
+    public function eventsByVenue(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'venue_id' => 'required|exists:venues,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $events = Event::with(['venue', 'facility'])
+            ->where('venue_id', $request->venue_id)
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get()
+            ->map(function($event) {
+                return [
+                    'id' => $event->id,
+                    'name' => $event->name,
+                    'description' => $event->description,
+                    'date' => $event->date,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                    'host' => User::find($event->created_by)->username ?? null,
+                    'venue' => $event->venue->name ?? null,
+                    'facility' => $event->facility->type ?? null,
+                    'slots' => $event->slots,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'events' => $events
+        ]);
+    }
+
     public function userschedule($date)
     {
         $user = auth()->user();
