@@ -431,7 +431,7 @@ class TeamController extends Controller
      * - User can't join if already in any team.
      * - User can't join if already in the requested team.
      */
-    public function requestJoinTeam(Request $request, string $teamId)
+   public function requestJoinTeam(Request $request, string $teamId)
     {
         $user = auth()->user();
         $team = Team::find($teamId);
@@ -442,15 +442,13 @@ class TeamController extends Controller
         // Check if user is already in any team
         $existingMembership = TeamMember::where('user_id', $user->id)->first();
         if ($existingMembership) {
-            // If already in this team
             if ($existingMembership->team_id == $team->id) {
                 return response()->json(['status' => 'error', 'message' => 'You are already on this team'], 409);
             }
             return response()->json(['status' => 'error', 'message' => 'You are already a member of another team'], 409);
         }
 
-        // Check if user already requested (optional: if you have a requests table, check there)
-        // For now, just add as member with 'pending' role/status
+        // Check if user already requested
         $pending = TeamMember::where('team_id', $team->id)
             ->where('user_id', $user->id)
             ->where('role', 'pending')
@@ -463,8 +461,30 @@ class TeamController extends Controller
         $member = TeamMember::create([
             'team_id' => $team->id,
             'user_id' => $user->id,
-            'role' => 'pending', // or use a status column if you have one
+            'role' => 'pending',
             'joined_at' => now(),
+        ]);
+
+        // Send notification to team owner
+        $ownerId = $team->created_by;
+        $notif = \App\Models\Notification::create([
+            'type' => 'team_join_request',
+            'data' => [
+                'message' => $user->username . ' requested to join your team: ' . $team->name,
+                'team_id' => $team->id,
+                'user_id' => $user->id,
+            ],
+            'created_by' => $user->id,
+            'created_at' => now(),
+        ]);
+
+        \App\Models\UserNotification::create([
+            'notification_id' => $notif->id,
+            'user_id' => $ownerId,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'pending',
+            'created_at' => now(),
         ]);
 
         return response()->json([
@@ -505,6 +525,39 @@ class TeamController extends Controller
 
         if (! $member) {
             return response()->json(['status' => 'error', 'message' => 'Pending join request not found'], 404);
+        }
+
+        // Find the notification for this join request
+        $notification = \App\Models\Notification::where('type', 'team_join_request')
+            ->where('data->team_id', $team->id)
+            ->where('data->user_id', $member->user_id)
+            ->latest()
+            ->first();
+
+        $userNotification = null;
+        if ($notification) {
+            $userNotification = \App\Models\UserNotification::where('notification_id', $notification->id)
+                ->where('user_id', $team->created_by)
+                ->first();
+        }
+
+        // Log the action event
+        if ($userNotification) {
+            \App\Models\UserNotificationActionEvent::create([
+                'user_notification_id' => $userNotification->id,
+                'action_key' => $request->action,
+                'metadata' => [
+                    'handled_by' => $user->id,
+                    'handled_at' => now(),
+                    'member_id' => $member->user_id,
+                ],
+                'created_at' => now(),
+            ]);
+
+            // Update notification state
+            $userNotification->action_state = $request->action;
+            $userNotification->is_read = false; // Optionally mark unread for requester
+            $userNotification->save();
         }
 
         if ($request->action === 'accept') {
