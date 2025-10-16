@@ -184,6 +184,7 @@ class PostController extends Controller
                 'notification_id' => $notification->id,
                 'user_id' => $post->author_id, // ✅ FIX: use author_id, not user_id/created_by
                 'pinned' => false,
+                'is_read' => false,
                 'action_state' => 'none',
             ]);
         }
@@ -266,6 +267,7 @@ class PostController extends Controller
                 'notification_id' => $notification->id,
                 'user_id' => $post->author_id, // ✅ owner of the post
                 'pinned' => false,
+                'is_read' => false,
                 'action_state' => 'none',
             ]);
         }

@@ -16,6 +16,9 @@ class Team extends Model
         'certification',
         'certified',
         'team_type',
+        'address_line',   // ADDED
+        'latitude',       // ADDED
+        'longitude',      // ADDED
     ];
 
     public function creator()

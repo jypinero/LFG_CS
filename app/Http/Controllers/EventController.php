@@ -149,6 +149,8 @@ class EventController extends Controller
                     'sport' => $event->sport,
                     'host' => User::find($event->created_by)->username ?? null,
                     'venue' => $event->venue->name ?? null,
+                    'longitude' => $event->venue->longitude ?? null,
+                    'latitude' => $event->venue->latitude ?? null,
                     'facility' => $event->facility->type ?? null,
                     'start_time' => $event->start_time,
                     'end_time' => $event->end_time,
@@ -183,6 +185,8 @@ class EventController extends Controller
                     'sport' => $event->sport,
                     'host' => User::find($event->created_by)->username ?? null,
                     'venue' => $event->venue->name ?? null,
+                    'longitude' => $event->venue->longitude ?? null,
+                    'latitude' => $event->venue->latitude ?? null,
                     'facility' => $event->facility->type ?? null,
                     'start_time' => $event->start_time,
                 ];
@@ -281,6 +285,7 @@ class EventController extends Controller
             'notification_id' => $notification->id,
             'user_id' => $creatorid,
             'pinned' => false,
+            'is_read' => false,
             'action_state' => 'none',
         ]);
 
@@ -316,21 +321,18 @@ class EventController extends Controller
             ], 422);
         }
 
-        // Double booking validation
-        $doubleBooking = Event::where('venue_id', $request->venue_id)
+        // Prevent double booking: same venue + facility, same date, overlapping times
+        $conflict = Event::where('venue_id', $request->venue_id)
             ->where('facility_id', $request->facility_id)
             ->where('date', $request->date)
+            // overlap check: existing.start < new.end AND existing.end > new.start
             ->where(function($q) use ($request) {
-                $q->whereBetween('start_time', [$request->start_time, $request->end_time])
-                  ->orWhereBetween('end_time', [$request->start_time, $request->end_time])
-                  ->orWhere(function($q2) use ($request) {
-                      $q2->where('start_time', '<=', $request->start_time)
-                         ->where('end_time', '>=', $request->end_time);
-                  });
+                $q->where('start_time', '<', $request->end_time)
+                ->where('end_time', '>', $request->start_time);
             })
             ->exists();
 
-        if ($doubleBooking) {
+        if ($conflict) {
             return response()->json([
                 'status' => 'error',
                 'message' => 'Venue and facility are already booked for the selected date and time.'
@@ -355,9 +357,6 @@ class EventController extends Controller
                 'message' => 'User main sport not found'
             ], 404);
         }
-
-        $start_at = $request->date . ' ' . $request->start_time;
-        $end_at = $request->date . ' ' . $request->end_time;
 
         $event = Event::create([
             'name' => $request->name,

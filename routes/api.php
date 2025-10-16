@@ -7,6 +7,7 @@ use App\Http\Controllers\EventController;
 use App\Http\Controllers\VenueController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\NotifController;
+use App\Http\Controllers\TeamController;
 
 /*
 |--------------------------------------------------------------------------
@@ -78,6 +79,9 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/venues', [VenueController::class, 'index']);
     Route::post('/venues/create', [VenueController::class, 'store']);
     Route::post('/venues/{venue}/facilities', [VenueController::class, 'storeFacility']);
+
+    Route::get('/teams', [TeamController::class, 'index']);
+    Route::post('/teams/create', [TeamController::class, 'store']);
 
     
 

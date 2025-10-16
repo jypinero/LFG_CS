@@ -8,6 +8,7 @@ use App\Models\Venue;
 use App\Models\VenuePhoto;
 use App\Models\Facilities;
 use App\Models\FacilityPhoto;
+use App\Models\VenueUser; // ADDED
 
 class VenueController extends Controller
 {
@@ -83,7 +84,14 @@ class VenueController extends Controller
             'verified_at' => $validated['verified_at'] ?? null,
             'verification_expires_at' => $validated['verification_expires_at'] ?? null,
             'created_by' => auth()->id(),
+
         ]);
+
+        // Add creator to venue_users (avoid duplicates)
+        VenueUser::firstOrCreate(
+            ['venue_id' => $venue->id, 'user_id' => auth()->id()],
+            ['role' => 'owner', 'is_primary_owner' => true]
+        );
 
         $venuePhoto = null;
         $imageUrl = null;

@@ -26,7 +26,7 @@ class NotifController extends Controller
         $userId = auth()->id();
 
         $userNotifications = UserNotification::where('user_id', $userId)
-            ->with('notification') // assumes you have a relation set up
+            ->with('notification')
             ->orderBy('created_at', 'desc')
             ->get()
             ->map(function ($userNotif) {
@@ -34,7 +34,10 @@ class NotifController extends Controller
                     'id' => $userNotif->notification->id,
                     'type' => $userNotif->notification->type,
                     'message' => $userNotif->notification->data['message'] ?? '',
-                    'created_at' => $userNotif->notification->created_at,
+                    'notification_created_at' => optional($userNotif->notification->created_at)->toDateTimeString(),
+                    'created_at' => optional($userNotif->created_at)->toDateTimeString(),
+                    'read_at' => optional($userNotif->read_at)->toDateTimeString(), // ADDED
+                    'is_read' => $userNotif->read_at ? true : false,               // ADDED
                     'event_id' => $userNotif->notification->data['event_id'] ?? null,
                     'user_id' => $userNotif->notification->data['user_id'] ?? null,
                     'created_by' => $userNotif->notification->created_by,

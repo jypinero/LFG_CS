@@ -238,7 +238,7 @@ class AuthController extends Controller
         }
 
         // Posts
-        $posts = \App\Models\Post::where('author_id', $id)->get();
+        $posts = \App\Models\Post::where('author_id', $id)->latest()->get();
 
         // Events participated
         $eventParticipants = \App\Models\EventParticipant::where('user_id', $id)->with('event')->get();

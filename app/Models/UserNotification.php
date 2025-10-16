@@ -22,6 +22,7 @@ class UserNotification extends Model
         'user_id',
         'read_at',
         'pinned',
+        'is_read',
         'action_state',
         'action_taken_at',
         'created_at'
