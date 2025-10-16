@@ -47,6 +47,9 @@ Route::middleware('auth:api')->group(function () {
 
     // Route::get('/notifications', [NotifController::class, 'index']);
     Route::get('/users/notifications', [NotifController::class, 'userNotifications']);
+    Route::post('/users/notifications/{id}/read', [NotifController::class, 'markAsRead']);
+    Route::post('/users/notifications/{id}/unread', [NotifController::class, 'markAsUnread']);
+    Route::post('/users/notifications/readall', [NotifController::class, 'markAllRead']);
 
      // User profile routes
     Route::prefix('profile')->group(function () {

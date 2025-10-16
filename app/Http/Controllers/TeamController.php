@@ -15,7 +15,35 @@ class TeamController extends Controller
      */
     public function index()
     {
-        //
+        $teams = Team::all()->map(function ($team) {
+            return [
+                'id' => $team->id,
+                'name' => $team->name,
+                'created_by' => $team->created_by,
+                'team_photo' => $team->team_photo ? asset('storage/' . $team->team_photo) : null,
+                'certification' => $team->certification,
+                'certified' => $team->certified,
+                'team_type' => $team->team_type,
+                'address_line' => $team->address_line,
+                'latitude' => $team->latitude,
+                'longitude' => $team->longitude,
+                'created_at' => $team->created_at,
+                'updated_at' => $team->updated_at,
+                'creator' => $team->creator ? [
+                    'id' => $team->creator->id,
+                    'name' => $team->creator->username,
+                    'email' => $team->creator->email,
+                    // Add other user fields as needed
+                ] : null,
+            ];
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'teams' => $teams
+            ]
+        ]);
     }
 
     /**

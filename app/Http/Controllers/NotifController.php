@@ -52,6 +52,55 @@ class NotifController extends Controller
         ]);
     }
 
+    public function markAsRead($notificationId)
+    {
+        $userId = auth()->id();
+
+        $userNotif = UserNotification::where('notification_id', $notificationId)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (! $userNotif) {
+            return response()->json(['status'=>'error','message'=>'Notification not found'], 404);
+        }
+
+        $userNotif->read_at = now();
+        $userNotif->is_read = true; // ensure boolean flag updated too
+        $userNotif->save();
+
+        return response()->json(['status'=>'success','is_read' => true, 'read_at' => $userNotif->read_at], 200);
+    }
+
+    public function markAsUnread($notificationId)
+    {
+        $userId = auth()->id();
+
+        $userNotif = UserNotification::where('notification_id', $notificationId)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (! $userNotif) {
+            return response()->json(['status'=>'error','message'=>'Notification not found'], 404);
+        }
+
+        $userNotif->read_at = null;
+        $userNotif->is_read = false;
+        $userNotif->save();
+
+        return response()->json(['status'=>'success','is_read' => false], 200);
+    }
+
+    public function markAllRead()
+    {
+        $userId = auth()->id();
+
+        UserNotification::where('user_id', $userId)
+            ->whereNull('read_at')
+            ->update(['read_at' => now(), 'is_read' => true]);
+
+        return response()->json(['status'=>'success','message'=>'All notifications marked read'], 200);
+    }
+
     /**
      * Show the form for creating a new resource.
      */

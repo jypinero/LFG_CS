@@ -13,7 +13,7 @@ use App\Models\EventScore;
 use App\Models\EventTeam;
 use App\Models\Notification;
 use App\Models\UserNotification;
-
+use App\Models\TeamMember; // ADDED
 
 class EventController extends Controller
 {
@@ -202,6 +202,7 @@ class EventController extends Controller
     {
         $validator = \Validator::make($request->all(), [
             'event_id' => 'required|exists:events,id',
+            'team_id' => 'nullable|exists:teams,id', // allow optional team
         ]);
 
         if ($validator->fails()) {
@@ -262,13 +263,29 @@ class EventController extends Controller
             ], 409);
         }
 
+        // If team_id provided, ensure user is a member of that team
+        $teamId = $request->input('team_id');
+        if ($teamId) {
+            $isMember = TeamMember::where('team_id', $teamId)
+                ->where('user_id', $userId)
+                ->exists();
+
+            if (! $isMember) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'You are not a member of the specified team.'
+                ], 403);
+            }
+        }
+
         $participant = EventParticipant::create([
             'event_id' => $event->id,
             'user_id' => $userId,
+            'team_id' => $teamId, // set nullable team id
             'status' => 'confirmed',
         ]);
 
-        //send notif to event creator
+        // send notif to event creator
         $creatorid = $event->created_by;
 
         $notification = Notification::create([
