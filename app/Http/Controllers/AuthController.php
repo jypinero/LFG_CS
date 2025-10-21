@@ -15,6 +15,8 @@ use App\Models\Event;
 use App\Models\Post;
 use App\Models\Sport;
 use App\Models\EventParticipant;
+use App\Models\TeamMember;
+use App\Models\Team;
 
 class AuthController extends Controller
 {
@@ -177,7 +179,11 @@ class AuthController extends Controller
                 'token' => $token,
                 'type' => 'bearer',
             ],
-            'user' => $user->load('role', 'userProfile', 'userAdditionalSports.sport')
+            'user' => $user->load('role', 'userProfile', 'userAdditionalSports.sport'),
+            'has_team' => TeamMember::where('user_id', $user->id)->exists(),
+            'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
+                ->get(['id', 'name'])
+                ->map(function ($t) { return ['id' => $t->id, 'name' => $t->name]; })
         ]);
     }
 
@@ -192,7 +198,11 @@ class AuthController extends Controller
         
         return response()->json([
             'status' => 'success',
-            'user' => $user->load('role', 'userProfile', 'userCertifications', 'userAdditionalSports.sport')
+            'user' => $user->load('role', 'userProfile', 'userCertifications', 'userAdditionalSports.sport'),
+            'has_team' => TeamMember::where('user_id', $user->id)->exists(),
+            'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
+                ->get(['id', 'name'])
+                ->map(function ($t) { return ['id' => $t->id, 'name' => $t->name]; })
         ]);
     }
 

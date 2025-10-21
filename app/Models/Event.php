@@ -42,4 +42,14 @@ class Event extends Model
     {
         return $this->belongsTo(\App\Models\Facilities::class, 'facility_id');
     }
+
+    public function teams()
+    {
+        return $this->hasMany(EventTeam::class);
+    }
+
+    public function isTeamBased()
+    {
+        return $this->event_type === 'team vs team';
+    }
 }

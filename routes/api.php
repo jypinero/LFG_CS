@@ -68,6 +68,8 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/events',[EventController::class, 'index']);
     Route::post('/events/create', [EventController::class, 'store']);
     Route::post('/events/join', [EventController::class, 'joinEvent']);
+    Route::post('/events/join-team', [EventController::class, 'joinEventAsTeam']);
+    Route::post('/events/invite-team', [EventController::class, 'inviteTeamToEvent']);
     Route::get('/events/{id}/participants', [EventController::class , 'eventlist']);
 
     Route::get('/posts', [PostController::class, 'index']);

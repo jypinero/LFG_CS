@@ -22,7 +22,7 @@ class EventController extends Controller
      */
     public function index()
     {
-        $events = Event::with(['venue', 'facility'])
+        $events = Event::with(['venue', 'facility', 'teams.team'])
             ->withCount('participants')
             ->get()
             ->map(function($event) {
@@ -38,7 +38,7 @@ class EventController extends Controller
                 $divide = $totalCost / $event->participants_count;
                 $dividedpay = round($divide, 2);
 
-                return [
+                $eventData = [
                     'id' => $event->id,
                     'name' => $event->name,
                     'description' => $event->description,
@@ -53,8 +53,24 @@ class EventController extends Controller
                     'total_cost' => $totalCost,
                     'cost_per_slot' => $dividedpay,
                     'host' => User::find($event->created_by)->username,
-                    // add more fields as needed
+                    'event_type' => $event->event_type,
                 ];
+
+                // Add team information for team vs team events
+                if ($event->event_type === 'team vs team') {
+                    $eventData['teams'] = $event->teams->map(function($eventTeam) {
+                        return [
+                            'team_id' => $eventTeam->team_id,
+                            'team_name' => $eventTeam->team->name ?? 'Unknown Team',
+                        ];
+                    });
+                    $eventData['teams_count'] = $event->teams->count();
+                    $eventData['slots_display'] = $event->teams->count() . '/' . $event->slots . ' teams';
+                } else {
+                    $eventData['slots_display'] = $event->participants_count . '/' . $event->slots . ' participants';
+                }
+
+                return $eventData;
             });
 
         return response()->json([
@@ -73,7 +89,7 @@ class EventController extends Controller
 
     public function eventlist($event_id)
     {
-        $event = Event::with(['venue', 'facility'])
+        $event = Event::with(['venue', 'facility', 'teams.team'])
             ->withCount('participants')
             ->find($event_id);
 
@@ -101,29 +117,51 @@ class EventController extends Controller
             ->with('user')
             ->get();
 
+        $eventData = [
+            'id' => $event->id,
+            'name' => $event->name,
+            'description' => $event->description,
+            'date' => $event->date,
+            'time' => $event->start_time . ' - ' . $event->end_time,
+            'creator' => User::find($event->created_by)->username,
+            'venue' => [
+                'name' => $event->venue->name,
+                'address' => $event->venue->address,
+            ],
+            'Price/hour' => $event->facility->price_per_hr ?? 0,
+            'Chip-in approx' => $dividedpay,
+            'event_type' => $event->event_type,
+        ];
+
+        // Add team-specific information for team vs team events
+        if ($event->event_type === 'team vs team') {
+            $eventData['slots'] = $event->teams->count() . '/' . $event->slots . ' teams';
+            $eventData['teams'] = $event->teams->map(function($eventTeam) {
+                $teamMembers = EventParticipant::where('event_id', $eventTeam->event_id)
+                    ->where('team_id', $eventTeam->team_id)
+                    ->with('user')
+                    ->get();
+                
+                return [
+                    'team_id' => $eventTeam->team_id,
+                    'team_name' => $eventTeam->team->name ?? 'Unknown Team',
+                    'members' => $teamMembers->map(function($member) {
+                        return $member->user ? $member->user->username : 'Unknown User';
+                    })
+                ];
+            });
+        } else {
+            $eventData['slots'] = $event->participants_count . '/' . $event->slots;
+            $eventData['participants'] = [
+                'name' => $participants->map(function($participant) {
+                    return $participant->user ? $participant->user->username : 'Unknown User';
+                })
+            ];
+        }
+
         return response()->json([
             'status' => 'success',
-            'event' => [
-                'id' => $event->id,
-                'name' => $event->name,
-                'description' => $event->description,
-                'date' => $event->date,
-                'time' => $event->start_time . ' - ' . $event->end_time,
-                'slots' => $event->participants_count . '/' . $event->slots,
-                'creator' => User::find($event->created_by)->username,
-                'venue' => [
-                    'name' => $event->venue->name,
-                    'address' => $event->venue->address,
-                ],
-                'Price/hour' => $event->facility->price_per_hr ?? 0,
-                'Chip-in approx' => $dividedpay,
-                'participants' => [
-                    'name' => $participants->map(function($participant) {
-                        return $participant->user ? $participant->user->username : 'Unknown User';
-                    })
-                ],
-                // add more fields as needed
-            ],
+            'event' => $eventData,
         ]);
     }
 
@@ -303,6 +341,14 @@ class EventController extends Controller
             ], 403);
         }
 
+        // Check if this is a team vs team event
+        if ($event->event_type === 'team vs team') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This is a team vs team event. Please join with your team using the team join endpoint.'
+            ], 400);
+        }
+
         $alreadyJoined = EventParticipant::where('event_id', $event->id)
             ->where('user_id', $userId)
             ->exists();
@@ -386,6 +432,257 @@ class EventController extends Controller
         ], 201);
     }
 
+    public function joinEventAsTeam(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'team_id' => 'required|exists:teams,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+        $teamId = $request->team_id;
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if event is team vs team type
+        if ($event->event_type !== 'team vs team') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This event is not a team vs team event.'
+            ], 400);
+        }
+
+        // Check if user is a member of the specified team
+        $isTeamMember = TeamMember::where('team_id', $teamId)
+            ->where('user_id', $userId)
+            ->exists();
+
+        if (!$isTeamMember) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not a member of the specified team.'
+            ], 403);
+        }
+
+        // Check if team has already joined this event
+        $teamAlreadyJoined = EventTeam::where('event_id', $event->id)
+            ->where('team_id', $teamId)
+            ->exists();
+
+        if ($teamAlreadyJoined) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Your team has already joined this event.'
+            ], 409);
+        }
+
+        // Check if event has available slots (for teams)
+        $currentTeamCount = EventTeam::where('event_id', $event->id)->count();
+        if ($currentTeamCount >= $event->slots) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This event is full. No more teams can join.'
+            ], 409);
+        }
+
+        // Check for conflicting events for all team members
+        $teamMembers = TeamMember::where('team_id', $teamId)->pluck('user_id');
+        $conflict = Event::whereHas('participants', function($q) use ($teamMembers) {
+                $q->whereIn('user_id', $teamMembers);
+            })
+            ->where('date', $event->date)
+            ->where(function($q) use ($event) {
+                $q->whereBetween('start_time', [$event->start_time, $event->end_time])
+                  ->orWhereBetween('end_time', [$event->start_time, $event->end_time])
+                  ->orWhere(function($q2) use ($event) {
+                      $q2->where('start_time', '<=', $event->start_time)
+                         ->where('end_time', '>=', $event->end_time);
+                  });
+            })
+            ->exists();
+
+        if ($conflict) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'One or more team members have conflicting events at this time.'
+            ], 409);
+        }
+
+        // Create EventTeam record
+        $eventTeam = EventTeam::create([
+            'event_id' => $event->id,
+            'team_id' => $teamId,
+        ]);
+
+        // Auto-enroll all team members as participants
+        $enrolledParticipants = [];
+        foreach ($teamMembers as $memberId) {
+            $participant = EventParticipant::create([
+                'event_id' => $event->id,
+                'user_id' => $memberId,
+                'team_id' => $teamId,
+                'status' => 'confirmed',
+            ]);
+            $enrolledParticipants[] = $participant;
+        }
+
+        // Send notification to event creator
+        $creatorId = $event->created_by;
+        $team = \App\Models\Team::find($teamId);
+
+        $notification = Notification::create([
+            'type' => 'team_joined_event',
+            'data' => [
+                'message' => 'Team ' . $team->name . ' has joined your scrimmage: ' . $event->name,
+                'event_id' => $event->id,
+                'team_id' => $teamId,
+            ],
+            'created_by' => $userId,
+        ]);
+
+        UserNotification::create([
+            'notification_id' => $notification->id,
+            'user_id' => $creatorId,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'none',
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Team successfully joined the scrimmage.',
+            'event_team' => $eventTeam,
+            'enrolled_participants' => $enrolledParticipants
+        ], 201);
+    }
+
+    public function inviteTeamToEvent(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'team_id' => 'required|exists:teams,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+        $teamId = $request->team_id;
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if event is team vs team type
+        if ($event->event_type !== 'team vs team') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This event is not a team vs team event.'
+            ], 400);
+        }
+
+        // Check if user is the event creator or a team captain
+        $isEventCreator = $event->created_by == $userId;
+        $isTeamCaptain = TeamMember::where('team_id', $teamId)
+            ->where('user_id', $userId)
+            ->where('role', 'captain')
+            ->exists();
+
+        if (!$isEventCreator && !$isTeamCaptain) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only invite teams if you are the event creator or a team captain.'
+            ], 403);
+        }
+
+        // Check if team has already joined this event
+        $teamAlreadyJoined = EventTeam::where('event_id', $event->id)
+            ->where('team_id', $teamId)
+            ->exists();
+
+        if ($teamAlreadyJoined) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This team has already joined the event.'
+            ], 409);
+        }
+
+        // Check if event has available slots
+        $currentTeamCount = EventTeam::where('event_id', $event->id)->count();
+        if ($currentTeamCount >= $event->slots) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This event is full. No more teams can join.'
+            ], 409);
+        }
+
+        // Get team captain for notification
+        $teamCaptain = TeamMember::where('team_id', $teamId)
+            ->where('role', 'captain')
+            ->with('user')
+            ->first();
+
+        if (!$teamCaptain) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Team captain not found.'
+            ], 404);
+        }
+
+        // Send invitation notification to team captain
+        $notification = Notification::create([
+            'type' => 'team_invitation',
+            'data' => [
+                'message' => 'You have been invited to join the scrimmage: ' . $event->name,
+                'event_id' => $event->id,
+                'team_id' => $teamId,
+                'invited_by' => $userId,
+            ],
+            'created_by' => $userId,
+        ]);
+
+        UserNotification::create([
+            'notification_id' => $notification->id,
+            'user_id' => $teamCaptain->user_id,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'pending',
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Team invitation sent successfully.',
+            'invitation' => [
+                'event_id' => $event->id,
+                'team_id' => $teamId,
+                'invited_to' => $teamCaptain->user->username,
+            ]
+        ], 201);
+    }
+
     /**
      * Store a newly created resource in storage.
      */
@@ -401,6 +698,8 @@ class EventController extends Controller
             'date' => 'required|date',
             'start_time' => 'required|date_format:H:i:s',
             'end_time' => 'required|date_format:H:i:s|after:start_time',
+            'team_ids' => 'required_if:event_type,team vs team|array|min:1',
+            'team_ids.*' => 'exists:teams,id',
         ]);
 
         if ($validator->fails()) {
@@ -409,6 +708,24 @@ class EventController extends Controller
                 'message' => 'Validation failed',
                 'errors' => $validator->errors()
             ], 422);
+        }
+
+        // Additional validation for team vs team events
+        if ($request->event_type === 'team vs team') {
+            $user = auth()->user();
+            $teamIds = $request->team_ids;
+            
+            // Check if user is a member of at least one specified team
+            $isMemberOfAnyTeam = TeamMember::where('user_id', $user->id)
+                ->whereIn('team_id', $teamIds)
+                ->exists();
+                
+            if (!$isMemberOfAnyTeam) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'You must be a member of at least one of the specified teams to create a team vs team event.'
+                ], 403);
+            }
         }
 
         // Prevent double booking: same venue + facility, same date, overlapping times
@@ -462,18 +779,54 @@ class EventController extends Controller
             'created_by' => $user->id,
         ]);
 
-        $participant = EventParticipant::create([
-            'event_id' => $event->id,
-            'user_id' => $user->id,
-            'status' => 'confirmed',
-        ]);
+        // Handle team vs team events
+        if ($request->event_type === 'team vs team') {
+            $teamIds = $request->team_ids;
+            $enrolledParticipants = [];
+            
+            // Create EventTeam records and auto-enroll all team members
+            foreach ($teamIds as $teamId) {
+                // Create EventTeam record
+                EventTeam::create([
+                    'event_id' => $event->id,
+                    'team_id' => $teamId,
+                ]);
+                
+                // Get all team members and auto-enroll them
+                $teamMembers = TeamMember::where('team_id', $teamId)->get();
+                foreach ($teamMembers as $member) {
+                    $participant = EventParticipant::create([
+                        'event_id' => $event->id,
+                        'user_id' => $member->user_id,
+                        'team_id' => $teamId,
+                        'status' => 'confirmed',
+                    ]);
+                    $enrolledParticipants[] = $participant;
+                }
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Team vs team event created successfully',
+                'event' => $event,
+                'teams' => $teamIds,
+                'enrolled_participants' => $enrolledParticipants
+            ], 201);
+        } else {
+            // Handle free for all events (existing logic)
+            $participant = EventParticipant::create([
+                'event_id' => $event->id,
+                'user_id' => $user->id,
+                'status' => 'confirmed',
+            ]);
 
-        return response()->json([
-            'status' => 'success',
-            'message' => 'Event created successfully',
-            'event' => $event,
-            'creator_participant' => $participant
-        ], 201);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Event created successfully',
+                'event' => $event,
+                'creator_participant' => $participant
+            ], 201);
+        }
     }
 
     /**
