@@ -22,6 +22,7 @@ use App\Http\Controllers\TeamController;
 
 // Public routes
 Route::post('/register', [AuthController::class, 'register']);
+Route::get('/register/check-availability', [AuthController::class, 'checkAvailability']);
 Route::post('/login', [AuthController::class, 'login']);
 Route::get('/roles', [AuthController::class, 'getRoles']);
 Route::get('/sports', [AuthController::class, 'getSports']);

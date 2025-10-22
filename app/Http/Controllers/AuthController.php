@@ -27,7 +27,7 @@ class AuthController extends Controller
      */
     public function __construct()
     {
-        $this->middleware('auth:api', ['except' => ['login', 'register', 'getRoles', 'getSports']]);
+        $this->middleware('auth:api', ['except' => ['login', 'register', 'getRoles', 'getSports', 'checkAvailability']]);
     }
 
     /**
@@ -136,6 +136,26 @@ class AuthController extends Controller
                 'error' => $e->getMessage()
             ], 500);
         }
+    }
+
+     public function checkAvailability(Request $request){
+        $field = $request->query('field');
+        $value = $request->query('value');
+
+        if (!in_array($field, ['email', 'username', 'contact_number'])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid field for availability check'
+            ], 400);
+        }
+
+        $exists = User::where($field, $value)->exists();
+
+        return response()->json([
+            'status' => 'success',
+            'field' => $field,
+            'available' => !$exists
+        ]);
     }
 
     /**
