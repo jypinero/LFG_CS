@@ -113,7 +113,19 @@ Route::middleware('auth:api')->group(function () {
 
     Route::get('/venues', [VenueController::class, 'index']);
     Route::post('/venues/create', [VenueController::class, 'store']);
-    Route::post('/venues/{venue}/facilities', [VenueController::class, 'storeFacility']);
+    Route::post('/venues/{venueId}/facilities', [VenueController::class, 'storeFacility']);
+    Route::get('/venues/show/{venueId}', [VenueController::class, 'show']);
+    Route::post('/venues/edit/{venueId}', [VenueController::class, 'update']);
+    Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
+    Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
+    
+    Route::get('/venues/{venueId}/facilities/{facilityId}', [\App\Http\Controllers\VenueController::class, 'showFacilityByVenue']);
+    Route::post('/venues/{venueId}/facilities/edit/{facilityId}', [\App\Http\Controllers\VenueController::class, 'updateFacilityByVenue']);
+    Route::delete('/venues/{venueId}/facilities/delete/{facilityId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityByVenue']);
+    Route::post('/venues/{venueId}/facilities/{facilityId}/photos', [\App\Http\Controllers\VenueController::class, 'addFacilityPhoto'])->name('venues.facilities.photos.store');
+    Route::delete('/venues/{venueId}/facilities/{facilityId}/photos/{photoId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityPhoto'])->name('venues.facilities.photos.destroy');
+    Route::post('/venues/{venueId}/addmembers', [\App\Http\Controllers\VenueController::class, 'addMember']);
+    Route::get('venues/{venueId}/members', [VenueController::class, 'staff']);
 
     Route::get('/teams', [TeamController::class, 'index']);
     Route::post('/teams/create', [TeamController::class, 'store']);

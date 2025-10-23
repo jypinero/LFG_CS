@@ -9,7 +9,10 @@ class FacilityPhoto extends Model
 {
     use HasFactory;
 
-    public $timestamps = false; // since you use uploaded_at, not created_at/updated_at
+    // you store uploaded_at manually, not Eloquent timestamps
+    public $timestamps = false;
+
+    protected $table = 'facility_photos';
 
     protected $fillable = [
         'facility_id',
@@ -21,8 +24,14 @@ class FacilityPhoto extends Model
         'uploaded_at' => 'datetime',
     ];
 
+    // make sure this refers to your Facilities model (you use plural 'Facilities' elsewhere)
     public function facility()
     {
-        return $this->belongsTo(Facility::class);
+        return $this->belongsTo(Facilities::class, 'facility_id');
+    }
+
+    public function photos()
+    {
+        return $this->hasMany(FacilityPhoto::class, 'facility_id');
     }
 }

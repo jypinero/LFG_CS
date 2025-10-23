@@ -138,24 +138,59 @@ class AuthController extends Controller
         }
     }
 
-     public function checkAvailability(Request $request){
+     /**
+     * Live availability + optional email validity check.
+     * Query params: field (email|username|contact_number), value
+     * Example: GET /api/auth/check-availability?field=email&value=user@example.com
+     */
+    public function checkAvailability(Request $request)
+    {
         $field = $request->query('field');
-        $value = $request->query('value');
+        $value = trim($request->query('value', ''));
 
-        if (!in_array($field, ['email', 'username', 'contact_number'])) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'Invalid field for availability check'
-            ], 400);
+        if (! in_array($field, ['email', 'username', 'contact_number'])) {
+            return response()->json(['status' => 'error', 'message' => 'Invalid field'], 400);
+        }
+
+        if ($value === '') {
+            return response()->json(['status' => 'error', 'message' => 'Value is required'], 400);
         }
 
         $exists = User::where($field, $value)->exists();
 
-        return response()->json([
+        $response = [
             'status' => 'success',
             'field' => $field,
-            'available' => !$exists
-        ]);
+            'value' => $value,
+            'available' => ! $exists,
+        ];
+
+        // If checking email, add format + DNS checks (best-effort)
+        if ($field === 'email') {
+            $validFormat = filter_var($value, FILTER_VALIDATE_EMAIL) !== false;
+            $hasMx = false;
+            $hasA = false;
+            $deliverable = false;
+
+            if ($validFormat) {
+                $domain = explode('@', $value)[1] ?? null;
+                if ($domain) {
+                    if (function_exists('idn_to_ascii')) {
+                        $domain = idn_to_ascii($domain, 0, INTL_IDNA_VARIANT_UTS46) ?: $domain;
+                    }
+                    $hasMx = checkdnsrr($domain, 'MX');
+                    $hasA = checkdnsrr($domain, 'A') || checkdnsrr($domain, 'AAAA');
+                }
+                $deliverable = ($hasMx || $hasA);
+            }
+
+            $response['valid_format'] = $validFormat;
+            $response['has_mx'] = $hasMx;
+            $response['has_a_record'] = $hasA;
+            $response['deliverable'] = $deliverable;
+        }
+
+        return response()->json($response, 200);
     }
 
     /**
