@@ -19,6 +19,8 @@ use App\Models\EventParticipant;
 use App\Models\Notification;
 use App\Models\UserNotification;
 use Carbon\Carbon;
+use App\Models\VenueReview;
+use Illuminate\Support\Facades\Schema;
 
 class VenueController extends Controller
 {
@@ -865,30 +867,39 @@ class VenueController extends Controller
     public function addFacilityPhoto(Request $request, $venueId, $facilityId)
     {
         $request->validate([
-            'image.*' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048'
+            'image' => 'required', // accept either single or multiple
+            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
         $facility = Facilities::findOrFail($facilityId);
         $addedPhotos = [];
 
-        if ($request->hasFile('image')) {
-            foreach ($request->file('image') as $imageFile) {
-                $path = $imageFile->store('facility_photo', 'public');
+        // Normalize to array — even if only one file is uploaded
+        $files = $request->file('image');
+        if (!is_array($files)) {
+            $files = [$files];
+        }
 
-                $photo = $facility->photos()->create([
-                    'image_path' => $path,
-                ]);
+        foreach ($files as $imageFile) {
+            $path = $imageFile->store('facility_photo', 'public');
 
-                $addedPhotos[] = $photo;
-            }
+            $photo = $facility->photos()->create([
+                'image_path' => $path,
+            ]);
+
+            $addedPhotos[] = [
+                'id' => $photo->id,
+                'image_url' => Storage::url($photo->image_path),
+                'uploaded_at' => $photo->created_at,
+            ];
         }
 
         return response()->json([
             'status' => 'success',
-            'message' => 'Photos added to facility',
+            'message' => 'Photo(s) added to facility successfully',
             'added_photos' => $addedPhotos,
             'facility' => $facility->load('photos')
-        ]);
+        ], 201);
     }
 
     /**
@@ -931,7 +942,7 @@ class VenueController extends Controller
 
             \Log::info('facility.photo.deleted', ['facility_id'=>$facilityId,'photo_id'=>$photoId,'deleted_by'=>$user->id ?? null]);
 
-            return response()->json(['status' => 'success', 'message' => 'Facility photo deleted'], 200);
+            return response()->json(['status' => 'success', 'message' => 'Facility photo deleted', 'data' => ['photo_id' => $photoId]], 200);
         } catch (\Throwable $e) {
             \Log::error('facility.photo.delete.exception', ['facility_id'=>$facilityId,'photo_id'=>$photoId,'error'=>$e->getMessage()]);
             return response()->json(['status' => 'error', 'message' => 'Delete failed', 'error' => $e->getMessage()], 500);
@@ -948,7 +959,7 @@ class VenueController extends Controller
 
         // only creator can add members
         if (! $auth || $auth->id !== $venue->created_by) {
-            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden', 'venue' => $venue], 403);
         }
 
         $validator = Validator::make($request->all(), [
@@ -1026,6 +1037,7 @@ class VenueController extends Controller
                 'user_id' => $vu->user_id,
                 'username' => $vu->user->username ?? null,
                 'email' => $vu->user->email ?? null,
+                'contact_person' => $vu->user->contact_number ?? null,
                 'role' => $vu->role,
                 'is_primary_owner' => (bool) ($vu->is_primary_owner ?? false),
                 'joined_at' => $vu->created_at,
@@ -1347,6 +1359,285 @@ class VenueController extends Controller
             'data' => [
                 'booking' => $booking->fresh(),
                 'event' => $booking->event->fresh()
+            ]
+        ]);
+    }
+
+    public function PostReview(Request $request, string $venueId)
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+        }
+
+        $venue = Venue::find($venueId);
+        if (! $venue) {
+            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'rating' => 'required|integer|min:1|max:5',
+            'comment' => 'nullable|string|max:1000',
+        ]);
+
+        try {
+            $review = VenueReview::updateOrCreate(
+                ['venue_id' => $venue->id, 'user_id' => $user->id],
+                ['rating' => $validated['rating'], 'comment' => $validated['comment'] ?? null, 'reviewed_at' => now()]
+            );
+        } catch (\Throwable $e) {
+            \Log::error('venue.review.save_failed', ['venue_id' => $venue->id, 'user_id' => $user->id, 'error' => $e->getMessage()]);
+            return response()->json(['status' => 'error', 'message' => 'Failed to save review', 'error' => $e->getMessage()], 500);
+        }
+
+        $average = VenueReview::where('venue_id', $venue->id)->avg('rating');
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Review saved',
+            'review' => $review,
+            'average_rating' => $average !== null ? round((float) $average, 2) : null,
+        ], 201);
+    }
+
+    public function venueReviews(Request $request, string $venueId)
+    {
+        $venue = Venue::find($venueId);
+        if (! $venue) {
+            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
+        }
+
+        $perPage = (int) $request->input('per_page', 20);
+
+        // join with users to include username/email
+        $query = DB::table('venue_reviews as vr')
+            ->where('vr.venue_id', $venueId)
+            ->leftJoin('users as u', 'u.id', '=', 'vr.user_id')
+            ->select(
+                'vr.id',
+                'vr.user_id',
+                'u.username',
+                'u.email',
+                'vr.rating',
+                'vr.comment',
+                'vr.reviewed_at',
+                'vr.created_at',
+                'vr.updated_at'
+            )
+            ->orderBy('vr.reviewed_at', 'desc');
+
+        $paginated = $query->paginate($perPage);
+
+        $average = DB::table('venue_reviews')->where('venue_id', $venueId)->avg('rating');
+        $total = DB::table('venue_reviews')->where('venue_id', $venueId)->count();
+
+        return response()->json([
+            'status' => 'success',
+            'venue_id' => $venueId,
+            'average_rating' => $average !== null ? round((float) $average, 2) : null,
+            'total_reviews' => (int) $total,
+            'reviews' => $paginated->items(),
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
+        ], 200);
+    }
+
+    public function search(Request $request)
+    {
+        $v = $request->validate([
+            'q' => 'required|string|max:255',
+        ]);
+
+        $q = $v['q'];
+
+        $venues = Venue::with(['photos', 'facilities.photos'])
+            ->where('name', 'like', "%{$q}%")
+            ->orderBy('created_at', 'desc')
+            ->get();
+
+        $results = $venues->map(function ($venue) {
+            return [
+                'id' => $venue->id,
+                'name' => $venue->name,
+                'description' => $venue->description,
+                'address' => $venue->address,
+                'latitude' => $venue->latitude,
+                'longitude' => $venue->longitude,
+                'photos' => $venue->photos->map(fn($p) => [
+                    'id' => $p->id,
+                    'image_url' => Storage::url($p->image_path),
+                ]),
+                'facilities_count' => $venue->facilities->count(),
+                'created_at' => $venue->created_at,
+                'updated_at' => $venue->updated_at,
+            ];
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'query' => $q,
+            'results' => $results,
+        ], 200);
+    }
+
+    public function getAnalytics($venueId = null)
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+        }
+
+        // collect venues the user owns/manages or created
+        $ownedIds = Venue::where('created_by', $user->id)->pluck('id')->toArray();
+
+        $managedIds = [];
+        if (class_exists(\App\Models\VenueUser::class)) {
+            $managedIds = VenueUser::where('user_id', $user->id)
+                ->whereIn('role', ['owner', 'manager', 'Owner', 'Manager'])
+                ->pluck('venue_id')
+                ->toArray();
+        }
+
+        $venueIds = array_values(array_unique(array_merge($ownedIds, $managedIds)));
+
+        if (empty($venueIds)) {
+            return response()->json(['status' => 'error', 'message' => 'No venues found for this user'], 403);
+        }
+
+        // detect revenue column on events
+        $possible = ['price','total_fee','amount','fee','price_per_booking'];
+        $revenueColumn = null;
+        foreach ($possible as $col) {
+            if (Schema::hasColumn('events', $col)) {
+                $revenueColumn = $col;
+                break;
+            }
+        }
+
+        // total events (exclude cancelled)
+        $totalEvents = DB::table('events')
+            ->whereIn('venue_id', $venueIds)
+            ->whereNull('cancelled_at')
+            ->count();
+
+        // totalRevenue: prefer events.{revenueColumn} else join facilities.price_per_hr
+        if ($revenueColumn) {
+            $totalRevenue = (float) DB::table('events')
+                ->whereIn('venue_id', $venueIds)
+                ->whereNull('cancelled_at')
+                ->sum($revenueColumn);
+        } elseif (Schema::hasTable('facilities') && Schema::hasColumn('facilities', 'price_per_hr')) {
+            $totalRevenue = (float) DB::table('events')
+                ->join('facilities', 'events.facility_id', '=', 'facilities.id')
+                ->whereIn('events.venue_id', $venueIds)
+                ->whereNull('events.cancelled_at')
+                ->sum('facilities.price_per_hr');
+        } else {
+            $totalRevenue = 0;
+        }
+
+        // total participants (use event_participants if available)
+        if (Schema::hasTable('event_participants')) {
+            $totalParticipants = (int) DB::table('event_participants')
+                ->join('events', 'event_participants.event_id', '=', 'events.id')
+                ->whereIn('events.venue_id', $venueIds)
+                ->whereNull('events.cancelled_at')
+                ->count();
+        } else {
+            $totalParticipants = 0;
+        }
+
+        $averageParticipants = $totalEvents > 0 ? round($totalParticipants / $totalEvents, 2) : 0;
+
+        // recent events (last 7 days) across user's venues
+        $recentEvents = DB::table('events')
+            ->whereIn('venue_id', $venueIds)
+            ->whereNull('cancelled_at')
+            ->where('created_at', '>=', now()->subDays(7))
+            ->orderBy('created_at', 'desc')
+            ->select('id', 'venue_id', 'name', 'created_at')
+            ->get()
+            ->map(fn($e) => [
+                'id' => $e->id,
+                'venue_id' => $e->venue_id,
+                'name' => $e->name,
+                'date' => \Carbon\Carbon::parse($e->created_at)->toDateString()
+            ]);
+
+        // weekly revenue (Mon-Sun) across user's venues - prefer events.date if present
+        $useDate = Schema::hasColumn('events', 'date');
+        $weeklyRevenue = collect(range(0, 6))->map(function ($i) use ($venueIds, $revenueColumn, $useDate) {
+            $day = now()->startOfWeek()->addDays($i);
+            if ($revenueColumn) {
+                $q = DB::table('events')->whereIn('venue_id', $venueIds)->whereNull('cancelled_at');
+                if ($useDate) $q->where('date', $day->toDateString()); else $q->whereDate('created_at', $day);
+                $revenue = (float) $q->sum($revenueColumn);
+            } elseif (Schema::hasTable('facilities') && Schema::hasColumn('facilities', 'price_per_hr')) {
+                $q = DB::table('events')
+                    ->join('facilities', 'events.facility_id', '=', 'facilities.id')
+                    ->whereIn('events.venue_id', $venueIds)
+                    ->whereNull('events.cancelled_at');
+                if ($useDate) $q->where('events.date', $day->toDateString()); else $q->whereDate('events.created_at', $day);
+                $revenue = (float) $q->sum('facilities.price_per_hr');
+            } else {
+                $revenue = 0;
+            }
+
+            return ['day' => $day->format('D'), 'revenue' => $revenue];
+        });
+
+        // per-venue breakdown
+        $venues = Venue::whereIn('id', $venueIds)->get();
+        $venuePerformance = $venues->map(function ($v) use ($revenueColumn) {
+            $vid = $v->id;
+            $eventsCount = DB::table('events')->where('venue_id', $vid)->whereNull('cancelled_at')->count();
+
+            if ($revenueColumn) {
+                $earnings = (float) DB::table('events')->where('venue_id', $vid)->whereNull('cancelled_at')->sum($revenueColumn);
+            } elseif (Schema::hasTable('facilities') && Schema::hasColumn('facilities', 'price_per_hr')) {
+                $earnings = (float) DB::table('events')
+                    ->join('facilities', 'events.facility_id', '=', 'facilities.id')
+                    ->where('events.venue_id', $vid)
+                    ->whereNull('events.cancelled_at')
+                    ->sum('facilities.price_per_hr');
+            } else {
+                $earnings = 0;
+            }
+
+            $participants = Schema::hasTable('event_participants')
+                ? (int) DB::table('event_participants')
+                    ->join('events', 'event_participants.event_id', '=', 'events.id')
+                    ->where('events.venue_id', $vid)
+                    ->whereNull('events.cancelled_at')
+                    ->count()
+                : 0;
+
+            return [
+                'venue_id' => $v->id,
+                'venue_name' => $v->name,
+                'address' => $v->address,
+                'events' => $eventsCount,
+                'participants' => $participants,
+                'earnings' => $earnings,
+            ];
+        })->values();
+
+        return response()->json([
+            'status' => 'success',
+            'analytics' => [
+                'summary' => [
+                    'revenue' => $totalRevenue,
+                    'events' => $totalEvents,
+                    'participants' => $totalParticipants,
+                    'average_participants' => $averageParticipants,
+                ],
+                'weekly_revenue' => $weeklyRevenue,
+                'recent_events' => $recentEvents,
+                'venue_performance' => $venuePerformance,
             ]
         ]);
     }

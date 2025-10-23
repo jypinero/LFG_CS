@@ -40,11 +40,17 @@ class Venue extends Model
     }
 
     // also expose snake_case alias if some code uses 'venue_users'
-    public function venue_users()
+    public function events()
     {
-        return $this->venueUsers();
+        return $this->hasMany(\App\Models\Event::class, 'venue_id');
     }
 
+    // if not present, ensure relation name matches code that uses venue_users
+    public function venue_users()
+    {
+        return $this->hasMany(\App\Models\VenueUser::class, 'venue_id');
+    }
+    
     // optional: clean up files when deleting a venue
     protected static function booted()
     {

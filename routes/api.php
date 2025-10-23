@@ -122,6 +122,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/venues/{venueId}/facilities/{facilityId}', [\App\Http\Controllers\VenueController::class, 'showFacilityByVenue']);
     Route::post('/venues/{venueId}/facilities/edit/{facilityId}', [\App\Http\Controllers\VenueController::class, 'updateFacilityByVenue']);
     Route::delete('/venues/{venueId}/facilities/delete/{facilityId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityByVenue']);
+
     Route::post('/venues/{venueId}/facilities/{facilityId}/photos', [\App\Http\Controllers\VenueController::class, 'addFacilityPhoto'])->name('venues.facilities.photos.store');
     Route::delete('/venues/{venueId}/facilities/{facilityId}/photos/{photoId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityPhoto'])->name('venues.facilities.photos.destroy');
     Route::post('/venues/{venueId}/addmembers', [\App\Http\Controllers\VenueController::class, 'addMember']);
@@ -129,9 +130,16 @@ Route::middleware('auth:api')->group(function () {
 
     // Booking management routes
     Route::get('/venues/bookings', [VenueController::class, 'getBookings']);
-    Route::patch('/venues/bookings/{id}/status', [VenueController::class, 'updateBookingStatus']);
+    Route::put('/venues/bookings/{id}/status', [VenueController::class, 'updateBookingStatus']);
     Route::post('/venues/bookings/{id}/cancel', [VenueController::class, 'cancelEventBooking']);
     Route::patch('/venues/bookings/{id}/reschedule', [VenueController::class, 'rescheduleEventBooking']);
+
+    Route::post('/venues/{venueId}/post-reviews', [\App\Http\Controllers\VenueController::class, 'PostReview']);
+    Route::get('/venues/{venueId}/reviews', [\App\Http\Controllers\VenueController::class, 'venueReviews']);
+
+    Route::get('/venues/search', [\App\Http\Controllers\VenueController::class, 'search']);
+
+    Route::get('/venues/analytics/{venueId?}', [VenueController::class, 'getAnalytics']);
 
     Route::get('/teams', [TeamController::class, 'index']);
     Route::post('/teams/create', [TeamController::class, 'store']);
