@@ -14,9 +14,22 @@ use App\Models\EventTeam;
 use App\Models\Notification;
 use App\Models\UserNotification;
 use App\Models\TeamMember; // ADDED
+use Endroid\QrCode\QrCode;
+use Endroid\QrCode\Writer\SvgWriter;
 
 class EventController extends Controller
 {
+    /**
+     * Generate a unique 4-digit check-in code
+     */
+    private function generateCheckinCode()
+    {
+        do {
+            $code = str_pad(random_int(1000, 9999), 4, '0', STR_PAD_LEFT);
+        } while (Event::where('checkin_code', $code)->exists());
+        
+        return $code;
+    }
     /**
      * Display a listing of the resource.
      */
@@ -358,6 +371,17 @@ class EventController extends Controller
                 'status' => 'error',
                 'message' => 'You have already joined this event.'
             ], 409);
+        }
+
+        // Check if event is full (for free for all events)
+        if ($event->event_type === 'free for all') {
+            $currentParticipants = EventParticipant::where('event_id', $event->id)->count();
+            if ($currentParticipants >= $event->slots) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This event is full. No more participants can join.'
+                ], 409);
+            }
         }
 
         // Check for conflicting events
@@ -777,6 +801,7 @@ class EventController extends Controller
             'start_time' => $request->start_time,
             'end_time' => $request->end_time,
             'created_by' => $user->id,
+            'checkin_code' => $this->generateCheckinCode(),
         ]);
 
         // Handle team vs team events
@@ -834,7 +859,90 @@ class EventController extends Controller
      */
     public function show(string $id)
     {
-        //
+        $event = Event::with(['venue', 'facility', 'teams.team', 'participants.user', 'checkins.user'])
+            ->withCount('participants')
+            ->find($id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found'
+            ], 404);
+        }
+
+        // Calculate hours and costs
+        $start = Carbon::parse($event->start_time);
+        $end = Carbon::parse($event->end_time);
+        $hours = $start->diffInMinutes($end) / 60;
+        $pricePerHour = $event->facility->price_per_hr ?? 0;
+        $totalCost = $hours * $pricePerHour;
+        $costPerPerson = $event->participants_count > 0 ? round($totalCost / $event->participants_count, 2) : 0;
+
+        $eventData = [
+            'id' => $event->id,
+            'name' => $event->name,
+            'description' => $event->description,
+            'event_type' => $event->event_type,
+            'sport' => $event->sport,
+            'status' => $event->status,
+            'date' => $event->date,
+            'start_time' => $event->start_time,
+            'end_time' => $event->end_time,
+            'slots' => $event->slots,
+            'participants_count' => $event->participants_count,
+            'checkin_code' => $event->checkin_code,
+            'cancelled_at' => $event->cancelled_at,
+            'venue' => [
+                'id' => $event->venue->id,
+                'name' => $event->venue->name,
+                'address' => $event->venue->address,
+                'latitude' => $event->venue->latitude,
+                'longitude' => $event->venue->longitude,
+            ],
+            'facility' => [
+                'id' => $event->facility->id,
+                'type' => $event->facility->type,
+                'price_per_hr' => $event->facility->price_per_hr,
+            ],
+            'creator' => [
+                'id' => $event->creator->id,
+                'username' => $event->creator->username,
+            ],
+            'costs' => [
+                'total_cost' => $totalCost,
+                'cost_per_person' => $costPerPerson,
+                'hours' => $hours,
+            ],
+        ];
+
+        // Add team-specific information for team vs team events
+        if ($event->event_type === 'team vs team') {
+            $eventData['teams'] = $event->teams->map(function($eventTeam) {
+                return [
+                    'team_id' => $eventTeam->team_id,
+                    'team_name' => $eventTeam->team->name ?? 'Unknown Team',
+                    'group' => $eventTeam->group,
+                ];
+            });
+        }
+
+        // Add participants with check-in status
+        $eventData['participants'] = $event->participants->map(function($participant) {
+            $checkin = $participant->event->checkins->where('user_id', $participant->user_id)->first();
+            return [
+                'user_id' => $participant->user_id,
+                'username' => $participant->user->username,
+                'status' => $participant->status,
+                'checked_in' => $checkin ? true : false,
+                'checkin_time' => $checkin ? $checkin->checkin_time : null,
+                'team_id' => $participant->team_id,
+            ];
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'event' => $eventData
+        ]);
     }
 
     /**
@@ -850,7 +958,110 @@ class EventController extends Controller
      */
     public function update(Request $request, string $id)
     {
-        //
+        $event = Event::find($id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found'
+            ], 404);
+        }
+
+        // Check if user is the event creator
+        if ($event->created_by !== auth()->user()->id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only update events you created'
+            ], 403);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot update a cancelled event'
+            ], 400);
+        }
+
+        $validator = \Validator::make($request->all(), [
+            'name' => 'sometimes|required|string|max:255',
+            'description' => 'nullable|string',
+            'venue_id' => 'sometimes|required|exists:venues,id',
+            'facility_id' => 'sometimes|required|exists:facilities,id',
+            'slots' => 'sometimes|required|integer|min:1',
+            'date' => 'sometimes|required|date',
+            'start_time' => 'sometimes|required|date_format:H:i:s',
+            'end_time' => 'sometimes|required|date_format:H:i:s|after:start_time',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        // Check for double booking if venue/facility/date/time changed
+        if ($request->hasAny(['venue_id', 'facility_id', 'date', 'start_time', 'end_time'])) {
+            $venueId = $request->venue_id ?? $event->venue_id;
+            $facilityId = $request->facility_id ?? $event->facility_id;
+            $date = $request->date ?? $event->date;
+            $startTime = $request->start_time ?? $event->start_time;
+            $endTime = $request->end_time ?? $event->end_time;
+
+            $conflict = Event::where('venue_id', $venueId)
+                ->where('facility_id', $facilityId)
+                ->where('date', $date)
+                ->where('id', '!=', $event->id) // Exclude current event
+                ->where(function($q) use ($startTime, $endTime) {
+                    $q->where('start_time', '<', $endTime)
+                    ->where('end_time', '>', $startTime);
+                })
+                ->exists();
+
+            if ($conflict) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Venue and facility are already booked for the selected date and time.'
+                ], 409);
+            }
+        }
+
+        // Update event
+        $event->update($request->only([
+            'name', 'description', 'venue_id', 'facility_id', 
+            'slots', 'date', 'start_time', 'end_time'
+        ]));
+
+        // Send notification to all participants about the update
+        $participants = EventParticipant::where('event_id', $event->id)->get();
+        foreach ($participants as $participant) {
+            if ($participant->user_id !== $event->created_by) {
+                $notification = Notification::create([
+                    'type' => 'event_updated',
+                    'data' => [
+                        'message' => 'Event "' . $event->name . '" has been updated',
+                        'event_id' => $event->id,
+                    ],
+                    'created_by' => $event->created_by,
+                ]);
+
+                UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $participant->user_id,
+                    'pinned' => false,
+                    'is_read' => false,
+                    'action_state' => 'none',
+                ]);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Event updated successfully',
+            'event' => $event->fresh(['venue', 'facility'])
+        ]);
     }
 
     /**
@@ -858,6 +1069,1235 @@ class EventController extends Controller
      */
     public function destroy(string $id)
     {
-        //
+        $event = Event::find($id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found'
+            ], 404);
+        }
+
+        // Check if user is the event creator
+        if ($event->created_by !== auth()->user()->id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only cancel events you created'
+            ], 403);
+        }
+
+        // Check if event is already cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event is already cancelled'
+            ], 400);
+        }
+
+        // Cancel the event (soft delete by setting cancelled_at)
+        $event->update(['cancelled_at' => now()]);
+
+        // Send notification to all participants about the cancellation
+        $participants = EventParticipant::where('event_id', $event->id)->get();
+        foreach ($participants as $participant) {
+            if ($participant->user_id !== $event->created_by) {
+                $notification = Notification::create([
+                    'type' => 'event_cancelled',
+                    'data' => [
+                        'message' => 'Event "' . $event->name . '" has been cancelled',
+                        'event_id' => $event->id,
+                    ],
+                    'created_by' => $event->created_by,
+                ]);
+
+                UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $participant->user_id,
+                    'pinned' => false,
+                    'is_read' => false,
+                    'action_state' => 'none',
+                ]);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Event cancelled successfully',
+            'event' => $event->fresh()
+        ]);
+    }
+
+    /**
+     * Leave an event (for participants)
+     */
+    public function leaveEvent(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot leave a cancelled event.'
+            ], 400);
+        }
+
+        // Check if user is the event creator
+        if ($event->created_by == $userId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You cannot leave your own event. Cancel it instead.'
+            ], 403);
+        }
+
+        // Find participant record
+        $participant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (!$participant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not a participant in this event.'
+            ], 404);
+        }
+
+        // For team vs team events, check if user is part of a team
+        if ($event->event_type === 'team vs team' && $participant->team_id) {
+            // Check if this is the last member of the team in this event
+            $teamMembersInEvent = EventParticipant::where('event_id', $event->id)
+                ->where('team_id', $participant->team_id)
+                ->count();
+
+            if ($teamMembersInEvent === 1) {
+                // Remove the entire team from the event
+                EventTeam::where('event_id', $event->id)
+                    ->where('team_id', $participant->team_id)
+                    ->delete();
+            }
+        }
+
+        // Remove participant
+        $participant->delete();
+
+        // Send notification to event creator
+        $notification = Notification::create([
+            'type' => 'event_left',
+            'data' => [
+                'message' => auth()->user()->username . ' has left your event: ' . $event->name,
+                'event_id' => $event->id,
+                'user_id' => $userId,
+            ],
+            'created_by' => $userId,
+        ]);
+
+        UserNotification::create([
+            'notification_id' => $notification->id,
+            'user_id' => $event->created_by,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'none',
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Successfully left the event.'
+        ]);
+    }
+
+    /**
+     * Remove a participant from an event (for event creators)
+     */
+    public function removeParticipant(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'user_id' => 'required|exists:users,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $creatorId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if user is the event creator
+        if ($event->created_by !== $creatorId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only remove participants from events you created.'
+            ], 403);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot remove participants from a cancelled event.'
+            ], 400);
+        }
+
+        // Check if trying to remove the creator
+        if ($request->user_id == $creatorId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You cannot remove yourself from your own event.'
+            ], 400);
+        }
+
+        // Find participant record
+        $participant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $request->user_id)
+            ->first();
+
+        if (!$participant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User is not a participant in this event.'
+            ], 404);
+        }
+
+        // For team vs team events, handle team removal
+        if ($event->event_type === 'team vs team' && $participant->team_id) {
+            // Remove all team members from the event
+            EventParticipant::where('event_id', $event->id)
+                ->where('team_id', $participant->team_id)
+                ->delete();
+
+            // Remove team from event
+            EventTeam::where('event_id', $event->id)
+                ->where('team_id', $participant->team_id)
+                ->delete();
+
+            $team = \App\Models\Team::find($participant->team_id);
+            $message = 'Team "' . $team->name . '" has been removed from your event: ' . $event->name;
+        } else {
+            // Remove individual participant
+            $participant->delete();
+            $user = User::find($request->user_id);
+            $message = 'User "' . $user->username . '" has been removed from your event: ' . $event->name;
+        }
+
+        // Send notification to removed user(s)
+        $removedUserIds = $event->event_type === 'team vs team' && $participant->team_id
+            ? \App\Models\TeamMember::where('team_id', $participant->team_id)->pluck('user_id')
+            : collect([$request->user_id]);
+
+        foreach ($removedUserIds as $userId) {
+            $notification = Notification::create([
+                'type' => 'removed_from_event',
+                'data' => [
+                    'message' => 'You have been removed from event: ' . $event->name,
+                    'event_id' => $event->id,
+                ],
+                'created_by' => $creatorId,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $userId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Participant removed successfully.'
+        ]);
+    }
+
+    /**
+     * Check-in to an event using QR code
+     */
+    public function checkinQR(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'qr_data' => 'required|string', // QR code data from scan
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        
+        // Parse QR code data
+        $qrData = json_decode($request->qr_data, true);
+        $eventId = $qrData['event_id'] ?? null;
+        
+        if (!$eventId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid QR code data.'
+            ], 400);
+        }
+
+        $event = Event::find($eventId);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot check-in to a cancelled event.'
+            ], 400);
+        }
+
+        // Check if user is a participant
+        $participant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (!$participant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not a participant in this event.'
+            ], 403);
+        }
+
+        // Check if already checked in
+        $existingCheckin = EventCheckin::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if ($existingCheckin) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have already checked in to this event.'
+            ], 409);
+        }
+
+        // Create check-in record
+        $checkin = EventCheckin::create([
+            'event_id' => $event->id,
+            'user_id' => $userId,
+            'checked_in_by' => $userId,
+            'checkin_type' => 'qr_self',
+            'checkin_time' => now(),
+        ]);
+
+        // Update participant status
+        $participant->update(['status' => 'checked_in']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Successfully checked in to the event.',
+            'checkin' => $checkin,
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'venue_name' => $event->venue->name,
+            ]
+        ]);
+    }
+
+    /**
+     * Check-in to an event using 4-digit code
+     */
+    public function checkinCode(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'code' => 'required|string|size:4',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Verify check-in code
+        if ($event->checkin_code !== $request->code) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid check-in code.'
+            ], 400);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot check-in to a cancelled event.'
+            ], 400);
+        }
+
+        // Check if user is a participant
+        $participant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (!$participant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not a participant in this event.'
+            ], 403);
+        }
+
+        // Check if already checked in
+        $existingCheckin = EventCheckin::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if ($existingCheckin) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have already checked in to this event.'
+            ], 409);
+        }
+
+        // Create check-in record
+        $checkin = EventCheckin::create([
+            'event_id' => $event->id,
+            'user_id' => $userId,
+            'checked_in_by' => $userId,
+            'checkin_type' => 'code_entry',
+            'checkin_time' => now(),
+        ]);
+
+        // Update participant status
+        $participant->update(['status' => 'checked_in']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Successfully checked in to the event.',
+            'checkin' => $checkin
+        ]);
+    }
+
+    /**
+     * Manual check-in by event organizer
+     */
+    public function checkinManual(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'user_id' => 'required|exists:users,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $organizerId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if user is the event creator
+        if ($event->created_by !== $organizerId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only check-in participants for events you created.'
+            ], 403);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot check-in participants for a cancelled event.'
+            ], 400);
+        }
+
+        // Check if user is a participant
+        $participant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $request->user_id)
+            ->first();
+
+        if (!$participant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User is not a participant in this event.'
+            ], 404);
+        }
+
+        // Check if already checked in
+        $existingCheckin = EventCheckin::where('event_id', $event->id)
+            ->where('user_id', $request->user_id)
+            ->first();
+
+        if ($existingCheckin) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User has already checked in to this event.'
+            ], 409);
+        }
+
+        // Create check-in record
+        $checkin = EventCheckin::create([
+            'event_id' => $event->id,
+            'user_id' => $request->user_id,
+            'checked_in_by' => $organizerId,
+            'checkin_type' => 'manual_by_organizer',
+            'checkin_time' => now(),
+        ]);
+
+        // Update participant status
+        $participant->update(['status' => 'checked_in']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'User successfully checked in to the event.',
+            'checkin' => $checkin
+        ]);
+    }
+
+    /**
+     * View check-in status for an event
+     */
+    public function viewCheckins(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if user is event creator or participant
+        $isCreator = $event->created_by === $userId;
+        $isParticipant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->exists();
+
+        if (!$isCreator && !$isParticipant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only view check-ins for events you created or participate in.'
+            ], 403);
+        }
+
+        // Get all participants with their check-in status
+        $participants = EventParticipant::where('event_id', $event->id)
+            ->with(['user', 'team'])
+            ->get()
+            ->map(function($participant) use ($event) {
+                $checkin = EventCheckin::where('event_id', $event->id)
+                    ->where('user_id', $participant->user_id)
+                    ->first();
+
+                return [
+                    'user_id' => $participant->user_id,
+                    'username' => $participant->user->username,
+                    'status' => $participant->status,
+                    'checked_in' => $checkin ? true : false,
+                    'checkin_time' => $checkin ? $checkin->checkin_time : null,
+                    'checkin_type' => $checkin ? $checkin->checkin_type : null,
+                    'team_id' => $participant->team_id,
+                    'team_name' => $participant->team ? $participant->team->name : null,
+                ];
+            });
+
+        $checkedInCount = $participants->where('checked_in', true)->count();
+        $totalParticipants = $participants->count();
+
+        return response()->json([
+            'status' => 'success',
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'checkin_code' => $event->checkin_code,
+                'status' => $event->status,
+            ],
+            'checkin_summary' => [
+                'total_participants' => $totalParticipants,
+                'checked_in' => $checkedInCount,
+                'not_checked_in' => $totalParticipants - $checkedInCount,
+            ],
+            'participants' => $participants
+        ]);
+    }
+
+    /**
+     * Record score for a team in competitive events
+     */
+    public function recordScore(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'team_id' => 'required|exists:teams,id',
+            'points' => 'required|integer|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if event is competitive (tournament or team vs team)
+        if (!$event->isCompetitive()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Scoring is only available for tournament and team vs team events.'
+            ], 400);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot record scores for a cancelled event.'
+            ], 400);
+        }
+
+        // Check if user is event creator or team member
+        $isCreator = $event->created_by === $userId;
+        $isTeamMember = \App\Models\TeamMember::where('team_id', $request->team_id)
+            ->where('user_id', $userId)
+            ->exists();
+
+        if (!$isCreator && !$isTeamMember) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only record scores for events you created or teams you belong to.'
+            ], 403);
+        }
+
+        // Check if team is participating in this event
+        $teamInEvent = EventTeam::where('event_id', $event->id)
+            ->where('team_id', $request->team_id)
+            ->exists();
+
+        if (!$teamInEvent) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Team is not participating in this event.'
+            ], 404);
+        }
+
+        // Create or update score record
+        $score = EventScore::updateOrCreate(
+            [
+                'event_id' => $event->id,
+                'team_id' => $request->team_id,
+            ],
+            [
+                'points' => $request->points,
+                'recorded_by' => $userId,
+                'timestamp' => now(),
+            ]
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Score recorded successfully.',
+            'score' => $score
+        ]);
+    }
+
+    /**
+     * View scores/leaderboard for competitive events
+     */
+    public function viewScores(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if event is competitive
+        if (!$event->isCompetitive()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Scores are only available for tournament and team vs team events.'
+            ], 400);
+        }
+
+        // Check if user is event creator or participant
+        $isCreator = $event->created_by === $userId;
+        $isParticipant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $userId)
+            ->exists();
+
+        if (!$isCreator && !$isParticipant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only view scores for events you created or participate in.'
+            ], 403);
+        }
+
+        // Get scores with team information
+        $scores = EventScore::where('event_id', $event->id)
+            ->with(['team', 'recorder'])
+            ->orderBy('points', 'desc')
+            ->orderBy('timestamp', 'asc') // Earlier timestamp wins tiebreaker
+            ->get()
+            ->map(function($score) {
+                return [
+                    'team_id' => $score->team_id,
+                    'team_name' => $score->team->name,
+                    'points' => $score->points,
+                    'recorded_by' => $score->recorder->username,
+                    'recorded_at' => $score->timestamp,
+                ];
+            });
+
+        // Get all teams in the event (including those without scores)
+        $allTeams = EventTeam::where('event_id', $event->id)
+            ->with('team')
+            ->get()
+            ->map(function($eventTeam) use ($scores) {
+                $teamScore = $scores->where('team_id', $eventTeam->team_id)->first();
+                return [
+                    'team_id' => $eventTeam->team_id,
+                    'team_name' => $eventTeam->team->name,
+                    'points' => $teamScore ? $teamScore['points'] : 0,
+                    'recorded_by' => $teamScore ? $teamScore['recorded_by'] : null,
+                    'recorded_at' => $teamScore ? $teamScore['recorded_at'] : null,
+                    'has_score' => $teamScore ? true : false,
+                ];
+            })
+            ->sortByDesc('points')
+            ->values();
+
+        return response()->json([
+            'status' => 'success',
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'event_type' => $event->event_type,
+                'status' => $event->status,
+            ],
+            'leaderboard' => $allTeams,
+            'total_teams' => $allTeams->count(),
+            'teams_with_scores' => $scores->count(),
+        ]);
+    }
+
+    /**
+     * Update score for a team
+     */
+    public function updateScore(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'team_id' => 'required|exists:teams,id',
+            'points' => 'required|integer|min:0',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if event is competitive
+        if (!$event->isCompetitive()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Scoring is only available for tournament and team vs team events.'
+            ], 400);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot update scores for a cancelled event.'
+            ], 400);
+        }
+
+        // Check if user is event creator or team member
+        $isCreator = $event->created_by === $userId;
+        $isTeamMember = \App\Models\TeamMember::where('team_id', $request->team_id)
+            ->where('user_id', $userId)
+            ->exists();
+
+        if (!$isCreator && !$isTeamMember) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only update scores for events you created or teams you belong to.'
+            ], 403);
+        }
+
+        // Find existing score
+        $score = EventScore::where('event_id', $event->id)
+            ->where('team_id', $request->team_id)
+            ->first();
+
+        if (!$score) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No score found for this team. Use record score endpoint first.'
+            ], 404);
+        }
+
+        // Update score
+        $score->update([
+            'points' => $request->points,
+            'recorded_by' => $userId,
+            'timestamp' => now(),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Score updated successfully.',
+            'score' => $score->fresh()
+        ]);
+    }
+
+    /**
+     * Accept or decline team invitation
+     */
+    public function respondTeamInvitation(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'notification_id' => 'required|exists:notifications,id',
+            'action' => 'required|in:accept,decline',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $notification = Notification::find($request->notification_id);
+
+        if (!$notification) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Notification not found.'
+            ], 404);
+        }
+
+        // Check if notification is for team invitation
+        if ($notification->type !== 'team_invitation') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This notification is not a team invitation.'
+            ], 400);
+        }
+
+        // Check if user is the intended recipient
+        $userNotification = UserNotification::where('notification_id', $notification->id)
+            ->where('user_id', $userId)
+            ->first();
+
+        if (!$userNotification) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This invitation is not for you.'
+            ], 403);
+        }
+
+        // Check if already responded
+        if ($userNotification->action_state !== 'pending') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You have already responded to this invitation.'
+            ], 400);
+        }
+
+        $eventId = $notification->data['event_id'] ?? null;
+        $teamId = $notification->data['team_id'] ?? null;
+
+        if (!$eventId || !$teamId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid invitation data.'
+            ], 400);
+        }
+
+        $event = Event::find($eventId);
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if user is team captain
+        $isTeamCaptain = TeamMember::where('team_id', $teamId)
+            ->where('user_id', $userId)
+            ->where('role', 'captain')
+            ->exists();
+
+        if (!$isTeamCaptain) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Only team captains can respond to team invitations.'
+            ], 403);
+        }
+
+        // Update notification state
+        $userNotification->action_state = $request->action;
+        $userNotification->is_read = true;
+        $userNotification->save();
+
+        if ($request->action === 'accept') {
+            // Check if team has already joined this event
+            $teamAlreadyJoined = EventTeam::where('event_id', $eventId)
+                ->where('team_id', $teamId)
+                ->exists();
+
+            if ($teamAlreadyJoined) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Your team has already joined this event.'
+                ], 409);
+            }
+
+            // Check if event has available slots
+            $currentTeamCount = EventTeam::where('event_id', $eventId)->count();
+            if ($currentTeamCount >= $event->slots) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This event is full. No more teams can join.'
+                ], 409);
+            }
+
+            // Check for conflicting events for all team members
+            $teamMembers = TeamMember::where('team_id', $teamId)->pluck('user_id');
+            $conflict = Event::whereHas('participants', function($q) use ($teamMembers) {
+                    $q->whereIn('user_id', $teamMembers);
+                })
+                ->where('date', $event->date)
+                ->where(function($q) use ($event) {
+                    $q->whereBetween('start_time', [$event->start_time, $event->end_time])
+                      ->orWhereBetween('end_time', [$event->start_time, $event->end_time])
+                      ->orWhere(function($q2) use ($event) {
+                          $q2->where('start_time', '<=', $event->start_time)
+                             ->where('end_time', '>=', $event->end_time);
+                      });
+                })
+                ->exists();
+
+            if ($conflict) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'One or more team members have conflicting events at this time.'
+                ], 409);
+            }
+
+            // Create EventTeam record
+            $eventTeam = EventTeam::create([
+                'event_id' => $eventId,
+                'team_id' => $teamId,
+            ]);
+
+            // Auto-enroll all team members as participants
+            $enrolledParticipants = [];
+            foreach ($teamMembers as $memberId) {
+                $participant = EventParticipant::create([
+                    'event_id' => $eventId,
+                    'user_id' => $memberId,
+                    'team_id' => $teamId,
+                    'status' => 'confirmed',
+                ]);
+                $enrolledParticipants[] = $participant;
+            }
+
+            // Send notification to event creator
+            $creatorId = $event->created_by;
+            $team = \App\Models\Team::find($teamId);
+
+            $acceptNotification = Notification::create([
+                'type' => 'team_joined_event',
+                'data' => [
+                    'message' => 'Team ' . $team->name . ' has accepted your invitation and joined: ' . $event->name,
+                    'event_id' => $eventId,
+                    'team_id' => $teamId,
+                ],
+                'created_by' => $userId,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $acceptNotification->id,
+                'user_id' => $creatorId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Team invitation accepted successfully.',
+                'event_team' => $eventTeam,
+                'enrolled_participants' => $enrolledParticipants
+            ]);
+        } else {
+            // Decline invitation
+            $team = \App\Models\Team::find($teamId);
+
+            $declineNotification = Notification::create([
+                'type' => 'team_invitation_declined',
+                'data' => [
+                    'message' => 'Team ' . $team->name . ' has declined your invitation to: ' . $event->name,
+                    'event_id' => $eventId,
+                    'team_id' => $teamId,
+                ],
+                'created_by' => $userId,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $declineNotification->id,
+                'user_id' => $event->created_by,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Team invitation declined.'
+            ]);
+        }
+    }
+
+    /**
+     * Generate QR code for event check-in
+     */
+    public function generateQRCode($id)
+    {
+        $userId = auth()->user()->id;
+        $event = Event::find($id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if user is event creator
+        if ($event->created_by !== $userId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only generate QR codes for events you created.'
+            ], 403);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot generate QR code for a cancelled event.'
+            ], 400);
+        }
+
+        // Generate QR code data
+        $qrData = [
+            'event_id' => $event->id,
+            'event_name' => $event->name,
+            'checkin_code' => $event->checkin_code,
+            'venue_name' => $event->venue->name,
+            'date' => $event->date,
+            'start_time' => $event->start_time,
+            'timestamp' => now()->toISOString()
+        ];
+
+        // Create QR code
+        $qrCode = new QrCode(json_encode($qrData));
+
+        // Generate SVG
+        $writer = new SvgWriter();
+        $svgString = $writer->write($qrCode)->getString();
+
+        return response()->json([
+            'status' => 'success',
+            'qr_code_svg' => $svgString,
+            'qr_data' => $qrData,
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'checkin_code' => $event->checkin_code,
+                'date' => $event->date,
+                'start_time' => $event->start_time,
+                'venue_name' => $event->venue->name,
+            ]
+        ]);
+    }
+
+    /**
+     * Generate QR code as PNG image (alternative format)
+     */
+    public function generateQRCodePNG($id)
+    {
+        $userId = auth()->user()->id;
+        $event = Event::find($id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found.'
+            ], 404);
+        }
+
+        // Check if user is event creator
+        if ($event->created_by !== $userId) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You can only generate QR codes for events you created.'
+            ], 403);
+        }
+
+        // Check if event is cancelled
+        if ($event->cancelled_at) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot generate QR code for a cancelled event.'
+            ], 400);
+        }
+
+        // Generate QR code data
+        $qrData = [
+            'event_id' => $event->id,
+            'event_name' => $event->name,
+            'checkin_code' => $event->checkin_code,
+            'venue_name' => $event->venue->name,
+            'date' => $event->date,
+            'start_time' => $event->start_time,
+            'timestamp' => now()->toISOString()
+        ];
+
+        // Create QR code
+        $qrCode = new QrCode(json_encode($qrData));
+
+        // Generate QR code as SVG (doesn't require GD extension)
+        $writer = new \Endroid\QrCode\Writer\SvgWriter();
+        $svgData = $writer->write($qrCode)->getString();
+
+        // Return SVG data instead of PNG
+        return response()->json([
+            'status' => 'success',
+            'qr_code_svg' => $svgData,
+            'qr_data' => $qrData,
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'checkin_code' => $event->checkin_code,
+                'date' => $event->date,
+                'start_time' => $event->start_time,
+                'venue_name' => $event->venue->name,
+            ]
+        ]);
     }
 }

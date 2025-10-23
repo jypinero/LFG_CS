@@ -21,6 +21,8 @@ class Event extends Model
         'start_time',
         'end_time',
         'created_by',
+        'checkin_code',
+        'cancelled_at',
     ];
 
     public function venue()
@@ -51,5 +53,41 @@ class Event extends Model
     public function isTeamBased()
     {
         return $this->event_type === 'team vs team';
+    }
+
+    public function scores()
+    {
+        return $this->hasMany(EventScore::class);
+    }
+
+    public function checkins()
+    {
+        return $this->hasMany(EventCheckin::class);
+    }
+
+    public function getStatusAttribute()
+    {
+        if ($this->cancelled_at) {
+            return 'cancelled';
+        }
+
+        $now = now();
+        $eventStart = \Carbon\Carbon::parse($this->date . ' ' . $this->start_time);
+        $eventEnd = \Carbon\Carbon::parse($this->date . ' ' . $this->end_time);
+
+        if ($now < $eventStart) {
+            return 'upcoming';
+        }
+
+        if ($now >= $eventStart && $now <= $eventEnd) {
+            return 'ongoing';
+        }
+
+        return 'completed';
+    }
+
+    public function isCompetitive()
+    {
+        return in_array($this->event_type, ['tournament', 'team vs team']);
     }
 }

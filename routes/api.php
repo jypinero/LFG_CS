@@ -66,12 +66,36 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/venues/games-played', [EventController::class, 'eventsByVenue']);
 
 
+    // Event routes
     Route::get('/events',[EventController::class, 'index']);
     Route::post('/events/create', [EventController::class, 'store']);
+    Route::get('/events/{id}', [EventController::class, 'show']);
+    Route::put('/events/{id}', [EventController::class, 'update']);
+    Route::delete('/events/{id}', [EventController::class, 'destroy']);
+    
+    // Event participation
     Route::post('/events/join', [EventController::class, 'joinEvent']);
+    Route::post('/events/leave', [EventController::class, 'leaveEvent']);
     Route::post('/events/join-team', [EventController::class, 'joinEventAsTeam']);
     Route::post('/events/invite-team', [EventController::class, 'inviteTeamToEvent']);
+    Route::post('/events/respond-invitation', [EventController::class, 'respondTeamInvitation']);
+    Route::post('/events/remove-participant', [EventController::class, 'removeParticipant']);
     Route::get('/events/{id}/participants', [EventController::class , 'eventlist']);
+    
+    // Event check-in
+    Route::post('/events/checkin/qr', [EventController::class, 'checkinQR']);
+    Route::post('/events/checkin/code', [EventController::class, 'checkinCode']);
+    Route::post('/events/checkin/manual', [EventController::class, 'checkinManual']);
+    Route::get('/events/{id}/checkins', [EventController::class, 'viewCheckins']);
+    
+    // QR Code generation
+    Route::get('/events/{id}/qr-code', [EventController::class, 'generateQRCode']);
+    Route::get('/events/{id}/qr-code-png', [EventController::class, 'generateQRCodePNG']);
+    
+    // Event scoring (for tournaments & team vs team only)
+    Route::post('/events/scores/record', [EventController::class, 'recordScore']);
+    Route::put('/events/scores/update', [EventController::class, 'updateScore']);
+    Route::get('/events/{id}/scores', [EventController::class, 'viewScores']);
 
     Route::get('/posts', [PostController::class, 'index']);
     Route::get('/posts/see/{id}', [PostController::class, 'seepost']);
