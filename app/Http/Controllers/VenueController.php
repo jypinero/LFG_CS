@@ -13,6 +13,12 @@ use App\Models\VenuePhoto;
 use App\Models\Facilities;
 use App\Models\FacilityPhoto;
 use App\Models\VenueUser; // ADDED
+use App\Models\Booking;
+use App\Models\Event;
+use App\Models\EventParticipant;
+use App\Models\Notification;
+use App\Models\UserNotification;
+use Carbon\Carbon;
 
 class VenueController extends Controller
 {
@@ -1049,6 +1055,299 @@ class VenueController extends Controller
             'status' => 'success',
             'venue' => $venueInfo,
             'members' => $members,
+        ]);
+    }
+
+    /**
+     * Get all bookings for venues managed by the authenticated user
+     */
+    public function getBookings()
+    {
+        $user = auth()->user();
+        
+        // Get venues where user is owner/manager
+        $venueIds = VenueUser::where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'manager'])
+            ->pluck('venue_id');
+        
+        // Get bookings for these venues
+        $bookings = Booking::with(['venue', 'event', 'user'])
+            ->whereIn('venue_id', $venueIds)
+            ->orderBy('date', 'desc')
+            ->orderBy('start_time', 'desc')
+            ->get()
+            ->map(function($booking) {
+                return [
+                    'id' => $booking->id,
+                    'status' => $booking->status,
+                    'date' => $booking->date,
+                    'start_time' => $booking->start_time,
+                    'end_time' => $booking->end_time,
+                    'sport' => $booking->sport,
+                    'purpose' => $booking->purpose,
+                    'venue' => [
+                        'id' => $booking->venue->id,
+                        'name' => $booking->venue->name,
+                        'address' => $booking->venue->address,
+                    ],
+                    'user' => [
+                        'id' => $booking->user->id,
+                        'username' => $booking->user->username,
+                        'email' => $booking->user->email,
+                    ],
+                    'event' => [
+                        'id' => $booking->event->id,
+                        'name' => $booking->event->name,
+                        'description' => $booking->event->description,
+                        'event_type' => $booking->event->event_type,
+                        'slots' => $booking->event->slots,
+                    ],
+                    'created_at' => $booking->created_at,
+                    'updated_at' => $booking->updated_at,
+                ];
+            });
+        
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'bookings' => $bookings,
+                'total' => $bookings->count(),
+            ]
+        ]);
+    }
+
+    /**
+     * Update booking status (approve/deny)
+     */
+    public function updateBookingStatus(Request $request, $id)
+    {
+        $user = auth()->user();
+        
+        $booking = Booking::with(['venue', 'event'])->find($id);
+        if (!$booking) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Booking not found'
+            ], 404);
+        }
+        
+        // Check if user is owner/manager of the venue
+        $isAuthorized = VenueUser::where('user_id', $user->id)
+            ->where('venue_id', $booking->venue_id)
+            ->whereIn('role', ['owner', 'manager'])
+            ->exists();
+            
+        if (!$isAuthorized) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not authorized to manage this venue'
+            ], 403);
+        }
+        
+        $validated = $request->validate([
+            'status' => 'required|in:approved,denied'
+        ]);
+        
+        // Update booking status
+        $booking->update(['status' => $validated['status']]);
+        
+        // Create notification for event creator
+        $notification = Notification::create([
+            'type' => 'booking_' . $validated['status'],
+            'data' => [
+                'message' => "Your booking request for {$booking->venue->name} has been {$validated['status']}",
+                'booking_id' => $booking->id,
+                'event_id' => $booking->event_id,
+            ],
+            'created_by' => $user->id,
+        ]);
+        
+        UserNotification::create([
+            'notification_id' => $notification->id,
+            'user_id' => $booking->user_id,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'none',
+        ]);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Booking status updated successfully',
+            'data' => [
+                'booking' => $booking->fresh()
+            ]
+        ]);
+    }
+
+    /**
+     * Cancel an event booking
+     */
+    public function cancelEventBooking(Request $request, $id)
+    {
+        $user = auth()->user();
+        
+        $booking = Booking::with(['venue', 'event'])->find($id);
+        if (!$booking) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Booking not found'
+            ], 404);
+        }
+        
+        // Check if user is owner/manager of the venue
+        $isAuthorized = VenueUser::where('user_id', $user->id)
+            ->where('venue_id', $booking->venue_id)
+            ->whereIn('role', ['owner', 'manager'])
+            ->exists();
+            
+        if (!$isAuthorized) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not authorized to manage this venue'
+            ], 403);
+        }
+        
+        $validated = $request->validate([
+            'reason' => 'required|string|max:500'
+        ]);
+        
+        // Update booking and event
+        $booking->update(['status' => 'cancelled']);
+        $booking->event->update(['cancelled_at' => now()]);
+        
+        // Notify event creator
+        $notification = Notification::create([
+            'type' => 'booking_cancelled',
+            'data' => [
+                'message' => "Your event '{$booking->event->name}' at {$booking->venue->name} has been cancelled. Reason: {$validated['reason']}",
+                'booking_id' => $booking->id,
+                'event_id' => $booking->event_id,
+                'reason' => $validated['reason'],
+            ],
+            'created_by' => $user->id,
+        ]);
+        
+        UserNotification::create([
+            'notification_id' => $notification->id,
+            'user_id' => $booking->user_id,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'none',
+        ]);
+        
+        // Notify all participants
+        $participants = EventParticipant::where('event_id', $booking->event_id)->get();
+        foreach ($participants as $participant) {
+            if ($participant->user_id !== $booking->user_id) {
+                $participantNotification = Notification::create([
+                    'type' => 'event_cancelled',
+                    'data' => [
+                        'message' => "Event '{$booking->event->name}' has been cancelled by the venue. Reason: {$validated['reason']}",
+                        'event_id' => $booking->event_id,
+                        'reason' => $validated['reason'],
+                    ],
+                    'created_by' => $user->id,
+                ]);
+                
+                UserNotification::create([
+                    'notification_id' => $participantNotification->id,
+                    'user_id' => $participant->user_id,
+                    'pinned' => false,
+                    'is_read' => false,
+                    'action_state' => 'none',
+                ]);
+            }
+        }
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Event booking cancelled successfully',
+            'data' => [
+                'booking' => $booking->fresh(),
+                'event' => $booking->event->fresh()
+            ]
+        ]);
+    }
+
+    /**
+     * Reschedule an event booking
+     */
+    public function rescheduleEventBooking(Request $request, $id)
+    {
+        $user = auth()->user();
+        
+        $booking = Booking::with(['venue', 'event'])->find($id);
+        if (!$booking) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Booking not found'
+            ], 404);
+        }
+        
+        // Check if user is owner/manager of the venue
+        $isAuthorized = VenueUser::where('user_id', $user->id)
+            ->where('venue_id', $booking->venue_id)
+            ->whereIn('role', ['owner', 'manager'])
+            ->exists();
+            
+        if (!$isAuthorized) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not authorized to manage this venue'
+            ], 403);
+        }
+        
+        $validated = $request->validate([
+            'new_date' => 'required|date',
+            'new_start_time' => 'required|date_format:H:i:s',
+            'new_end_time' => 'required|date_format:H:i:s|after:new_start_time',
+            'reason' => 'required|string|max:500'
+        ]);
+        
+        // Update booking
+        $booking->update([
+            'date' => $validated['new_date'],
+            'start_time' => $validated['new_start_time'],
+            'end_time' => $validated['new_end_time'],
+        ]);
+        
+        // Update event
+        $booking->event->update([
+            'date' => $validated['new_date'],
+            'start_time' => $validated['new_start_time'],
+            'end_time' => $validated['new_end_time'],
+        ]);
+        
+        // Create notification for event creator
+        $notification = Notification::create([
+            'type' => 'booking_rescheduled',
+            'data' => [
+                'message' => "Your event '{$booking->event->name}' at {$booking->venue->name} has been rescheduled to {$validated['new_date']} at {$validated['new_start_time']}. Reason: {$validated['reason']}",
+                'booking_id' => $booking->id,
+                'event_id' => $booking->event_id,
+                'new_date' => $validated['new_date'],
+                'new_start_time' => $validated['new_start_time'],
+                'new_end_time' => $validated['new_end_time'],
+                'reason' => $validated['reason'],
+            ],
+            'created_by' => $user->id,
+        ]);
+        
+        UserNotification::create([
+            'notification_id' => $notification->id,
+            'user_id' => $booking->user_id,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'none',
+        ]);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Event booking rescheduled successfully',
+            'data' => [
+                'booking' => $booking->fresh(),
+                'event' => $booking->event->fresh()
+            ]
         ]);
     }
     

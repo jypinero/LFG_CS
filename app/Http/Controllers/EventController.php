@@ -14,6 +14,7 @@ use App\Models\EventTeam;
 use App\Models\Notification;
 use App\Models\UserNotification;
 use App\Models\TeamMember; // ADDED
+use App\Models\Booking;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\SvgWriter;
 
@@ -804,6 +805,19 @@ class EventController extends Controller
             'checkin_code' => $this->generateCheckinCode(),
         ]);
 
+        // Create booking for venue approval
+        $booking = Booking::create([
+            'venue_id' => $event->venue_id,
+            'user_id' => $user->id,
+            'event_id' => $event->id,
+            'sport' => $event->sport,
+            'date' => $event->date,
+            'start_time' => $event->start_time,
+            'end_time' => $event->end_time,
+            'purpose' => $request->purpose ?? 'Event: ' . $event->name,
+            'status' => 'pending',
+        ]);
+
         // Handle team vs team events
         if ($request->event_type === 'team vs team') {
             $teamIds = $request->team_ids;
@@ -834,6 +848,7 @@ class EventController extends Controller
                 'status' => 'success',
                 'message' => 'Team vs team event created successfully',
                 'event' => $event,
+                'booking' => $booking,
                 'teams' => $teamIds,
                 'enrolled_participants' => $enrolledParticipants
             ], 201);
@@ -849,6 +864,7 @@ class EventController extends Controller
                 'status' => 'success',
                 'message' => 'Event created successfully',
                 'event' => $event,
+                'booking' => $booking,
                 'creator_participant' => $participant
             ], 201);
         }
@@ -892,7 +908,7 @@ class EventController extends Controller
             'participants_count' => $event->participants_count,
             'checkin_code' => $event->checkin_code,
             'cancelled_at' => $event->cancelled_at,
-            'venue' => [
+                    'venue' => [
                 'id' => $event->venue->id,
                 'name' => $event->venue->name,
                 'address' => $event->venue->address,
@@ -936,8 +952,8 @@ class EventController extends Controller
                 'checked_in' => $checkin ? true : false,
                 'checkin_time' => $checkin ? $checkin->checkin_time : null,
                 'team_id' => $participant->team_id,
-            ];
-        });
+                ];
+            });
 
         return response()->json([
             'status' => 'success',

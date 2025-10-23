@@ -127,6 +127,12 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/venues/{venueId}/addmembers', [\App\Http\Controllers\VenueController::class, 'addMember']);
     Route::get('venues/{venueId}/members', [VenueController::class, 'staff']);
 
+    // Booking management routes
+    Route::get('/venues/bookings', [VenueController::class, 'getBookings']);
+    Route::patch('/venues/bookings/{id}/status', [VenueController::class, 'updateBookingStatus']);
+    Route::post('/venues/bookings/{id}/cancel', [VenueController::class, 'cancelEventBooking']);
+    Route::patch('/venues/bookings/{id}/reschedule', [VenueController::class, 'rescheduleEventBooking']);
+
     Route::get('/teams', [TeamController::class, 'index']);
     Route::post('/teams/create', [TeamController::class, 'store']);
     Route::patch('/teams/{teamId}', [TeamController::class, 'update']);
