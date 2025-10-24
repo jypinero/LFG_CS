@@ -38,7 +38,10 @@ class NotifController extends Controller
                     'created_at' => optional($userNotif->created_at)->toDateTimeString(),
                     'read_at' => optional($userNotif->read_at)->toDateTimeString(), // ADDED
                     'is_read' => $userNotif->read_at ? true : false,               // ADDED
+                    
                     'event_id' => $userNotif->notification->data['event_id'] ?? null,
+                    'team_id' => $userNotif->notification->data['team_id'] ?? null,
+                    'status' => $userNotif->notification->data['status'] ?? null,
                     'user_id' => $userNotif->notification->data['user_id'] ?? null,
                     'created_by' => $userNotif->notification->created_by,
                     'pinned' => $userNotif->pinned,

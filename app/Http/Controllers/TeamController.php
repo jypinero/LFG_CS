@@ -571,6 +571,276 @@ class TeamController extends Controller
     }
 
     /**
+     * Get pending join requests for a team (owner only).
+     */
+    public function getPendingRequests(string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        
+        if (!$team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner can view pending requests
+        if ($user->id !== $team->created_by) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $pendingRequests = TeamMember::where('team_id', $team->id)
+            ->where('role', 'pending')
+            ->with('user:id,username,email,created_at')
+            ->orderBy('joined_at', 'desc')
+            ->get()
+            ->map(function ($member) {
+                return [
+                    'id' => $member->id,
+                    'user_id' => $member->user_id,
+                    'username' => $member->user->username,
+                    'email' => $member->user->email,
+                    'requested_at' => $member->joined_at,
+                    'user_joined_platform' => $member->user->created_at,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+            ],
+            'pending_requests' => $pendingRequests,
+            'total_pending' => $pendingRequests->count(),
+        ]);
+    }
+
+    /**
+     * Get join request history for a team (owner only).
+     */
+    public function getRequestHistory(string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        
+        if (!$team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner can view request history
+        if ($user->id !== $team->created_by) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        // Get notifications related to team join requests
+        $notifications = \App\Models\Notification::where('type', 'team_join_request')
+            ->where('data->team_id', $team->id)
+            ->with(['userNotifications' => function($query) use ($user) {
+                $query->where('user_id', $user->id);
+            }])
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($notification) {
+                $userNotif = $notification->userNotifications->first();
+                return [
+                    'notification_id' => $notification->id,
+                    'user_id' => $notification->data['user_id'] ?? null,
+                    'message' => $notification->data['message'] ?? null,
+                    'action_state' => $userNotif->action_state ?? 'pending',
+                    'created_at' => $notification->created_at,
+                    'handled_at' => $userNotif->updated_at ?? null,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+            ],
+            'request_history' => $notifications,
+        ]);
+    }
+
+    /**
+     * Handle multiple join requests at once (owner only).
+     */
+    public function handleBulkRequests(Request $request, string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        
+        if (!$team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner can handle requests
+        if ($user->id !== $team->created_by) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'requests' => 'required|array',
+            'requests.*.member_id' => 'required|integer',
+            'requests.*.action' => 'required|in:accept,decline',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error', 'message' => 'Validation failed', 'errors' => $validator->errors()], 422);
+        }
+
+        $results = [];
+        $successCount = 0;
+        $errorCount = 0;
+
+        foreach ($request->requests as $requestData) {
+            try {
+                $member = TeamMember::where('team_id', $team->id)
+                    ->where('id', $requestData['member_id'])
+                    ->where('role', 'pending')
+                    ->first();
+
+                if (!$member) {
+                    $results[] = [
+                        'member_id' => $requestData['member_id'],
+                        'status' => 'error',
+                        'message' => 'Pending request not found'
+                    ];
+                    $errorCount++;
+                    continue;
+                }
+
+                // Find and update notification
+                $notification = \App\Models\Notification::where('type', 'team_join_request')
+                    ->where('data->team_id', $team->id)
+                    ->where('data->user_id', $member->user_id)
+                    ->latest()
+                    ->first();
+
+                if ($notification) {
+                    $userNotification = \App\Models\UserNotification::where('notification_id', $notification->id)
+                        ->where('user_id', $team->created_by)
+                        ->first();
+
+                    if ($userNotification) {
+                        \App\Models\UserNotificationActionEvent::create([
+                            'user_notification_id' => $userNotification->id,
+                            'action_key' => $requestData['action'],
+                            'metadata' => [
+                                'handled_by' => $user->id,
+                                'handled_at' => now(),
+                                'member_id' => $member->user_id,
+                            ],
+                            'created_at' => now(),
+                        ]);
+
+                        $userNotification->action_state = $requestData['action'];
+                        $userNotification->save();
+                    }
+                }
+
+                if ($requestData['action'] === 'accept') {
+                    $member->role = 'member';
+                    $member->save();
+                    $results[] = [
+                        'member_id' => $requestData['member_id'],
+                        'user_id' => $member->user_id,
+                        'status' => 'success',
+                        'action' => 'accepted',
+                        'message' => 'Request accepted'
+                    ];
+                } else {
+                    $member->delete();
+                    $results[] = [
+                        'member_id' => $requestData['member_id'],
+                        'user_id' => $member->user_id,
+                        'status' => 'success',
+                        'action' => 'declined',
+                        'message' => 'Request declined'
+                    ];
+                }
+                $successCount++;
+
+            } catch (\Exception $e) {
+                $results[] = [
+                    'member_id' => $requestData['member_id'],
+                    'status' => 'error',
+                    'message' => 'Failed to process request: ' . $e->getMessage()
+                ];
+                $errorCount++;
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "Processed {$successCount} requests successfully, {$errorCount} failed",
+            'results' => $results,
+            'summary' => [
+                'total_processed' => count($request->requests),
+                'successful' => $successCount,
+                'failed' => $errorCount,
+            ]
+        ]);
+    }
+
+    /**
+     * Cancel own join request.
+     */
+    public function cancelJoinRequest(string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        
+        if (!$team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        $pendingRequest = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'pending')
+            ->first();
+
+        if (!$pendingRequest) {
+            return response()->json(['status' => 'error', 'message' => 'No pending request found'], 404);
+        }
+
+        // Delete the pending request
+        $pendingRequest->delete();
+
+        // Update notification if exists
+        $notification = \App\Models\Notification::where('type', 'team_join_request')
+            ->where('data->team_id', $team->id)
+            ->where('data->user_id', $user->id)
+            ->latest()
+            ->first();
+
+        if ($notification) {
+            $userNotification = \App\Models\UserNotification::where('notification_id', $notification->id)
+                ->where('user_id', $team->created_by)
+                ->first();
+
+            if ($userNotification) {
+                \App\Models\UserNotificationActionEvent::create([
+                    'user_notification_id' => $userNotification->id,
+                    'action_key' => 'cancelled',
+                    'metadata' => [
+                        'cancelled_by' => $user->id,
+                        'cancelled_at' => now(),
+                    ],
+                    'created_at' => now(),
+                ]);
+
+                $userNotification->action_state = 'cancelled';
+                $userNotification->save();
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Join request cancelled successfully'
+        ]);
+    }
+
+    /**
      * Remove the specified resource from storage.
      */
     public function destroy(string $id)

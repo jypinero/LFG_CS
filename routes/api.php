@@ -149,8 +149,14 @@ Route::middleware('auth:api')->group(function () {
     Route::patch('/teams/{teamId}/members/{memberId}/role', [TeamController::class, 'editMemberRole']);
     Route::get('teams/{teamId}/members', [TeamController::class, 'members']);
     Route::delete('teams/{teamId}/members/{memberId}', [TeamController::class, 'removeMember']);
+    
+    // Team join request management
     Route::post('teams/{teamId}/request-join', [TeamController::class, 'requestJoinTeam']);
     Route::post('teams/{teamId}/requests/{memberId}/handle', [TeamController::class, 'handleJoinRequest']);
+    Route::get('teams/{teamId}/requests/pending', [TeamController::class, 'getPendingRequests']);
+    Route::get('teams/{teamId}/requests/history', [TeamController::class, 'getRequestHistory']);
+    Route::post('teams/{teamId}/requests/bulk-handle', [TeamController::class, 'handleBulkRequests']);
+    Route::delete('teams/{teamId}/request-cancel', [TeamController::class, 'cancelJoinRequest']);
     
 
 }); 
