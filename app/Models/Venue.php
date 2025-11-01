@@ -20,6 +20,12 @@ class Venue extends Model
         'verified_at',
         'verification_expires_at',
         'created_by',
+        'phone_number',
+        'email',
+        'facebook_url',
+        'instagram_url',
+        'website',
+        'house_rules',
     ];
 
     // relations
@@ -49,6 +55,21 @@ class Venue extends Model
     public function venue_users()
     {
         return $this->hasMany(\App\Models\VenueUser::class, 'venue_id');
+    }
+
+    public function operatingHours()
+    {
+        return $this->hasMany(VenueOperatingHours::class, 'venue_id');
+    }
+
+    public function amenities()
+    {
+        return $this->hasMany(VenueAmenity::class, 'venue_id');
+    }
+
+    public function closureDates()
+    {
+        return $this->hasMany(VenueClosureDate::class, 'venue_id');
     }
     
     // optional: clean up files when deleting a venue

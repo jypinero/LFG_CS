@@ -119,6 +119,9 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
     Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
     
+    // Facilities list route must come before the {facilityId} route to avoid route conflict
+    Route::get('/venues/{venueId}/facilities/list', [VenueController::class, 'getFacilitiesList']);
+    
     Route::get('/venues/{venueId}/facilities/{facilityId}', [\App\Http\Controllers\VenueController::class, 'showFacilityByVenue']);
     Route::post('/venues/{venueId}/facilities/edit/{facilityId}', [\App\Http\Controllers\VenueController::class, 'updateFacilityByVenue']);
     Route::delete('/venues/{venueId}/facilities/delete/{facilityId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityByVenue']);
@@ -141,6 +144,24 @@ Route::middleware('auth:api')->group(function () {
 
     Route::get('/venues/analytics/{venueId?}', [VenueController::class, 'getAnalytics']);
 
+    // Operating Hours Management
+    Route::get('/venues/{venueId}/operating-hours', [VenueController::class, 'getOperatingHours']);
+    Route::post('/venues/{venueId}/operating-hours', [VenueController::class, 'addOperatingHours']);
+    Route::put('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'updateOperatingHours']);
+    Route::delete('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'deleteOperatingHours']);
+
+    // Amenities Management
+    Route::get('/venues/{venueId}/amenities', [VenueController::class, 'getAmenities']);
+    Route::post('/venues/{venueId}/amenities', [VenueController::class, 'addAmenity']);
+    Route::put('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'updateAmenity']);
+    Route::delete('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'deleteAmenity']);
+
+    // Closure Dates Management
+    Route::get('/venues/{venueId}/closure-dates', [VenueController::class, 'getClosureDates']);
+    Route::post('/venues/{venueId}/closure-dates', [VenueController::class, 'addClosureDate']);
+    Route::put('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'updateClosureDate']);
+    Route::delete('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'deleteClosureDate']);
+
     Route::get('/teams', [TeamController::class, 'index']);
     Route::post('/teams/create', [TeamController::class, 'store']);
     Route::patch('/teams/{teamId}', [TeamController::class, 'update']);
@@ -149,14 +170,8 @@ Route::middleware('auth:api')->group(function () {
     Route::patch('/teams/{teamId}/members/{memberId}/role', [TeamController::class, 'editMemberRole']);
     Route::get('teams/{teamId}/members', [TeamController::class, 'members']);
     Route::delete('teams/{teamId}/members/{memberId}', [TeamController::class, 'removeMember']);
-    
-    // Team join request management
     Route::post('teams/{teamId}/request-join', [TeamController::class, 'requestJoinTeam']);
     Route::post('teams/{teamId}/requests/{memberId}/handle', [TeamController::class, 'handleJoinRequest']);
-    Route::get('teams/{teamId}/requests/pending', [TeamController::class, 'getPendingRequests']);
-    Route::get('teams/{teamId}/requests/history', [TeamController::class, 'getRequestHistory']);
-    Route::post('teams/{teamId}/requests/bulk-handle', [TeamController::class, 'handleBulkRequests']);
-    Route::delete('teams/{teamId}/request-cancel', [TeamController::class, 'cancelJoinRequest']);
     
 
 }); 

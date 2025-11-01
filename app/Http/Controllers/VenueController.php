@@ -21,6 +21,9 @@ use App\Models\UserNotification;
 use Carbon\Carbon;
 use App\Models\VenueReview;
 use Illuminate\Support\Facades\Schema;
+use App\Models\VenueOperatingHours;
+use App\Models\VenueAmenity;
+use App\Models\VenueClosureDate;
 
 class VenueController extends Controller
 {
@@ -155,6 +158,12 @@ class VenueController extends Controller
             'longitude' => 'nullable|numeric',
             'verified_at' => 'nullable|date',
             'verification_expires_at' => 'nullable|date',
+            'phone_number' => 'nullable|string|max:20',
+            'email' => 'nullable|email|max:255',
+            'facebook_url' => 'nullable|url|max:255',
+            'instagram_url' => 'nullable|url|max:255',
+            'website' => 'nullable|url|max:255',
+            'house_rules' => 'nullable|string',
             // allow single or multiple files under "image" input
             'image' => 'nullable',
             'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:4096',
@@ -168,6 +177,12 @@ class VenueController extends Controller
             'longitude' => $validated['longitude'] ?? null,
             'verified_at' => $validated['verified_at'] ?? null,
             'verification_expires_at' => $validated['verification_expires_at'] ?? null,
+            'phone_number' => $validated['phone_number'] ?? null,
+            'email' => $validated['email'] ?? null,
+            'facebook_url' => $validated['facebook_url'] ?? null,
+            'instagram_url' => $validated['instagram_url'] ?? null,
+            'website' => $validated['website'] ?? null,
+            'house_rules' => $validated['house_rules'] ?? null,
             'created_by' => auth()->id(),
         ]);
 
@@ -216,6 +231,9 @@ class VenueController extends Controller
         $validated = $request->validate([
             'price_per_hr' => 'required|numeric|min:0',
             'type' => 'required|string',
+            'name' => 'nullable|string|max:255',
+            'capacity' => 'nullable|integer|min:1',
+            'covered' => 'nullable|boolean',
             'image' => 'nullable',
             'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:4096',
         ]);
@@ -225,6 +243,9 @@ class VenueController extends Controller
             'venue_id' => $venueId,
             'price_per_hr' => $validated['price_per_hr'],
             'type' => $validated['type'],
+            'name' => $validated['name'] ?? null,
+            'capacity' => $validated['capacity'] ?? null,
+            'covered' => $validated['covered'] ?? false,
         ]);
 
         $photos = [];
@@ -267,7 +288,7 @@ class VenueController extends Controller
      */
     public function show(string $id)
     {
-        $venue = Venue::with(['photos', 'facilities.photos'])->find($id);
+        $venue = Venue::with(['photos', 'facilities.photos', 'operatingHours', 'amenities', 'closureDates'])->find($id);
         if (! $venue) {
             return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
         }
@@ -279,6 +300,12 @@ class VenueController extends Controller
             'address' => $venue->address,
             'latitude' => $venue->latitude,
             'longitude' => $venue->longitude,
+            'phone_number' => $venue->phone_number,
+            'email' => $venue->email,
+            'facebook_url' => $venue->facebook_url,
+            'instagram_url' => $venue->instagram_url,
+            'website' => $venue->website,
+            'house_rules' => $venue->house_rules,
             'photos' => $venue->photos->map(function ($photo) {
                 return [
                     'id' => $photo->id,
@@ -295,8 +322,11 @@ class VenueController extends Controller
                 return [
                     'id' => $facility->id,
                     'venue_id' => $facility->venue_id,
+                    'name' => $facility->name,
                     'price_per_hr' => $facility->price_per_hr,
                     'type' => $facility->type,
+                    'capacity' => $facility->capacity,
+                    'covered' => $facility->covered,
                     'photos' => $facility->photos->map(function ($photo) {
                         return [
                             'id' => $photo->id,
@@ -308,6 +338,9 @@ class VenueController extends Controller
                     'updated_at' => $facility->updated_at,
                 ];
             }),
+            'operating_hours' => $venue->operatingHours,
+            'amenities' => $venue->amenities,
+            'closure_dates' => $venue->closureDates,
         ];
 
         return response()->json([
@@ -386,11 +419,17 @@ class VenueController extends Controller
             'longitude' => 'nullable|numeric',
             'verified_at' => 'nullable|date',
             'verification_expires_at' => 'nullable|date',
+            'phone_number' => 'nullable|string|max:20',
+            'email' => 'nullable|email|max:255',
+            'facebook_url' => 'nullable|url|max:255',
+            'instagram_url' => 'nullable|url|max:255',
+            'website' => 'nullable|url|max:255',
+            'house_rules' => 'nullable|string',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
         ]);
 
         // collect allowed fields from raw request (so JSON/form-data both work)
-        $allowed = ['name','description','address','latitude','longitude','verified_at','verification_expires_at'];
+        $allowed = ['name','description','address','latitude','longitude','verified_at','verification_expires_at','phone_number','email','facebook_url','instagram_url','website','house_rules'];
         $data = [];
         foreach ($allowed as $f) {
             if ($request->has($f)) {
@@ -1484,7 +1523,7 @@ class VenueController extends Controller
         ], 200);
     }
 
-    public function getAnalytics($venueId = null)
+    public function getAnalytics(Request $request, $venueId = null)
     {
         $user = auth()->user();
         if (! $user) {
@@ -1508,6 +1547,84 @@ class VenueController extends Controller
             return response()->json(['status' => 'error', 'message' => 'No venues found for this user'], 403);
         }
 
+        // Get filter parameters from request
+        $filterVenueId = $request->input('venue_id', $venueId);
+        $facilityId = $request->input('facility_id');
+        $period = $request->input('period', 'all'); // all, this_week, month, semi_annual, annual, custom
+        $startDate = $request->input('start_date');
+        $endDate = $request->input('end_date');
+
+        // Validate venue filter
+        if ($filterVenueId && !in_array($filterVenueId, $venueIds)) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized venue access'], 403);
+        }
+
+        // Apply venue filter if specified
+        if ($filterVenueId) {
+            $venueIds = [$filterVenueId];
+        }
+
+        // Validate facility filter (requires venue_id)
+        if ($facilityId && !$filterVenueId) {
+            return response()->json(['status' => 'error', 'message' => 'facility_id requires venue_id'], 422);
+        }
+
+        // Validate and calculate date range
+        $dateRange = $this->calculateDateRange($period, $startDate, $endDate);
+        if (!$dateRange) {
+            return response()->json(['status' => 'error', 'message' => 'Invalid date range parameters'], 422);
+        }
+
+        $filtersApplied = [
+            'venue_id' => $filterVenueId,
+            'facility_id' => $facilityId,
+            'period' => $period,
+            'date_range' => $dateRange,
+        ];
+
+        // Get facilities list if venue is selected
+        $facilities = [];
+        if ($filterVenueId) {
+            $venue = Venue::with('facilities')->find($filterVenueId);
+            if ($venue) {
+                $facilities = $venue->facilities->map(function ($facility) {
+                    return [
+                        'id' => $facility->id,
+                        'name' => $facility->name ?? $facility->type,
+                        'type' => $facility->type,
+                        'price_per_hr' => $facility->price_per_hr,
+                    ];
+                });
+            }
+        }
+
+        // Build base query with filters
+        $baseQuery = function() use ($venueIds, $facilityId, $dateRange) {
+            $query = DB::table('events')
+                ->whereIn('venue_id', $venueIds)
+                ->whereNull('cancelled_at');
+
+            // Apply facility filter
+            if ($facilityId) {
+                $query->where('facility_id', $facilityId);
+            }
+
+            // Apply date range filter
+            if ($dateRange['start'] && $dateRange['end']) {
+                $useDate = Schema::hasColumn('events', 'date');
+                if ($useDate) {
+                    $query->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
+                } else {
+                    $query->whereBetween('created_at', [
+                        $dateRange['start'] . ' 00:00:00',
+                        $dateRange['end'] . ' 23:59:59'
+                    ]);
+                }
+            }
+
+            return $query;
+        };
+
         // detect revenue column on events
         $possible = ['price','total_fee','amount','fee','price_per_booking'];
         $revenueColumn = null;
@@ -1519,101 +1636,251 @@ class VenueController extends Controller
         }
 
         // total events (exclude cancelled)
-        $totalEvents = DB::table('events')
-            ->whereIn('venue_id', $venueIds)
-            ->whereNull('cancelled_at')
-            ->count();
+        $totalEvents = $baseQuery()->count();
 
         // totalRevenue: prefer events.{revenueColumn} else join facilities.price_per_hr
         if ($revenueColumn) {
-            $totalRevenue = (float) DB::table('events')
-                ->whereIn('venue_id', $venueIds)
-                ->whereNull('cancelled_at')
-                ->sum($revenueColumn);
+            $totalRevenue = (float) $baseQuery()->sum($revenueColumn);
         } elseif (Schema::hasTable('facilities') && Schema::hasColumn('facilities', 'price_per_hr')) {
-            $totalRevenue = (float) DB::table('events')
+            $revenueQuery = DB::table('events')
                 ->join('facilities', 'events.facility_id', '=', 'facilities.id')
                 ->whereIn('events.venue_id', $venueIds)
-                ->whereNull('events.cancelled_at')
-                ->sum('facilities.price_per_hr');
+                ->whereNull('events.cancelled_at');
+
+            if ($facilityId) {
+                $revenueQuery->where('events.facility_id', $facilityId);
+            }
+
+            if ($dateRange['start'] && $dateRange['end']) {
+                $useDate = Schema::hasColumn('events', 'date');
+                if ($useDate) {
+                    $revenueQuery->whereBetween('events.date', [$dateRange['start'], $dateRange['end']]);
+                } else {
+                    $revenueQuery->whereBetween('events.created_at', [
+                        $dateRange['start'] . ' 00:00:00',
+                        $dateRange['end'] . ' 23:59:59'
+                    ]);
+                }
+            }
+
+            $totalRevenue = (float) $revenueQuery->sum('facilities.price_per_hr');
         } else {
             $totalRevenue = 0;
         }
 
         // total participants (use event_participants if available)
         if (Schema::hasTable('event_participants')) {
-            $totalParticipants = (int) DB::table('event_participants')
+            $participantsQuery = DB::table('event_participants')
                 ->join('events', 'event_participants.event_id', '=', 'events.id')
                 ->whereIn('events.venue_id', $venueIds)
-                ->whereNull('events.cancelled_at')
-                ->count();
+                ->whereNull('events.cancelled_at');
+
+            if ($facilityId) {
+                $participantsQuery->where('events.facility_id', $facilityId);
+            }
+
+            if ($dateRange['start'] && $dateRange['end']) {
+                $useDate = Schema::hasColumn('events', 'date');
+                if ($useDate) {
+                    $participantsQuery->whereBetween('events.date', [$dateRange['start'], $dateRange['end']]);
+                } else {
+                    $participantsQuery->whereBetween('events.created_at', [
+                        $dateRange['start'] . ' 00:00:00',
+                        $dateRange['end'] . ' 23:59:59'
+                    ]);
+                }
+            }
+
+            $totalParticipants = (int) $participantsQuery->count();
         } else {
             $totalParticipants = 0;
         }
 
         $averageParticipants = $totalEvents > 0 ? round($totalParticipants / $totalEvents, 2) : 0;
 
-        // recent events (last 7 days) across user's venues
-        $recentEvents = DB::table('events')
+        // recent events - use date range if specified, otherwise last 7 days
+        $recentEventsQuery = DB::table('events')
             ->whereIn('venue_id', $venueIds)
-            ->whereNull('cancelled_at')
-            ->where('created_at', '>=', now()->subDays(7))
-            ->orderBy('created_at', 'desc')
-            ->select('id', 'venue_id', 'name', 'created_at')
+            ->whereNull('cancelled_at');
+
+        if ($facilityId) {
+            $recentEventsQuery->where('facility_id', $facilityId);
+        }
+
+        if ($dateRange['start'] && $dateRange['end']) {
+            $useDate = Schema::hasColumn('events', 'date');
+            if ($useDate) {
+                $recentEventsQuery->whereBetween('date', [$dateRange['start'], $dateRange['end']])
+                    ->orderBy('date', 'desc');
+            } else {
+                $recentEventsQuery->whereBetween('created_at', [
+                    $dateRange['start'] . ' 00:00:00',
+                    $dateRange['end'] . ' 23:59:59'
+                ])->orderBy('created_at', 'desc');
+            }
+        } else {
+            $recentEventsQuery->where('created_at', '>=', now()->subDays(7))
+                ->orderBy('created_at', 'desc');
+        }
+
+        $recentEvents = $recentEventsQuery
+            ->select('id', 'venue_id', 'name', 'created_at', 'date', 'facility_id')
+            ->limit(20)
             ->get()
             ->map(fn($e) => [
                 'id' => $e->id,
                 'venue_id' => $e->venue_id,
                 'name' => $e->name,
-                'date' => \Carbon\Carbon::parse($e->created_at)->toDateString()
+                'date' => $e->date ?? \Carbon\Carbon::parse($e->created_at)->toDateString(),
+                'facility_id' => $e->facility_id ?? null,
             ]);
 
-        // weekly revenue (Mon-Sun) across user's venues - prefer events.date if present
+        // weekly revenue calculation - adapt to date range or use current week
         $useDate = Schema::hasColumn('events', 'date');
-        $weeklyRevenue = collect(range(0, 6))->map(function ($i) use ($venueIds, $revenueColumn, $useDate) {
-            $day = now()->startOfWeek()->addDays($i);
+        $weeklyRevenueDays = $this->getWeeklyRevenueDays($dateRange);
+        
+        $weeklyRevenue = collect($weeklyRevenueDays)->map(function ($day) use ($venueIds, $facilityId, $revenueColumn, $useDate, $dateRange) {
             if ($revenueColumn) {
-                $q = DB::table('events')->whereIn('venue_id', $venueIds)->whereNull('cancelled_at');
-                if ($useDate) $q->where('date', $day->toDateString()); else $q->whereDate('created_at', $day);
+                $q = DB::table('events')
+                    ->whereIn('venue_id', $venueIds)
+                    ->whereNull('cancelled_at');
+                if ($facilityId) $q->where('facility_id', $facilityId);
+                
+                // Apply date filter if custom range, otherwise filter by day
+                if ($dateRange['start'] && $dateRange['end'] && $dateRange['period'] === 'custom') {
+                    if ($useDate) {
+                        $q->where('date', '>=', $dateRange['start'])
+                          ->where('date', '<=', $dateRange['end'])
+                          ->whereDate('date', $day);
+                    } else {
+                        $q->whereDate('created_at', $day)
+                          ->where('created_at', '>=', $dateRange['start'] . ' 00:00:00')
+                          ->where('created_at', '<=', $dateRange['end'] . ' 23:59:59');
+                    }
+                } else {
+                    if ($useDate) {
+                        $q->where('date', $day->toDateString());
+                    } else {
+                        $q->whereDate('created_at', $day);
+                    }
+                }
                 $revenue = (float) $q->sum($revenueColumn);
             } elseif (Schema::hasTable('facilities') && Schema::hasColumn('facilities', 'price_per_hr')) {
                 $q = DB::table('events')
                     ->join('facilities', 'events.facility_id', '=', 'facilities.id')
                     ->whereIn('events.venue_id', $venueIds)
                     ->whereNull('events.cancelled_at');
-                if ($useDate) $q->where('events.date', $day->toDateString()); else $q->whereDate('events.created_at', $day);
+                if ($facilityId) $q->where('events.facility_id', $facilityId);
+                
+                if ($dateRange['start'] && $dateRange['end'] && $dateRange['period'] === 'custom') {
+                    if ($useDate) {
+                        $q->where('events.date', '>=', $dateRange['start'])
+                          ->where('events.date', '<=', $dateRange['end'])
+                          ->whereDate('events.date', $day);
+                    } else {
+                        $q->whereDate('events.created_at', $day)
+                          ->where('events.created_at', '>=', $dateRange['start'] . ' 00:00:00')
+                          ->where('events.created_at', '<=', $dateRange['end'] . ' 23:59:59');
+                    }
+                } else {
+                    if ($useDate) {
+                        $q->where('events.date', $day->toDateString());
+                    } else {
+                        $q->whereDate('events.created_at', $day);
+                    }
+                }
                 $revenue = (float) $q->sum('facilities.price_per_hr');
             } else {
                 $revenue = 0;
             }
 
-            return ['day' => $day->format('D'), 'revenue' => $revenue];
+            return ['day' => $day->format('D'), 'revenue' => $revenue, 'date' => $day->toDateString()];
         });
 
-        // per-venue breakdown
+        // per-venue breakdown (respect filters)
         $venues = Venue::whereIn('id', $venueIds)->get();
-        $venuePerformance = $venues->map(function ($v) use ($revenueColumn) {
+        $venuePerformance = $venues->map(function ($v) use ($revenueColumn, $facilityId, $dateRange) {
             $vid = $v->id;
-            $eventsCount = DB::table('events')->where('venue_id', $vid)->whereNull('cancelled_at')->count();
+            $eventsQuery = DB::table('events')->where('venue_id', $vid)->whereNull('cancelled_at');
+            
+            if ($facilityId) {
+                $eventsQuery->where('facility_id', $facilityId);
+            }
+            
+            if ($dateRange['start'] && $dateRange['end']) {
+                $useDate = Schema::hasColumn('events', 'date');
+                if ($useDate) {
+                    $eventsQuery->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
+                } else {
+                    $eventsQuery->whereBetween('created_at', [
+                        $dateRange['start'] . ' 00:00:00',
+                        $dateRange['end'] . ' 23:59:59'
+                    ]);
+                }
+            }
+            
+            $eventsCount = $eventsQuery->count();
 
             if ($revenueColumn) {
-                $earnings = (float) DB::table('events')->where('venue_id', $vid)->whereNull('cancelled_at')->sum($revenueColumn);
+                $earningsQuery = DB::table('events')->where('venue_id', $vid)->whereNull('cancelled_at');
+                if ($facilityId) $earningsQuery->where('facility_id', $facilityId);
+                if ($dateRange['start'] && $dateRange['end']) {
+                    $useDate = Schema::hasColumn('events', 'date');
+                    if ($useDate) {
+                        $earningsQuery->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
+                    } else {
+                        $earningsQuery->whereBetween('created_at', [
+                            $dateRange['start'] . ' 00:00:00',
+                            $dateRange['end'] . ' 23:59:59'
+                        ]);
+                    }
+                }
+                $earnings = (float) $earningsQuery->sum($revenueColumn);
             } elseif (Schema::hasTable('facilities') && Schema::hasColumn('facilities', 'price_per_hr')) {
-                $earnings = (float) DB::table('events')
+                $earningsQuery = DB::table('events')
                     ->join('facilities', 'events.facility_id', '=', 'facilities.id')
                     ->where('events.venue_id', $vid)
-                    ->whereNull('events.cancelled_at')
-                    ->sum('facilities.price_per_hr');
+                    ->whereNull('events.cancelled_at');
+                if ($facilityId) $earningsQuery->where('events.facility_id', $facilityId);
+                if ($dateRange['start'] && $dateRange['end']) {
+                    $useDate = Schema::hasColumn('events', 'date');
+                    if ($useDate) {
+                        $earningsQuery->whereBetween('events.date', [$dateRange['start'], $dateRange['end']]);
+                    } else {
+                        $earningsQuery->whereBetween('events.created_at', [
+                            $dateRange['start'] . ' 00:00:00',
+                            $dateRange['end'] . ' 23:59:59'
+                        ]);
+                    }
+                }
+                $earnings = (float) $earningsQuery->sum('facilities.price_per_hr');
             } else {
                 $earnings = 0;
             }
 
+            $participantsQuery = DB::table('event_participants')
+                ->join('events', 'event_participants.event_id', '=', 'events.id')
+                ->where('events.venue_id', $vid)
+                ->whereNull('events.cancelled_at');
+                
+            if ($facilityId) {
+                $participantsQuery->where('events.facility_id', $facilityId);
+            }
+            
+            if ($dateRange['start'] && $dateRange['end']) {
+                $useDate = Schema::hasColumn('events', 'date');
+                if ($useDate) {
+                    $participantsQuery->whereBetween('events.date', [$dateRange['start'], $dateRange['end']]);
+                } else {
+                    $participantsQuery->whereBetween('events.created_at', [
+                        $dateRange['start'] . ' 00:00:00',
+                        $dateRange['end'] . ' 23:59:59'
+                    ]);
+                }
+            }
+
             $participants = Schema::hasTable('event_participants')
-                ? (int) DB::table('event_participants')
-                    ->join('events', 'event_participants.event_id', '=', 'events.id')
-                    ->where('events.venue_id', $vid)
-                    ->whereNull('events.cancelled_at')
-                    ->count()
+                ? (int) $participantsQuery->count()
                 : 0;
 
             return [
@@ -1626,9 +1893,52 @@ class VenueController extends Controller
             ];
         })->values();
 
-        return response()->json([
+        // Revenue by facility breakdown (when venue is selected)
+        $revenueByFacility = [];
+        if ($filterVenueId && !$facilityId) {
+            $venueFacilities = Facilities::where('venue_id', $filterVenueId)->get();
+            foreach ($venueFacilities as $facility) {
+                $facilityEventsQuery = DB::table('events')
+                    ->where('venue_id', $filterVenueId)
+                    ->where('facility_id', $facility->id)
+                    ->whereNull('cancelled_at');
+
+                if ($dateRange['start'] && $dateRange['end']) {
+                    $useDate = Schema::hasColumn('events', 'date');
+                    if ($useDate) {
+                        $facilityEventsQuery->whereBetween('date', [$dateRange['start'], $dateRange['end']]);
+                    } else {
+                        $facilityEventsQuery->whereBetween('created_at', [
+                            $dateRange['start'] . ' 00:00:00',
+                            $dateRange['end'] . ' 23:59:59'
+                        ]);
+                    }
+                }
+
+                $facilityEvents = $facilityEventsQuery->count();
+                
+                if ($revenueColumn) {
+                    $facilityRevenue = (float) $facilityEventsQuery->sum($revenueColumn);
+                } elseif (Schema::hasColumn('facilities', 'price_per_hr')) {
+                    $facilityRevenue = (float) $facilityEvents * $facility->price_per_hr;
+                } else {
+                    $facilityRevenue = 0;
+                }
+
+                $revenueByFacility[] = [
+                    'facility_id' => $facility->id,
+                    'facility_name' => $facility->name ?? $facility->type,
+                    'facility_type' => $facility->type,
+                    'events' => $facilityEvents,
+                    'revenue' => $facilityRevenue,
+                ];
+            }
+        }
+
+        $response = [
             'status' => 'success',
             'analytics' => [
+                'filters_applied' => $filtersApplied,
                 'summary' => [
                     'revenue' => $totalRevenue,
                     'events' => $totalEvents,
@@ -1639,6 +1949,525 @@ class VenueController extends Controller
                 'recent_events' => $recentEvents,
                 'venue_performance' => $venuePerformance,
             ]
+        ];
+
+        // Add facilities list if venue is selected
+        if ($filterVenueId) {
+            $response['analytics']['facilities'] = $facilities;
+        }
+
+        // Add revenue by facility if venue selected but no specific facility
+        if (!empty($revenueByFacility)) {
+            $response['analytics']['revenue_by_facility'] = $revenueByFacility;
+        }
+
+        return response()->json($response);
+    }
+
+    /**
+     * Calculate date range based on period parameter
+     */
+    private function calculateDateRange($period, $startDate = null, $endDate = null)
+    {
+        switch ($period) {
+            case 'this_week':
+                return [
+                    'period' => 'this_week',
+                    'start' => now()->startOfWeek()->toDateString(),
+                    'end' => now()->endOfWeek()->toDateString(),
+                ];
+            
+            case 'month':
+                return [
+                    'period' => 'month',
+                    'start' => now()->startOfMonth()->toDateString(),
+                    'end' => now()->endOfMonth()->toDateString(),
+                ];
+            
+            case 'semi_annual':
+                return [
+                    'period' => 'semi_annual',
+                    'start' => now()->subMonths(6)->startOfDay()->toDateString(),
+                    'end' => now()->endOfDay()->toDateString(),
+                ];
+            
+            case 'annual':
+                return [
+                    'period' => 'annual',
+                    'start' => now()->subMonths(12)->startOfDay()->toDateString(),
+                    'end' => now()->endOfDay()->toDateString(),
+                ];
+            
+            case 'custom':
+                if (!$startDate || !$endDate) {
+                    return null; // Invalid custom range
+                }
+                try {
+                    $start = Carbon::parse($startDate)->toDateString();
+                    $end = Carbon::parse($endDate)->toDateString();
+                    if ($start > $end) {
+                        return null; // Invalid range
+                    }
+                    return [
+                        'period' => 'custom',
+                        'start' => $start,
+                        'end' => $end,
+                    ];
+                } catch (\Exception $e) {
+                    return null; // Invalid date format
+                }
+            
+            case 'all':
+            default:
+                return [
+                    'period' => 'all',
+                    'start' => null,
+                    'end' => null,
+                ];
+        }
+    }
+
+    /**
+     * Get days for weekly revenue calculation based on date range
+     */
+    private function getWeeklyRevenueDays($dateRange)
+    {
+        // If custom range spans more than a week, use the range's days
+        // Otherwise, use current week (Mon-Sun)
+        if ($dateRange['period'] === 'custom' && $dateRange['start'] && $dateRange['end']) {
+            $start = Carbon::parse($dateRange['start']);
+            $end = Carbon::parse($dateRange['end']);
+            $daysDiff = $start->diffInDays($end);
+            
+            // If range is 7 days or less, return those days
+            if ($daysDiff <= 7) {
+                $days = [];
+                $current = $start->copy();
+                while ($current->lte($end)) {
+                    $days[] = $current->copy();
+                    $current->addDay();
+                }
+                return $days;
+            }
+        }
+        
+        // Default to current week (Mon-Sun)
+        return collect(range(0, 6))->map(function ($i) {
+            return now()->startOfWeek()->addDays($i);
+        });
+    }
+
+    /**
+     * Get facilities list for a venue (lightweight endpoint for dropdown)
+     */
+    public function getFacilitiesList($venueId)
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+        }
+
+        $venue = Venue::find($venueId);
+        if (!$venue) {
+            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
+        }
+
+        // Check if user owns/manages this venue
+        $isCreator = $user->id === $venue->created_by;
+        $isVenueUserOwner = false;
+        if (class_exists(\App\Models\VenueUser::class)) {
+            $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+                ->where('user_id', $user->id)
+                ->whereIn('role', ['owner', 'manager', 'Owner', 'Manager'])
+                ->exists();
+        }
+
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
+        }
+
+        $facilities = Facilities::where('venue_id', $venueId)
+            ->select('id', 'name', 'type', 'price_per_hr', 'capacity', 'covered')
+            ->get()
+            ->map(function ($facility) {
+                return [
+                    'id' => $facility->id,
+                    'name' => $facility->name ?? $facility->type,
+                    'type' => $facility->type,
+                    'price_per_hr' => $facility->price_per_hr,
+                    'capacity' => $facility->capacity,
+                    'covered' => $facility->covered,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'venue_id' => $venueId,
+                'facilities' => $facilities,
+            ]
+        ]);
+    }
+    
+    // ============ OPERATING HOURS MANAGEMENT ============
+    
+    /**
+     * Get operating hours for a venue
+     */
+    public function getOperatingHours($venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        $hours = VenueOperatingHours::where('venue_id', $venueId)->get();
+        
+        return response()->json([
+            'status' => 'success',
+            'data' => ['operating_hours' => $hours]
+        ]);
+    }
+    
+    /**
+     * Add operating hours for a venue
+     */
+    public function addOperatingHours(Request $request, $venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        
+        // Check ownership
+        $user = auth()->user();
+        $isCreator = $user && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $validated = $request->validate([
+            'day_of_week' => 'required|integer|min:0|max:6',
+            'open_time' => 'required|date_format:H:i:s',
+            'close_time' => 'required|date_format:H:i:s',
+            'is_closed' => 'nullable|boolean',
+        ]);
+        
+        $validated['venue_id'] = $venueId;
+        
+        // Check if entry already exists for this day
+        $existing = VenueOperatingHours::where('venue_id', $venueId)
+            ->where('day_of_week', $validated['day_of_week'])
+            ->first();
+        
+        if ($existing) {
+            $existing->update($validated);
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Operating hours updated successfully',
+                'data' => ['operating_hours' => $existing]
+            ], 200);
+        }
+        
+        $hours = VenueOperatingHours::create($validated);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Operating hours added successfully',
+            'data' => ['operating_hours' => $hours]
+        ], 201);
+    }
+    
+    /**
+     * Update operating hours
+     */
+    public function updateOperatingHours(Request $request, $venueId, $id)
+    {
+        $hours = VenueOperatingHours::findOrFail($id);
+        
+        // Check ownership
+        $user = auth()->user();
+        $venue = $hours->venue;
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $validated = $request->validate([
+            'open_time' => 'required|date_format:H:i:s',
+            'close_time' => 'required|date_format:H:i:s',
+            'is_closed' => 'nullable|boolean',
+        ]);
+        
+        $hours->update($validated);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Operating hours updated successfully',
+            'data' => ['operating_hours' => $hours]
+        ]);
+    }
+    
+    /**
+     * Delete operating hours
+     */
+    public function deleteOperatingHours($venueId, $id)
+    {
+        $hours = VenueOperatingHours::findOrFail($id);
+        
+        // Check ownership
+        $user = auth()->user();
+        $venue = $hours->venue;
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $hours->delete();
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Operating hours deleted successfully'
+        ]);
+    }
+    
+    // ============ AMENITIES MANAGEMENT ============
+    
+    /**
+     * Get amenities for a venue
+     */
+    public function getAmenities($venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        $amenities = VenueAmenity::where('venue_id', $venueId)->get();
+        
+        return response()->json([
+            'status' => 'success',
+            'data' => ['amenities' => $amenities]
+        ]);
+    }
+    
+    /**
+     * Add amenity for a venue
+     */
+    public function addAmenity(Request $request, $venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        
+        // Check ownership
+        $user = auth()->user();
+        $isCreator = $user && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'available' => 'nullable|boolean',
+            'description' => 'nullable|string',
+        ]);
+        
+        $validated['venue_id'] = $venueId;
+        $amenity = VenueAmenity::create($validated);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Amenity added successfully',
+            'data' => ['amenity' => $amenity]
+        ], 201);
+    }
+    
+    /**
+     * Update amenity
+     */
+    public function updateAmenity(Request $request, $venueId, $id)
+    {
+        $amenity = VenueAmenity::findOrFail($id);
+        
+        // Check ownership
+        $user = auth()->user();
+        $venue = $amenity->venue;
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $validated = $request->validate([
+            'name' => 'required|string|max:255',
+            'available' => 'nullable|boolean',
+            'description' => 'nullable|string',
+        ]);
+        
+        $amenity->update($validated);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Amenity updated successfully',
+            'data' => ['amenity' => $amenity]
+        ]);
+    }
+    
+    /**
+     * Delete amenity
+     */
+    public function deleteAmenity($venueId, $id)
+    {
+        $amenity = VenueAmenity::findOrFail($id);
+        
+        // Check ownership
+        $user = auth()->user();
+        $venue = $amenity->venue;
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $amenity->delete();
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Amenity deleted successfully'
+        ]);
+    }
+    
+    // ============ CLOSURE DATES MANAGEMENT ============
+    
+    /**
+     * Get closure dates for a venue
+     */
+    public function getClosureDates($venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        $closures = VenueClosureDate::where('venue_id', $venueId)->get();
+        
+        return response()->json([
+            'status' => 'success',
+            'data' => ['closure_dates' => $closures]
+        ]);
+    }
+    
+    /**
+     * Add closure date for a venue
+     */
+    public function addClosureDate(Request $request, $venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        
+        // Check ownership
+        $user = auth()->user();
+        $isCreator = $user && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $validated = $request->validate([
+            'closure_date' => 'required|date',
+            'reason' => 'nullable|string|max:255',
+            'all_day' => 'nullable|boolean',
+            'start_time' => 'nullable|date_format:H:i:s',
+            'end_time' => 'nullable|date_format:H:i:s',
+        ]);
+        
+        $validated['venue_id'] = $venueId;
+        $closure = VenueClosureDate::create($validated);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Closure date added successfully',
+            'data' => ['closure_date' => $closure]
+        ], 201);
+    }
+    
+    /**
+     * Update closure date
+     */
+    public function updateClosureDate(Request $request, $venueId, $id)
+    {
+        $closure = VenueClosureDate::findOrFail($id);
+        
+        // Check ownership
+        $user = auth()->user();
+        $venue = $closure->venue;
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $validated = $request->validate([
+            'closure_date' => 'required|date',
+            'reason' => 'nullable|string|max:255',
+            'all_day' => 'nullable|boolean',
+            'start_time' => 'nullable|date_format:H:i:s',
+            'end_time' => 'nullable|date_format:H:i:s',
+        ]);
+        
+        $closure->update($validated);
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Closure date updated successfully',
+            'data' => ['closure_date' => $closure]
+        ]);
+    }
+    
+    /**
+     * Delete closure date
+     */
+    public function deleteClosureDate($venueId, $id)
+    {
+        $closure = VenueClosureDate::findOrFail($id);
+        
+        // Check ownership
+        $user = auth()->user();
+        $venue = $closure->venue;
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'Manager'])
+            ->exists();
+        
+        if (!$isCreator && !$isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+        
+        $closure->delete();
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Closure date deleted successfully'
         ]);
     }
     

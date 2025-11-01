@@ -13,6 +13,13 @@ class Facilities extends Model
         'venue_id',
         'price_per_hr',
         'type',
+        'name',
+        'capacity',
+        'covered',
+    ];
+
+    protected $casts = [
+        'covered' => 'boolean',
     ];
 
     public function venue()
