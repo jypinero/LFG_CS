@@ -165,6 +165,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/teams', [TeamController::class, 'index']);
     Route::post('/teams/create', [TeamController::class, 'store']);
     Route::patch('/teams/{teamId}', [TeamController::class, 'update']);
+    Route::post('/teams/{teamId}/photo', [TeamController::class, 'updatePhoto']);
     Route::post('/teams/{teamId}/addmembers', [TeamController::class, 'addMember']);
     Route::post('/teams/{teamId}/transfer-ownership', [TeamController::class, 'transferOwnership']);
     Route::patch('/teams/{teamId}/members/{memberId}/role', [TeamController::class, 'editMemberRole']);
@@ -172,6 +173,32 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('teams/{teamId}/members/{memberId}', [TeamController::class, 'removeMember']);
     Route::post('teams/{teamId}/request-join', [TeamController::class, 'requestJoinTeam']);
     Route::post('teams/{teamId}/requests/{memberId}/handle', [TeamController::class, 'handleJoinRequest']);
+    Route::get('teams/{teamId}/requests/pending', [TeamController::class, 'getPendingRequests']);
+    Route::get('teams/{teamId}/requests/history', [TeamController::class, 'getRequestHistory']);
+    Route::post('teams/{teamId}/requests/handle-bulk', [TeamController::class, 'handleBulkRequests']);
+    Route::post('teams/{teamId}/request-cancel', [TeamController::class, 'cancelJoinRequest']);
     
+    // Roster management
+    Route::patch('/teams/{teamId}/members/{memberId}/roster', [TeamController::class, 'updateRoster']);
+    Route::get('/teams/{teamId}/roster', [TeamController::class, 'getRoster']);
+    Route::patch('/teams/{teamId}/roster-limit', [TeamController::class, 'setRosterLimit']);
+    
+    // Invite links
+    Route::post('/teams/{teamId}/invites/generate', [TeamController::class, 'generateInvite']);
+    Route::post('/teams/invites/{token}/accept', [TeamController::class, 'acceptInvite']);
+    Route::get('/teams/{teamId}/invites', [TeamController::class, 'listInvites']);
+    Route::delete('/teams/{teamId}/invites/{inviteId}', [TeamController::class, 'revokeInvite']);
+    
+    // Certification verification
+    Route::post('/teams/{teamId}/certification/upload', [TeamController::class, 'uploadCertification']);
+    Route::post('/teams/{teamId}/certification/verify-ai', [TeamController::class, 'verifyCertificationAI']);
+    Route::get('/teams/{teamId}/certification/status', [TeamController::class, 'getCertificationStatus']);
+    
+    // Team events and leave
+    Route::get('/teams/{teamId}/events', [TeamController::class, 'getTeamEvents']);
+    Route::post('/teams/{teamId}/leave', [TeamController::class, 'leaveTeam']);
+    
+    // Delete team
+    Route::delete('/teams/{teamId}', [TeamController::class, 'destroy']);
 
 }); 

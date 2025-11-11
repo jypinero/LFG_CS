@@ -10,7 +10,8 @@ class TeamMember extends Model
     use HasFactory;
 
     protected $fillable = [
-        'team_id', 'user_id', 'role', 'joined_at'
+        'team_id', 'user_id', 'role', 'joined_at',
+        'is_active', 'position', 'roster_status' // NEW
     ];
 
     public function team()

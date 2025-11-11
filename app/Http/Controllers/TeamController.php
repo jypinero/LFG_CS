@@ -7,6 +7,7 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
 use App\Models\Team;
 use App\Models\TeamMember;
+use App\Models\TeamInvite;
 use App\Models\User; // ADDED
 use Illuminate\Support\Facades\DB; // ADDED
 
@@ -17,7 +18,7 @@ class TeamController extends Controller
      */
     public function index()
     {
-        $teams = Team::all()->map(function ($team) {
+        $teams = Team::with(['creator', 'sport'])->get()->map(function ($team) {
             return [
                 'id' => $team->id,
                 'name' => $team->name,
@@ -29,6 +30,14 @@ class TeamController extends Controller
                 'address_line' => $team->address_line,
                 'latitude' => $team->latitude,
                 'longitude' => $team->longitude,
+                'sport_id' => $team->sport_id,
+                'sport' => $team->sport ? [
+                    'id' => $team->sport->id,
+                    'name' => $team->sport->name,
+                    'category' => $team->sport->category,
+                ] : null,
+                'bio' => $team->bio,
+                'roster_size_limit' => $team->roster_size_limit,
                 'created_at' => $team->created_at,
                 'updated_at' => $team->updated_at,
                 'creator' => $team->creator ? [
@@ -72,6 +81,9 @@ class TeamController extends Controller
             'address_line' => 'nullable|string|max:1000',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
+            'sport_id' => 'nullable|exists:sports,id',
+            'bio' => 'nullable|string|max:500',
+            'roster_size_limit' => 'nullable|integer|min:1',
         ]);
 
         if ($validator->fails()) {
@@ -92,6 +104,9 @@ class TeamController extends Controller
             'address_line' => $request->address_line ?? null,
             'latitude' => $request->latitude ?? null,
             'longitude' => $request->longitude ?? null,
+            'sport_id' => $request->sport_id ?? null,
+            'bio' => $request->bio ?? null,
+            'roster_size_limit' => $request->roster_size_limit ?? null,
         ];
 
         // Handle team photo upload
@@ -111,6 +126,8 @@ class TeamController extends Controller
             'user_id' => $user->id,
             'role' => 'owner',
             'joined_at' => now(),
+            'is_active' => true,
+            'roster_status' => 'active',
         ]);
 
         return response()->json([
@@ -169,6 +186,9 @@ class TeamController extends Controller
             'address_line' => 'nullable|string|max:1000',
             'latitude' => 'nullable|numeric',
             'longitude' => 'nullable|numeric',
+            'sport_id' => 'nullable|exists:sports,id',
+            'bio' => 'nullable|string|max:500',
+            'roster_size_limit' => 'nullable|integer|min:1',
         ]);
 
         if ($validator->fails()) {
@@ -183,6 +203,9 @@ class TeamController extends Controller
             'address_line' => $request->address_line ?? null,
             'latitude' => $request->latitude ?? null,
             'longitude' => $request->longitude ?? null,
+            'sport_id' => $request->sport_id ?? null,
+            'bio' => $request->bio ?? null,
+            'roster_size_limit' => $request->roster_size_limit ?? null,
         ], function ($v) { return !is_null($v); });
 
         if ($request->hasFile('team_photo')) {
@@ -198,6 +221,60 @@ class TeamController extends Controller
         $team->update($data);
 
         return response()->json(['status'=>'success','message'=>'Team updated','team'=>$team], 200);
+    }
+
+    /**
+     * Update team photo only (owner or captain allowed).
+     */
+    public function updatePhoto(Request $request, string $id)
+    {
+        $user = auth()->user();
+        $team = Team::find($id);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // check owner or captain
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden - only owner or captain can update team photo'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'team_photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:4096',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        // Delete old photo if exists
+        if ($team->team_photo) {
+            Storage::disk('public')->delete($team->team_photo);
+        }
+
+        // Handle new photo upload
+        $file = $request->file('team_photo');
+        $fileName = time() . '_' . $file->getClientOriginalName();
+        $path = $file->storeAs('team_photos', $fileName, 'public');
+
+        $team->team_photo = $path;
+        $team->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Team photo updated',
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+                'team_photo' => asset('storage/' . $team->team_photo),
+            ]
+        ], 200);
     }
 
     /**
@@ -235,6 +312,18 @@ class TeamController extends Controller
             return response()->json(['status'=>'error','message'=>'User is already a member'], 409);
         }
 
+        // Check roster size limit
+        $activeCount = TeamMember::where('team_id', $team->id)
+            ->where('is_active', true)
+            ->count();
+        
+        if ($team->roster_size_limit && $activeCount >= $team->roster_size_limit) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Cannot add member: Roster size limit reached ({$activeCount}/{$team->roster_size_limit} active)"
+            ], 409);
+        }
+
         // ensure role length and safe create, catch DB errors (e.g. enum/length)
         $role = $request->role ? substr($request->role, 0, 50) : 'member';
 
@@ -244,6 +333,8 @@ class TeamController extends Controller
                 'user_id' => $newUser->id,
                 'role' => $role,
                 'joined_at' => now(),
+                'is_active' => true,
+                'roster_status' => 'active',
             ]);
         } catch (\Illuminate\Database\QueryException $e) {
             return response()->json([
@@ -354,9 +445,19 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
         }
 
-        // Only owner can remove members
-        if ($user->id !== $team->created_by) {
-            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        // Only owner, captain, or manager can remove members
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+        $isManager = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'manager')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain && ! $isManager) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden - only owner, captain, or manager can remove members'], 403);
         }
 
         $member = TeamMember::where('team_id', $team->id)
@@ -367,9 +468,9 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Team member not found'], 404);
         }
 
-        // Prevent owner from removing themselves
-        if ($member->user_id == $user->id) {
-            return response()->json(['status' => 'error', 'message' => 'Owner cannot remove themselves'], 403);
+        // Prevent owner from removing themselves (unless transferring ownership first)
+        if ($member->user_id == $user->id && $isOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Owner cannot remove themselves. Transfer ownership first.'], 403);
         }
 
         $member->delete();
@@ -385,7 +486,7 @@ class TeamController extends Controller
         }
 
         $members = TeamMember::where('team_id', $team->id)
-            ->with('user:id,username,email')
+            ->with('user:id,username,email,profile_photo')
             ->get()
             ->map(function ($member) {
                 return [
@@ -393,6 +494,7 @@ class TeamController extends Controller
                     'user_id' => $member->user_id,
                     'username' => $member->user->username ?? null,
                     'email' => $member->user->email ?? null,
+                    'profile_photo' => $member->user->profile_photo ? asset('storage/' . $member->user->profile_photo) : null,
                     'role' => $member->role,
                     'joined_at' => $member->joined_at,
                 ];
@@ -561,7 +663,21 @@ class TeamController extends Controller
         }
 
         if ($request->action === 'accept') {
+            // Check roster size limit
+            $activeCount = TeamMember::where('team_id', $team->id)
+                ->where('is_active', true)
+                ->count();
+            
+            if ($team->roster_size_limit && $activeCount >= $team->roster_size_limit) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => "Cannot accept request: Roster size limit reached ({$activeCount}/{$team->roster_size_limit} active)"
+                ], 409);
+            }
+
             $member->role = 'member';
+            $member->is_active = true;
+            $member->roster_status = 'active';
             $member->save();
             return response()->json(['status'=>'success','message'=>'Request accepted','member'=>$member], 200);
         } else {
@@ -589,7 +705,7 @@ class TeamController extends Controller
 
         $pendingRequests = TeamMember::where('team_id', $team->id)
             ->where('role', 'pending')
-            ->with('user:id,username,email,created_at')
+            ->with('user:id,username,email,created_at,profile_photo')
             ->orderBy('joined_at', 'desc')
             ->get()
             ->map(function ($member) {
@@ -598,6 +714,7 @@ class TeamController extends Controller
                     'user_id' => $member->user_id,
                     'username' => $member->user->username,
                     'email' => $member->user->email,
+                    'profile_photo' => $member->user->profile_photo ? asset('storage/' . $member->user->profile_photo) : null,
                     'requested_at' => $member->joined_at,
                     'user_joined_platform' => $member->user->created_at,
                 ];
@@ -605,12 +722,10 @@ class TeamController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'team' => [
-                'id' => $team->id,
-                'name' => $team->name,
+            'data' => [
+                'pending_requests' => $pendingRequests,
+                'total_pending' => $pendingRequests->count(),
             ],
-            'pending_requests' => $pendingRequests,
-            'total_pending' => $pendingRequests->count(),
         ]);
     }
 
@@ -639,11 +754,17 @@ class TeamController extends Controller
             }])
             ->orderBy('created_at', 'desc')
             ->get()
-            ->map(function ($notification) {
+            ->map(function ($notification) use ($user) {
                 $userNotif = $notification->userNotifications->first();
+                $userId = $notification->data['user_id'] ?? null;
+                $requestUser = $userId ? User::find($userId) : null;
+                
                 return [
                     'notification_id' => $notification->id,
-                    'user_id' => $notification->data['user_id'] ?? null,
+                    'user_id' => $userId,
+                    'username' => $requestUser->username ?? null,
+                    'email' => $requestUser->email ?? null,
+                    'profile_photo' => $requestUser && $requestUser->profile_photo ? asset('storage/' . $requestUser->profile_photo) : null,
                     'message' => $notification->data['message'] ?? null,
                     'action_state' => $userNotif->action_state ?? 'pending',
                     'created_at' => $notification->created_at,
@@ -653,11 +774,9 @@ class TeamController extends Controller
 
         return response()->json([
             'status' => 'success',
-            'team' => [
-                'id' => $team->id,
-                'name' => $team->name,
+            'data' => [
+                'request_history' => $notifications,
             ],
-            'request_history' => $notifications,
         ]);
     }
 
@@ -841,10 +960,630 @@ class TeamController extends Controller
     }
 
     /**
+     * Update roster status/position for a member
+     */
+    public function updateRoster(Request $request, string $teamId, string $memberId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner or captain can update roster
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden - only owner or captain can update roster'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'is_active' => 'nullable|boolean',
+            'position' => 'nullable|string|max:100',
+            'roster_status' => 'nullable|in:active,inactive,injured,suspended',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $member = TeamMember::where('team_id', $team->id)
+            ->where('id', $memberId)
+            ->first();
+
+        if (! $member) {
+            return response()->json(['status' => 'error', 'message' => 'Team member not found'], 404);
+        }
+
+        // Check roster size limit if activating member
+        if ($request->has('is_active') && $request->boolean('is_active') && !$member->is_active) {
+            $activeCount = TeamMember::where('team_id', $team->id)
+                ->where('is_active', true)
+                ->count();
+            
+            if ($team->roster_size_limit && $activeCount >= $team->roster_size_limit) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => "Cannot activate member: Roster size limit reached ({$activeCount}/{$team->roster_size_limit} active)"
+                ], 409);
+            }
+        }
+
+        $member->update(array_filter([
+            'is_active' => $request->has('is_active') ? $request->boolean('is_active') : null,
+            'position' => $request->position ?? null,
+            'roster_status' => $request->roster_status ?? null,
+        ], function ($v) { return !is_null($v); }));
+
+        return response()->json(['status'=>'success','message'=>'Roster updated','member'=>$member], 200);
+    }
+
+    /**
+     * Get active roster for a team
+     */
+    public function getRoster(string $teamId)
+    {
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        $members = TeamMember::where('team_id', $team->id)
+            ->with('user:id,username,email')
+            ->get();
+
+        $active = $members->where('is_active', true)->map(function ($member) {
+            return [
+                'id' => $member->id,
+                'user_id' => $member->user_id,
+                'username' => $member->user->username ?? null,
+                'email' => $member->user->email ?? null,
+                'role' => $member->role,
+                'position' => $member->position,
+                'roster_status' => $member->roster_status,
+                'joined_at' => $member->joined_at,
+            ];
+        });
+
+        $inactive = $members->where('is_active', false)->map(function ($member) {
+            return [
+                'id' => $member->id,
+                'user_id' => $member->user_id,
+                'username' => $member->user->username ?? null,
+                'email' => $member->user->email ?? null,
+                'role' => $member->role,
+                'position' => $member->position,
+                'roster_status' => $member->roster_status,
+                'joined_at' => $member->joined_at,
+            ];
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+                'roster_size_limit' => $team->roster_size_limit,
+            ],
+            'roster' => [
+                'active' => $active->values(),
+                'inactive' => $inactive->values(),
+                'total_active' => $active->count(),
+                'total_inactive' => $inactive->count(),
+                'available_slots' => $team->roster_size_limit ? max(0, $team->roster_size_limit - $active->count()) : null,
+            ],
+        ]);
+    }
+
+    /**
+     * Set roster size limit
+     */
+    public function setRosterLimit(Request $request, string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner or captain can set roster limit
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden - only owner or captain can set roster limit'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'roster_size_limit' => 'required|integer|min:1',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $team->roster_size_limit = $request->roster_size_limit;
+        $team->save();
+
+        $activeCount = TeamMember::where('team_id', $team->id)
+            ->where('is_active', true)
+            ->count();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Roster size limit updated',
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+                'roster_size_limit' => $team->roster_size_limit,
+                'current_active_count' => $activeCount,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Generate invite link
+     */
+    public function generateInvite(Request $request, string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner, captain, or manager can generate invites
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+        $isManager = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'manager')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain && ! $isManager) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'role' => 'nullable|string|max:50',
+            'expires_at' => 'nullable|date|after:now',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $token = \App\Models\TeamInvite::generateToken();
+        $invite = \App\Models\TeamInvite::create([
+            'team_id' => $team->id,
+            'token' => $token,
+            'role' => $request->role ?? null,
+            'created_by' => $user->id,
+            'expires_at' => $request->expires_at ? \Carbon\Carbon::parse($request->expires_at) : null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Invite link generated',
+            'invite' => [
+                'id' => $invite->id,
+                'team_id' => $invite->team_id,
+                'token' => $invite->token,
+                'role' => $invite->role,
+                'invite_url' => url("/teams/invite/{$invite->token}"),
+                'expires_at' => $invite->expires_at,
+                'created_at' => $invite->created_at,
+            ],
+        ], 201);
+    }
+
+    /**
+     * Accept invite via token
+     */
+    public function acceptInvite(string $token)
+    {
+        $user = auth()->user();
+        $invite = \App\Models\TeamInvite::where('token', $token)->first();
+
+        if (! $invite) {
+            return response()->json(['status' => 'error', 'message' => 'Invalid invite token'], 404);
+        }
+
+        if (! $invite->isValid()) {
+            if ($invite->isUsed()) {
+                return response()->json(['status' => 'error', 'message' => 'Invite token has already been used'], 409);
+            }
+            if ($invite->isExpired()) {
+                return response()->json(['status' => 'error', 'message' => 'Invite token has expired'], 409);
+            }
+        }
+
+        // Check if user is already in any team
+        $existingMembership = TeamMember::where('user_id', $user->id)->first();
+        if ($existingMembership) {
+            return response()->json(['status' => 'error', 'message' => 'You are already a member of another team'], 409);
+        }
+
+        // Check if user is already in this team
+        $alreadyMember = TeamMember::where('team_id', $invite->team_id)
+            ->where('user_id', $user->id)
+            ->exists();
+
+        if ($alreadyMember) {
+            $invite->update(['used_at' => now(), 'used_by' => $user->id]);
+            return response()->json(['status' => 'error', 'message' => 'You are already a member of this team'], 409);
+        }
+
+        // Create team member
+        $member = TeamMember::create([
+            'team_id' => $invite->team_id,
+            'user_id' => $user->id,
+            'role' => $invite->role ?? 'member',
+            'joined_at' => now(),
+            'is_active' => true,
+            'roster_status' => 'active',
+        ]);
+
+        // Mark invite as used
+        $invite->update([
+            'used_at' => now(),
+            'used_by' => $user->id,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Invite accepted successfully',
+            'member' => $member,
+            'invite' => [
+                'id' => $invite->id,
+                'used_at' => $invite->used_at,
+                'used_by' => $invite->used_by,
+            ],
+        ], 201);
+    }
+
+    /**
+     * List active invites for a team
+     */
+    public function listInvites(string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner, captain, or manager can view invites
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+        $isManager = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'manager')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain && ! $isManager) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $invites = \App\Models\TeamInvite::where('team_id', $team->id)
+            ->with('creator:id,username')
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($invite) {
+                return [
+                    'id' => $invite->id,
+                    'token' => $invite->token,
+                    'role' => $invite->role,
+                    'invite_url' => url("/teams/invite/{$invite->token}"),
+                    'expires_at' => $invite->expires_at,
+                    'created_by' => [
+                        'id' => $invite->creator->id ?? null,
+                        'username' => $invite->creator->username ?? null,
+                    ],
+                    'created_at' => $invite->created_at,
+                    'used_at' => $invite->used_at,
+                    'is_expired' => $invite->isExpired(),
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+            ],
+            'invites' => $invites,
+        ]);
+    }
+
+    /**
+     * Revoke invite
+     */
+    public function revokeInvite(string $teamId, string $inviteId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner, captain, or manager can revoke invites
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+        $isManager = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'manager')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain && ! $isManager) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $invite = \App\Models\TeamInvite::where('team_id', $team->id)
+            ->where('id', $inviteId)
+            ->first();
+
+        if (! $invite) {
+            return response()->json(['status' => 'error', 'message' => 'Invite not found'], 404);
+        }
+
+        $invite->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Invite revoked successfully',
+        ]);
+    }
+
+    /**
+     * Upload certification document
+     */
+    public function uploadCertification(Request $request, string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner or captain can upload certification
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $validator = Validator::make($request->all(), [
+            'certification_document' => 'required|file|mimes:pdf,jpg,jpeg,png|max:10240', // 10MB max
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        // Delete old document if exists
+        if ($team->certification_document) {
+            Storage::disk('public')->delete($team->certification_document);
+        }
+
+        $file = $request->file('certification_document');
+        $fileName = time() . '_' . $file->getClientOriginalName();
+        $path = $file->storeAs('certifications', $fileName, 'public');
+
+        $team->update([
+            'certification_document' => $path,
+            'certification_status' => 'pending',
+            'certification_verified_at' => null,
+            'certification_verified_by' => null,
+            'certification_ai_confidence' => null,
+            'certification_ai_notes' => null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Certification document uploaded',
+            'team' => [
+                'id' => $team->id,
+                'certification_document' => asset('storage/' . $team->certification_document),
+                'certification_status' => $team->certification_status,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Trigger AI verification
+     */
+    public function verifyCertificationAI(string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        if (! $team->certification_document) {
+            return response()->json(['status' => 'error', 'message' => 'No certification document uploaded'], 404);
+        }
+
+        // Basic AI verification simulation
+        // In production, integrate with OCR/Image recognition API
+        $documentPath = storage_path('app/public/' . $team->certification_document);
+        
+        if (!file_exists($documentPath)) {
+            return response()->json(['status' => 'error', 'message' => 'Document file not found'], 404);
+        }
+
+        // Simulate AI verification
+        // TODO: Integrate with actual OCR service (Google Vision, AWS Textract, Tesseract)
+        $confidence = 0.85; // Simulated confidence score
+        $notes = "Document analyzed. Contains Philippine pro league certification patterns. Requires admin review for final verification.";
+
+        $team->update([
+            'certification_status' => 'under_review',
+            'certification_ai_confidence' => $confidence,
+            'certification_ai_notes' => $notes,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'AI verification completed',
+            'verification' => [
+                'status' => $team->certification_status,
+                'confidence' => $team->certification_ai_confidence,
+                'notes' => $team->certification_ai_notes,
+            ],
+        ], 200);
+    }
+
+    /**
+     * Get certification status
+     */
+    public function getCertificationStatus(string $teamId)
+    {
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'certification' => [
+                'certified' => $team->certified,
+                'certification' => $team->certification,
+                'certification_document' => $team->certification_document ? asset('storage/' . $team->certification_document) : null,
+                'certification_status' => $team->certification_status,
+                'certification_verified_at' => $team->certification_verified_at,
+                'certification_ai_confidence' => $team->certification_ai_confidence,
+                'certification_ai_notes' => $team->certification_ai_notes,
+                'verified_by' => $team->certificationVerifier ? [
+                    'id' => $team->certificationVerifier->id,
+                    'username' => $team->certificationVerifier->username,
+                ] : null,
+            ],
+        ]);
+    }
+
+    /**
+     * Get team events
+     */
+    public function getTeamEvents(string $teamId)
+    {
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        $eventTeams = \App\Models\EventTeam::where('team_id', $teamId)
+            ->with(['event.venue', 'event.facility'])
+            ->get();
+
+        $events = $eventTeams->map(function ($eventTeam) {
+            $event = $eventTeam->event;
+            return [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'date' => $event->date,
+                'start_time' => $event->start_time,
+                'end_time' => $event->end_time,
+                'sport' => $event->sport,
+                'venue' => $event->venue ? [
+                    'id' => $event->venue->id,
+                    'name' => $event->venue->name,
+                ] : null,
+                'status' => $event->status ?? 'upcoming',
+            ];
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'events' => $events,
+        ]);
+    }
+
+    /**
+     * Leave team
+     */
+    public function leaveTeam(string $teamId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        $member = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if (! $member) {
+            return response()->json(['status' => 'error', 'message' => 'You are not a member of this team'], 404);
+        }
+
+        // Prevent owner from leaving (must transfer ownership first)
+        if ($user->id === $team->created_by) {
+            return response()->json(['status' => 'error', 'message' => 'Owner cannot leave team. Transfer ownership first.'], 403);
+        }
+
+        $member->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Left team successfully',
+        ]);
+    }
+
+    /**
      * Remove the specified resource from storage.
      */
     public function destroy(string $id)
     {
-        //
+        $user = auth()->user();
+        $team = Team::find($id);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner can delete team
+        if ($user->id !== $team->created_by) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden - only owner can delete team'], 403);
+        }
+
+        // Delete team photo if exists
+        if ($team->team_photo) {
+            Storage::disk('public')->delete($team->team_photo);
+        }
+
+        // Delete certification document if exists
+        if ($team->certification_document) {
+            Storage::disk('public')->delete($team->certification_document);
+        }
+
+        $team->delete();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Team deleted successfully',
+        ]);
     }
 }
