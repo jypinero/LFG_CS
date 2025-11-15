@@ -1,0 +1,12 @@
+﻿{
+  "name": "Cursor QA Scrimmage",
+  "description": "Automated curl test for game creation flow",
+  "event_type": "team vs team",
+  "venue_id": 12,
+  "facility_id": 13,
+  "slots": 4,
+  "date": "2030-01-15",
+  "start_time": "14:00:00",
+  "end_time": "16:00:00",
+  "team_ids": [2, 4]
+}
