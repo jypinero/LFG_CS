@@ -123,6 +123,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/venues/{venueId}/facilities/list', [VenueController::class, 'getFacilitiesList']);
     
     Route::get('/venues/{venueId}/facilities/{facilityId}', [\App\Http\Controllers\VenueController::class, 'showFacilityByVenue']);
+    Route::get('/venues/{venueId}/facilities/{facilityId}/booked-slots', [VenueController::class, 'getBookedSlots']);
     Route::post('/venues/{venueId}/facilities/edit/{facilityId}', [\App\Http\Controllers\VenueController::class, 'updateFacilityByVenue']);
     Route::delete('/venues/{venueId}/facilities/delete/{facilityId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityByVenue']);
 

@@ -804,6 +804,70 @@ class VenueController extends Controller
     }
 
     /**
+     * Get booked slots for a venue facility to aid client-side scheduling
+     */
+    public function getBookedSlots(Request $request, string $venueId, string $facilityId)
+    {
+        $validator = Validator::make($request->all(), [
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date|after_or_equal:start_date',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors(),
+            ], 422);
+        }
+
+        $bookings = Booking::with(['event' => function ($query) {
+                $query->select('id', 'facility_id', 'date', 'start_time', 'end_time', 'is_approved', 'approved_at');
+            }])
+            ->where('venue_id', $venueId)
+            ->whereIn('status', ['pending', 'approved'])
+            ->whereHas('event', function ($q) use ($facilityId, $request) {
+                $q->where('facility_id', $facilityId);
+
+                if ($request->filled('start_date')) {
+                    $q->whereDate('date', '>=', $request->input('start_date'));
+                }
+
+                if ($request->filled('end_date')) {
+                    $q->whereDate('date', '<=', $request->input('end_date'));
+                }
+            })
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get()
+            ->map(function ($booking) {
+                $event = $booking->event;
+
+                return [
+                    'booking_id' => $booking->id,
+                    'event_id' => $booking->event_id,
+                    'status' => $booking->status,
+                    'date' => optional($event)->date ?? $booking->date,
+                    'start_time' => optional($event)->start_time ?? $booking->start_time,
+                    'end_time' => optional($event)->end_time ?? $booking->end_time,
+                    'is_approved' => $event ? (bool) $event->is_approved : false,
+                    'approval_status' => $event && $event->is_approved ? 'approved' : 'pending',
+                    'approved_at' => optional($event)->approved_at,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'venue_id' => $venueId,
+                'facility_id' => $facilityId,
+                'booked_slots' => $bookings,
+                'total' => $bookings->count(),
+            ],
+        ]);
+    }
+
+    /**
      * Update facility by venue (owner only)
      * PUT/PATCH /api/venues/{venueId}/facilities/{facilityId}
      */
@@ -1122,12 +1186,21 @@ class VenueController extends Controller
             ->pluck('venue_id');
         
         // Get bookings for these venues
-        $bookings = Booking::with(['venue', 'event', 'user'])
+        $bookings = Booking::with([
+                'venue',
+                'event' => function ($query) {
+                    $query->with(['facility', 'creator'])
+                          ->withCount('participants');
+                },
+                'user',
+            ])
             ->whereIn('venue_id', $venueIds)
             ->orderBy('date', 'desc')
             ->orderBy('start_time', 'desc')
             ->get()
             ->map(function($booking) {
+                $event = $booking->event;
+
                 return [
                     'id' => $booking->id,
                     'status' => $booking->status,
@@ -1146,13 +1219,24 @@ class VenueController extends Controller
                         'username' => $booking->user->username,
                         'email' => $booking->user->email,
                     ],
-                    'event' => [
-                        'id' => $booking->event->id,
-                        'name' => $booking->event->name,
-                        'description' => $booking->event->description,
-                        'event_type' => $booking->event->event_type,
-                        'slots' => $booking->event->slots,
-                    ],
+                    'event' => $event ? [
+                        'id' => $event->id,
+                        'name' => $event->name,
+                        'description' => $event->description,
+                        'sport' => $event->sport,
+                        'event_type' => $event->event_type,
+                        'date' => $event->date,
+                        'start_time' => $event->start_time,
+                        'end_time' => $event->end_time,
+                        'slots' => $event->slots,
+                        'expected_attendees' => $event->participants_count ?? 0,
+                        'host' => $event->creator?->username,
+                        'facility' => $event->facility ? [
+                            'id' => $event->facility->id,
+                            'type' => $event->facility->type,
+                            'price_per_hr' => $event->facility->price_per_hr,
+                        ] : null,
+                    ] : null,
                     'created_at' => $booking->created_at,
                     'updated_at' => $booking->updated_at,
                 ];
@@ -1201,6 +1285,20 @@ class VenueController extends Controller
         
         // Update booking status
         $booking->update(['status' => $validated['status']]);
+
+        if ($booking->event) {
+            if ($validated['status'] === 'approved') {
+                $booking->event->update([
+                    'is_approved' => true,
+                    'approved_at' => now(),
+                ]);
+            } elseif ($validated['status'] === 'denied') {
+                $booking->event->update([
+                    'is_approved' => false,
+                    'approved_at' => null,
+                ]);
+            }
+        }
         
         // Create notification for event creator
         $notification = Notification::create([
@@ -1264,7 +1362,11 @@ class VenueController extends Controller
         
         // Update booking and event
         $booking->update(['status' => 'cancelled']);
-        $booking->event->update(['cancelled_at' => now()]);
+        $booking->event->update([
+            'cancelled_at' => now(),
+            'is_approved' => false,
+            'approved_at' => null,
+        ]);
         
         // Notify event creator
         $notification = Notification::create([

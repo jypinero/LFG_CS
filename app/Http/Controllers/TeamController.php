@@ -495,6 +495,9 @@ class TeamController extends Controller
                     'username' => $member->user->username ?? null,
                     'email' => $member->user->email ?? null,
                     'profile_photo' => $member->user->profile_photo ? asset('storage/' . $member->user->profile_photo) : null,
+                    'is_active' => $member->is_active,
+                    'roster_status' => $member->roster_status,
+                    'position' => $member->position,
                     'role' => $member->role,
                     'joined_at' => $member->joined_at,
                 ];

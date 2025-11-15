@@ -15,6 +15,7 @@ use App\Models\Notification;
 use App\Models\UserNotification;
 use App\Models\TeamMember; // ADDED
 use App\Models\Booking;
+use App\Models\VenueUser;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\SvgWriter;
 
@@ -31,12 +32,54 @@ class EventController extends Controller
         
         return $code;
     }
+
+    private function userManagesVenue(Event $event, ?int $userId): bool
+    {
+        if (! $userId || ! class_exists(\App\Models\VenueUser::class)) {
+            return false;
+        }
+
+        return VenueUser::where('venue_id', $event->venue_id)
+            ->where('user_id', $userId)
+            ->whereIn('role', ['owner', 'manager', 'Owner', 'Manager'])
+            ->exists();
+    }
+
+    private function canViewEvent(Event $event, ?int $userId): bool
+    {
+        if ($event->is_approved) {
+            return true;
+        }
+
+        if (! $userId) {
+            return false;
+        }
+
+        if ($event->created_by === $userId) {
+            return true;
+        }
+
+        return $this->userManagesVenue($event, $userId);
+    }
+
+    private function approvalRequiredResponse(Event $event)
+    {
+        if ($event->is_approved) {
+            return null;
+        }
+
+        return response()->json([
+            'status' => 'error',
+            'message' => 'Event is pending venue approval.'
+        ], 403);
+    }
     /**
      * Display a listing of the resource.
      */
     public function index()
     {
         $events = Event::with(['venue', 'facility', 'teams.team'])
+            ->where('is_approved', true)
             ->withCount('participants')
             ->get()
             ->map(function($event) {
@@ -56,6 +99,7 @@ class EventController extends Controller
                     'id' => $event->id,
                     'name' => $event->name,
                     'description' => $event->description,
+                    'sport' => $event->sport,
                     'date' => $event->date,
                     'start_time' => $event->start_time,
                     'end_time' => $event->end_time,
@@ -63,11 +107,16 @@ class EventController extends Controller
                     'total_slots' => $event->slots,
                     'venue' => $event->venue->name,
                     'facility' => $event->facility->type ?? null,
+                    'longitude' => $event->venue->longitude ?? null,
+                    'latitude' => $event->venue->latitude ?? null,
                     'hours' => $hours,
                     'total_cost' => $totalCost,
                     'cost_per_slot' => $dividedpay,
                     'host' => User::find($event->created_by)->username,
                     'event_type' => $event->event_type,
+                    'is_approved' => (bool) $event->is_approved,
+                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                    'approved_at' => $event->approved_at,
                 ];
 
                 // Add team information for team vs team events
@@ -114,6 +163,14 @@ class EventController extends Controller
             ], 404);
         }
 
+        $userId = auth()->id();
+        if (! $this->canViewEvent($event, $userId)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event is pending venue approval'
+            ], 403);
+        }
+
         // Calculate hours
         $start = \Carbon\Carbon::parse($event->start_time);
         $end = \Carbon\Carbon::parse($event->end_time);
@@ -145,6 +202,9 @@ class EventController extends Controller
             'Price/hour' => $event->facility->price_per_hr ?? 0,
             'Chip-in approx' => $dividedpay,
             'event_type' => $event->event_type,
+            'is_approved' => (bool) $event->is_approved,
+            'approval_status' => $event->is_approved ? 'approved' : 'pending',
+            'approved_at' => $event->approved_at,
         ];
 
         // Add team-specific information for team vs team events
@@ -187,9 +247,12 @@ class EventController extends Controller
         $events = Event::with(['venue', 'facility'])
             ->where(function($q) use ($user) {
                 $q->where('created_by', $user->id)
-                ->orWhereHas('participants', function($q2) use ($user) {
-                    $q2->where('user_id', $user->id);
-                });
+                  ->orWhere(function($inner) use ($user) {
+                      $inner->where('is_approved', true)
+                            ->whereHas('participants', function($q2) use ($user) {
+                                $q2->where('user_id', $user->id);
+                            });
+                  });
             })
             ->orderBy('date')
             ->orderBy('start_time')
@@ -206,6 +269,9 @@ class EventController extends Controller
                     'facility' => $event->facility->type ?? null,
                     'start_time' => $event->start_time,
                     'end_time' => $event->end_time,
+                    'is_approved' => (bool) $event->is_approved,
+                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                    'approved_at' => $event->approved_at,
                 ];
             });
 
@@ -237,6 +303,9 @@ class EventController extends Controller
                     'facility' => $event->facility->type ?? null,
                     'start_time' => $event->start_time,
                     'end_time' => $event->end_time,
+                    'is_approved' => (bool) $event->is_approved,
+                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                    'approved_at' => $event->approved_at,
                 ];
             });
 
@@ -262,6 +331,7 @@ class EventController extends Controller
 
         $events = Event::with(['venue', 'facility'])
             ->where('venue_id', $request->venue_id)
+            ->where('is_approved', true)
             ->orderBy('date')
             ->orderBy('start_time')
             ->get()
@@ -277,6 +347,9 @@ class EventController extends Controller
                     'venue' => $event->venue->name ?? null,
                     'facility' => $event->facility->type ?? null,
                     'slots' => $event->slots,
+                    'is_approved' => (bool) $event->is_approved,
+                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                    'approved_at' => $event->approved_at,
                 ];
             });
 
@@ -294,8 +367,11 @@ class EventController extends Controller
         $events = Event::with(['venue', 'facility'])
             ->where(function($q) use ($user) {
                 $q->where('created_by', $user->id)
-                  ->orWhereHas('participants', function($q2) use ($user) {
-                      $q2->where('user_id', $user->id);
+                  ->orWhere(function($inner) use ($user) {
+                      $inner->where('is_approved', true)
+                            ->whereHas('participants', function($q2) use ($user) {
+                                $q2->where('user_id', $user->id);
+                            });
                   });
             })
             ->where('date', $date) // <-- filter by input date
@@ -312,6 +388,9 @@ class EventController extends Controller
                     'latitude' => $event->venue->latitude ?? null,
                     'facility' => $event->facility->type ?? null,
                     'start_time' => $event->start_time,
+                    'is_approved' => (bool) $event->is_approved,
+                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                    'approved_at' => $event->approved_at,
                 ];
             });
 
@@ -346,6 +425,25 @@ class EventController extends Controller
                 'status' => 'error',
                 'message' => 'Event not found.'
             ], 404);
+        }
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
+        }
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
+        }
+
+        if (! $this->canViewEvent($event, $userId)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event is pending venue approval'
+            ], 403);
+        }
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
         }
 
         if ($event->created_by == $userId) {
@@ -481,6 +579,14 @@ class EventController extends Controller
                 'status' => 'error',
                 'message' => 'Event not found.'
             ], 404);
+        }
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
+        }
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
         }
 
         // Check if event is team vs team type
@@ -803,6 +909,8 @@ class EventController extends Controller
             'end_time' => $request->end_time,
             'created_by' => $user->id,
             'checkin_code' => $this->generateCheckinCode(),
+            'is_approved' => false,
+            'approved_at' => null,
         ]);
 
         // Create booking for venue approval
@@ -847,10 +955,11 @@ class EventController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'Team vs team event created successfully',
-                'event' => $event,
+                'event' => $event->fresh(),
                 'booking' => $booking,
                 'teams' => $teamIds,
-                'enrolled_participants' => $enrolledParticipants
+                'enrolled_participants' => $enrolledParticipants,
+                'approval_status' => 'pending',
             ], 201);
         } else {
             // Handle free for all events (existing logic)
@@ -863,9 +972,10 @@ class EventController extends Controller
             return response()->json([
                 'status' => 'success',
                 'message' => 'Event created successfully',
-                'event' => $event,
+                'event' => $event->fresh(),
                 'booking' => $booking,
-                'creator_participant' => $participant
+                'creator_participant' => $participant,
+                'approval_status' => 'pending',
             ], 201);
         }
     }
@@ -884,6 +994,14 @@ class EventController extends Controller
                 'status' => 'error',
                 'message' => 'Event not found'
             ], 404);
+        }
+
+        $userId = auth()->id();
+        if (! $this->canViewEvent($event, $userId)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event is pending venue approval'
+            ], 403);
         }
 
         // Calculate hours and costs
@@ -908,6 +1026,9 @@ class EventController extends Controller
             'participants_count' => $event->participants_count,
             'checkin_code' => $event->checkin_code,
             'cancelled_at' => $event->cancelled_at,
+            'is_approved' => (bool) $event->is_approved,
+            'approval_status' => $event->is_approved ? 'approved' : 'pending',
+            'approved_at' => $event->approved_at,
                     'venue' => [
                 'id' => $event->venue->id,
                 'name' => $event->venue->name,
@@ -1395,6 +1516,10 @@ class EventController extends Controller
             ], 404);
         }
 
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
+        }
+
         // Check if event is cancelled
         if ($event->cancelled_at) {
             return response()->json([
@@ -1477,6 +1602,10 @@ class EventController extends Controller
                 'status' => 'error',
                 'message' => 'Event not found.'
             ], 404);
+        }
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
         }
 
         // Verify check-in code
@@ -1566,6 +1695,10 @@ class EventController extends Controller
             ], 404);
         }
 
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+            return $approvalResponse;
+        }
+
         // Check if user is the event creator
         if ($event->created_by !== $organizerId) {
             return response()->json([
@@ -1652,6 +1785,13 @@ class EventController extends Controller
             ], 404);
         }
 
+        if (! $this->canViewEvent($event, $userId)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event is pending venue approval'
+            ], 403);
+        }
+
         // Check if user is event creator or participant
         $isCreator = $event->created_by === $userId;
         $isParticipant = EventParticipant::where('event_id', $event->id)
@@ -1696,6 +1836,9 @@ class EventController extends Controller
                 'name' => $event->name,
                 'checkin_code' => $event->checkin_code,
                 'status' => $event->status,
+                'is_approved' => (bool) $event->is_approved,
+                'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                'approved_at' => $event->approved_at,
             ],
             'checkin_summary' => [
                 'total_participants' => $totalParticipants,
@@ -1885,6 +2028,9 @@ class EventController extends Controller
                 'name' => $event->name,
                 'event_type' => $event->event_type,
                 'status' => $event->status,
+                'is_approved' => (bool) $event->is_approved,
+                'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                'approved_at' => $event->approved_at,
             ],
             'leaderboard' => $allTeams,
             'total_teams' => $allTeams->count(),
@@ -2048,6 +2194,12 @@ class EventController extends Controller
                 'status' => 'error',
                 'message' => 'Event not found.'
             ], 404);
+        }
+
+        if ($request->action === 'accept') {
+            if ($approvalResponse = $this->approvalRequiredResponse($event)) {
+                return $approvalResponse;
+            }
         }
 
         // Check if user is team captain
