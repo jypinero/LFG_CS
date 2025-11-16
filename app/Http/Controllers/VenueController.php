@@ -32,7 +32,11 @@ class VenueController extends Controller
      */
     public function index()
     {
-        $venues = Venue::with(['photos', 'facilities.photos'])->get()->map(function ($venue) {
+        // Hide closed venues from general listing
+        $venues = Venue::with(['photos', 'facilities.photos'])
+            ->where('is_closed', false)
+            ->get()
+            ->map(function ($venue) {
             return [
                 'id' => $venue->id,
                 'name' => $venue->name,
@@ -86,10 +90,12 @@ class VenueController extends Controller
     {
         $userId = auth()->id();
 
+        // Active venues only
         $venues = Venue::whereHas('venue_users', function ($query) use ($userId) {
             $query->where('user_id', $userId)
                   ->where('role', 'owner');
-        })->with(['photos', 'facilities.photos'])->get()->map(function ($venue) {
+        })->where('is_closed', false)
+          ->with(['photos', 'facilities.photos'])->get()->map(function ($venue) {
             return [
                 'id' => $venue->id,
                 'name' => $venue->name,
@@ -129,6 +135,46 @@ class VenueController extends Controller
             ];
         });
 
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'venues' => $venues
+            ]
+        ]);
+    }
+    
+    public function OwnerArchivedVenues()
+    {
+        $userId = auth()->id();
+        // Closed/archived venues only
+        $venues = Venue::whereHas('venue_users', function ($query) use ($userId) {
+            $query->where('user_id', $userId)
+                  ->where('role', 'owner');
+        })->where('is_closed', true)
+          ->with(['photos', 'facilities.photos'])->get()->map(function ($venue) {
+            return [
+                'id' => $venue->id,
+                'name' => $venue->name,
+                'description' => $venue->description,
+                'address' => $venue->address,
+                'latitude' => $venue->latitude,
+                'longitude' => $venue->longitude,
+                'is_closed' => $venue->is_closed,
+                'closed_at' => $venue->closed_at,
+                'closed_reason' => $venue->closed_reason,
+                'photos' => $venue->photos->map(function ($photo) {
+                    return [
+                        'id' => $photo->id,
+                        'image_url' => Storage::url($photo->image_path),
+                        'uploaded_at' => $photo->uploaded_at,
+                    ];
+                }),
+                'created_by' => $venue->created_by,
+                'created_at' => $venue->created_at,
+                'updated_at' => $venue->updated_at,
+            ];
+        });
+        
         return response()->json([
             'status' => 'success',
             'data' => [
@@ -292,6 +338,20 @@ class VenueController extends Controller
         if (! $venue) {
             return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
         }
+        
+        // If closed, hide from non-owners (return 404 to appear non-existent)
+        $user = auth()->user();
+        $isCreator = $user && $user->id === $venue->created_by;
+        $isVenueUserOwner = false;
+        if (class_exists(\App\Models\VenueUser::class) && $user) {
+            $isVenueUserOwner = \App\Models\VenueUser::where('venue_id', $venue->id)
+                ->where('user_id', $user->id)
+                ->where(function($q){ $q->where('role', 'owner')->orWhere('is_primary_owner', true); })
+                ->exists();
+        }
+        if ($venue->is_closed && ! $isCreator && ! $isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
+        }
 
         $venueData = [
             'id' => $venue->id,
@@ -341,6 +401,9 @@ class VenueController extends Controller
             'operating_hours' => $venue->operatingHours,
             'amenities' => $venue->amenities,
             'closure_dates' => $venue->closureDates,
+            'is_closed' => $venue->is_closed,
+            'closed_at' => $venue->closed_at,
+            'closed_reason' => $venue->closed_reason,
         ];
 
         return response()->json([
@@ -630,6 +693,103 @@ class VenueController extends Controller
             ]);
             return response()->json(['status' => 'error', 'message' => 'Delete failed', 'error' => $e->getMessage()], 500);
         }
+    }
+
+    /**
+     * Mark venue as closed (archived)
+     */
+    public function closeVenue(Request $request, $venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        $user = auth()->user();
+
+        $isCreator = $user && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->where(function ($q) { $q->where('role', 'owner')->orWhere('is_primary_owner', true); })
+            ->exists();
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:255',
+        ]);
+
+        $venue->update([
+            'is_closed' => true,
+            'closed_at' => now(),
+            'closed_reason' => $validated['reason'] ?? null,
+        ]);
+
+        return response()->json(['status' => 'success', 'message' => 'Venue marked as closed']);
+    }
+
+    /**
+     * Reopen a closed venue
+     */
+    public function reopenVenue(Request $request, $venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        $user = auth()->user();
+
+        $isCreator = $user && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->where(function ($q) { $q->where('role', 'owner')->orWhere('is_primary_owner', true); })
+            ->exists();
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $venue->update([
+            'is_closed' => false,
+            'closed_at' => null,
+            'closed_reason' => null,
+        ]);
+
+        return response()->json(['status' => 'success', 'message' => 'Venue reopened']);
+    }
+
+    /**
+     * Transfer ownership to another user (allowed even when closed)
+     */
+    public function transferOwnership(Request $request, $venueId)
+    {
+        $venue = Venue::findOrFail($venueId);
+        $user = auth()->user();
+
+        $validated = $request->validate([
+            'new_owner_user_id' => 'required|exists:users,id',
+        ]);
+
+        $newOwnerId = (int) $validated['new_owner_user_id'];
+
+        // only current primary owner (or creator) can transfer
+        $isPrimaryOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->where(function ($q) { $q->where('is_primary_owner', true)->orWhere('role', 'owner'); })
+            ->exists() || ($venue->created_by === $user->id);
+
+        if (! $isPrimaryOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Only the primary owner can transfer ownership'], 403);
+        }
+
+        DB::transaction(function () use ($venue, $newOwnerId, $user) {
+            // demote current primary owners
+            VenueUser::where('venue_id', $venue->id)->update(['is_primary_owner' => false]);
+            // ensure VenueUser exists for new owner
+            VenueUser::updateOrCreate(
+                ['venue_id' => $venue->id, 'user_id' => $newOwnerId],
+                ['role' => 'owner', 'is_primary_owner' => true]
+            );
+            // update created_by pointer as canonical owner reference
+            $venue->update(['created_by' => $newOwnerId]);
+        });
+
+        return response()->json(['status' => 'success', 'message' => 'Ownership transferred']);
     }
 
     /**
@@ -1437,6 +1597,14 @@ class VenueController extends Controller
             ], 404);
         }
         
+        // Block reschedule if venue is closed
+        if ($booking->venue && $booking->venue->is_closed) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This venue is closed. Rescheduling is not allowed.'
+            ], 403);
+        }
+        
         // Check if user is owner/manager of the venue
         $isAuthorized = VenueUser::where('user_id', $user->id)
             ->where('venue_id', $booking->venue_id)
@@ -1596,6 +1764,7 @@ class VenueController extends Controller
         $q = $v['q'];
 
         $venues = Venue::with(['photos', 'facilities.photos'])
+            ->where('is_closed', false)
             ->where('name', 'like', "%{$q}%")
             ->orderBy('created_at', 'desc')
             ->get();

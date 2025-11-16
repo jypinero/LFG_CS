@@ -22,6 +22,7 @@ class ThreadParticipant extends Model
         'last_read_message_id',
         'mute_until',
         'notifications',
+        'archived',
     ];
 
     protected $casts = [
@@ -29,6 +30,7 @@ class ThreadParticipant extends Model
         'left_at' => 'datetime',
         'mute_until' => 'datetime',
         'notifications' => 'boolean',
+        'archived' => 'boolean',
     ];
 
     public function thread()

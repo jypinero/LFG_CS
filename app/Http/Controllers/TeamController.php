@@ -14,6 +14,168 @@ use Illuminate\Support\Facades\DB; // ADDED
 class TeamController extends Controller
 {
     /**
+     * Discover teams that are open to new members with optional filters.
+     * Query params: sport_id, q, lat, lng, radius_km (default 50), page, per_page
+     */
+    public function discoverLookingForTeams(Request $request)
+    {
+        $user = auth()->user();
+        $validator = Validator::make($request->all(), [
+            'sport_id' => 'nullable|integer|exists:sports,id',
+            'q' => 'nullable|string|max:100',
+            'lat' => 'nullable|numeric',
+            'lng' => 'nullable|numeric',
+            'radius_km' => 'nullable|numeric|min:1|max:500',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $lat = $request->lat;
+        $lng = $request->lng;
+        $radiusKm = $request->input('radius_km', 50);
+        $perPage = $request->input('per_page', 15);
+
+        // Base query with member counts and active counts
+        $teams = Team::query()
+            ->with('sport')
+            ->select('teams.*')
+            ->selectSub(function ($q) {
+                $q->from('team_members')
+                    ->selectRaw('COUNT(*)')
+                    ->whereColumn('team_members.team_id', 'teams.id')
+                    ->where(function ($inner) {
+                        $inner->whereNull('team_members.role')
+                              ->orWhere('team_members.role', '!=', 'pending');
+                    });
+            }, 'member_count')
+            ->selectSub(function ($q) {
+                $q->from('team_members')
+                    ->selectRaw('COUNT(*)')
+                    ->whereColumn('team_members.team_id', 'teams.id')
+                    ->where('team_members.is_active', true);
+            }, 'active_member_count');
+
+        // Text search
+        if ($request->filled('q')) {
+            $q = $request->q;
+            $teams->where(function ($w) use ($q) {
+                $w->where('teams.name', 'like', "%{$q}%")
+                  ->orWhere('teams.bio', 'like', "%{$q}%")
+                  ->orWhere('teams.address_line', 'like', "%{$q}%");
+            });
+        }
+
+        // Sport filter
+        if ($request->filled('sport_id')) {
+            $teams->where('teams.sport_id', $request->sport_id);
+        }
+
+        // Exclude teams the user owns or is already a member/pending
+        if ($user) {
+            $teams->where('teams.created_by', '!=', $user->id)
+                ->whereNotExists(function ($q) use ($user) {
+                    $q->from('team_members')
+                        ->whereColumn('team_members.team_id', 'teams.id')
+                        ->where('team_members.user_id', $user->id);
+                });
+        }
+
+        // "Looking for" heuristic: either no roster limit or active members < limit
+        $teams->where(function ($w) {
+            $w->whereNull('teams.roster_size_limit')
+              ->orWhereRaw('COALESCE((select count(*) from team_members tm where tm.team_id = teams.id and tm.is_active = 1), 0) < teams.roster_size_limit');
+        });
+
+        // Distance filter/order if coordinates provided
+        if ($lat !== null && $lng !== null) {
+            // Haversine in KM
+            $haversine = "6371 * acos(cos(radians(?)) * cos(radians(teams.latitude)) * cos(radians(teams.longitude) - radians(?)) + sin(radians(?)) * sin(radians(teams.latitude)))";
+            $teams->addSelect(DB::raw("$haversine as distance_km"))->addBinding([$lat, $lng, $lat], 'select');
+            $teams->whereNotNull('teams.latitude')->whereNotNull('teams.longitude');
+            $teams->having('distance_km', '<=', $radiusKm)->orderBy('distance_km');
+        } else {
+            $teams->orderByDesc('teams.created_at');
+        }
+
+        $paginated = $teams->paginate($perPage);
+
+        $data = $paginated->getCollection()->map(function ($team) {
+            return [
+                'id' => $team->id,
+                'name' => $team->name,
+                'created_by' => $team->created_by,
+                'team_photo' => $team->team_photo ? asset('storage/' . $team->team_photo) : null,
+                'certification' => $team->certification,
+                'certified' => $team->certified,
+                'team_type' => $team->team_type,
+                'sport_id' => $team->sport_id,
+                'sport' => $team->sport ? [
+                    'id' => $team->sport->id,
+                    'name' => $team->sport->name,
+                    'category' => $team->sport->category,
+                ] : null,
+                'bio' => $team->bio,
+                'address_line' => $team->address_line,
+                'latitude' => $team->latitude,
+                'longitude' => $team->longitude,
+                'roster_size_limit' => $team->roster_size_limit,
+                'member_count' => (int) ($team->member_count ?? 0),
+                'active_member_count' => (int) ($team->active_member_count ?? 0),
+                'distance_km' => isset($team->distance_km) ? round($team->distance_km, 2) : null,
+                'created_at' => $team->created_at,
+                'updated_at' => $team->updated_at,
+                'creator' => $team->creator ? [
+                    'id' => $team->creator->id,
+                    'name' => $team->creator->username,
+                    'email' => $team->creator->email,
+                ] : null,
+            ];
+        })->values();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $data,
+            'meta' => [
+                'current_page' => $paginated->currentPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+                'last_page' => $paginated->lastPage(),
+            ],
+        ]);
+    }
+
+    /**
+     * List my pending team join requests (as requester).
+     */
+    public function myJoinRequests(Request $request)
+    {
+        $user = auth()->user();
+        $requests = TeamMember::where('user_id', $user->id)
+            ->where('role', 'pending')
+            ->with(['team:id,name,team_photo,sport_id'])
+            ->orderByDesc('joined_at')
+            ->get()
+            ->map(function ($row) {
+                return [
+                    'request_id' => $row->id,
+                    'team_id' => $row->team_id,
+                    'team_name' => $row->team->name ?? null,
+                    'team_photo' => ($row->team && $row->team->team_photo) ? asset('storage/' . $row->team->team_photo) : null,
+                    'sport_id' => $row->team->sport_id ?? null,
+                    'status' => 'pending',
+                    'requested_at' => $row->joined_at,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $requests,
+            'total' => $requests->count(),
+        ]);
+    }
+    /**
      * Display a listing of the resource.
      */
     public function index()

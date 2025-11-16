@@ -26,6 +26,16 @@ class Venue extends Model
         'instagram_url',
         'website',
         'house_rules',
+        'is_closed',
+        'closed_at',
+        'closed_reason',
+    ];
+
+    protected $casts = [
+        'verified_at' => 'datetime',
+        'verification_expires_at' => 'datetime',
+        'is_closed' => 'boolean',
+        'closed_at' => 'datetime',
     ];
 
     // relations

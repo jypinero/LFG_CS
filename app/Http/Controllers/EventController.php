@@ -78,7 +78,7 @@ class EventController extends Controller
      */
     public function index()
     {
-        $events = Event::with(['venue', 'facility', 'teams.team'])
+        $events = Event::with(['venue.photos', 'facility', 'teams.team'])
             ->where('is_approved', true)
             ->withCount('participants')
             ->get()
@@ -94,6 +94,14 @@ class EventController extends Controller
 
                 $divide = $totalCost / $event->participants_count;
                 $dividedpay = round($divide, 2);
+                
+                // Determine venue primary photo url (latest upload if available)
+                $firstPhotoPath = null;
+                if ($event->venue && $event->venue->photos && $event->venue->photos->count() > 0) {
+                    $firstPhoto = $event->venue->photos->sortByDesc('uploaded_at')->first();
+                    $firstPhotoPath = $firstPhoto ? $firstPhoto->image_path : null;
+                }
+                $venuePhotoUrl = $firstPhotoPath ? url('storage/' . ltrim($firstPhotoPath, '/')) : null;
 
                 $eventData = [
                     'id' => $event->id,
@@ -109,6 +117,7 @@ class EventController extends Controller
                     'facility' => $event->facility->type ?? null,
                     'longitude' => $event->venue->longitude ?? null,
                     'latitude' => $event->venue->latitude ?? null,
+                    'venue_photo_url' => $venuePhotoUrl,
                     'hours' => $hours,
                     'total_cost' => $totalCost,
                     'cost_per_slot' => $dividedpay,
@@ -329,13 +338,20 @@ class EventController extends Controller
             ], 422);
         }
 
-        $events = Event::with(['venue', 'facility'])
+        $events = Event::with(['venue.photos', 'facility'])
             ->where('venue_id', $request->venue_id)
             ->where('is_approved', true)
             ->orderBy('date')
             ->orderBy('start_time')
             ->get()
             ->map(function($event) {
+                // Determine venue primary photo url (latest upload if available)
+                $firstPhotoPath = null;
+                if ($event->venue && $event->venue->photos && $event->venue->photos->count() > 0) {
+                    $firstPhoto = $event->venue->photos->sortByDesc('uploaded_at')->first();
+                    $firstPhotoPath = $firstPhoto ? $firstPhoto->image_path : null;
+                }
+                $venuePhotoUrl = $firstPhotoPath ? url('storage/' . ltrim($firstPhotoPath, '/')) : null;
                 return [
                     'id' => $event->id,
                     'name' => $event->name,
@@ -345,6 +361,7 @@ class EventController extends Controller
                     'end_time' => $event->end_time,
                     'host' => User::find($event->created_by)->username ?? null,
                     'venue' => $event->venue->name ?? null,
+                    'venue_photo_url' => $venuePhotoUrl,
                     'facility' => $event->facility->type ?? null,
                     'slots' => $event->slots,
                     'is_approved' => (bool) $event->is_approved,
@@ -859,6 +876,15 @@ class EventController extends Controller
             }
         }
 
+        // Block creation if venue is closed
+        $venue = \App\Models\Venue::find($request->venue_id);
+        if ($venue && $venue->is_closed) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This venue is closed and not accepting new events.'
+            ], 403);
+        }
+
         // Prevent double booking: same venue + facility, same date, overlapping times
         $conflict = Event::where('venue_id', $request->venue_id)
             ->where('facility_id', $request->facility_id)
@@ -900,7 +926,7 @@ class EventController extends Controller
             'name' => $request->name,
             'description' => $request->description,
             'event_type' => $request->event_type,
-            'sport' => $mainSport->name,
+            'sport' => $request->sport,
             'venue_id' => $request->venue_id,
             'facility_id' => $request->facility_id,
             'slots' => $request->slots,
@@ -985,7 +1011,7 @@ class EventController extends Controller
      */
     public function show(string $id)
     {
-        $event = Event::with(['venue', 'facility', 'teams.team', 'participants.user', 'checkins.user'])
+        $event = Event::with(['venue.photos', 'facility', 'teams.team', 'participants.user', 'checkins.user'])
             ->withCount('participants')
             ->find($id);
 
@@ -1011,6 +1037,14 @@ class EventController extends Controller
         $pricePerHour = $event->facility->price_per_hr ?? 0;
         $totalCost = $hours * $pricePerHour;
         $costPerPerson = $event->participants_count > 0 ? round($totalCost / $event->participants_count, 2) : 0;
+        
+        // Determine venue primary photo url (latest upload if available)
+        $firstPhotoPath = null;
+        if ($event->venue && $event->venue->photos && $event->venue->photos->count() > 0) {
+            $firstPhoto = $event->venue->photos->sortByDesc('uploaded_at')->first();
+            $firstPhotoPath = $firstPhoto ? $firstPhoto->image_path : null;
+        }
+        $venuePhotoUrl = $firstPhotoPath ? url('storage/' . ltrim($firstPhotoPath, '/')) : null;
 
         $eventData = [
             'id' => $event->id,
@@ -1035,6 +1069,7 @@ class EventController extends Controller
                 'address' => $event->venue->address,
                 'latitude' => $event->venue->latitude,
                 'longitude' => $event->venue->longitude,
+                'photo_url' => $venuePhotoUrl,
             ],
             'facility' => [
                 'id' => $event->facility->id,

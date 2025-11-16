@@ -8,6 +8,7 @@ use App\Http\Controllers\VenueController;
 use App\Http\Controllers\PostController;
 use App\Http\Controllers\NotifController;
 use App\Http\Controllers\TeamController;
+use App\Http\Controllers\MessagingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -46,6 +47,22 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/profile/update', [AuthController::class, 'updateProfile']);
     Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);
 
+    // Messaging
+    Route::prefix('messaging')->group(function () {
+        Route::get('/threads', [MessagingController::class, 'threads']);
+        Route::get('/threads/{threadId}/messages', [MessagingController::class, 'threadMessages']);
+        Route::post('/threads/create-one', [MessagingController::class, 'createOneToOneByUsername']);
+        Route::post('/threads/create-group', [MessagingController::class, 'createGroup']);
+        Route::post('/threads/{threadId}/messages', [MessagingController::class, 'sendMessage']);
+        Route::post('/threads/{threadId}/archive', [MessagingController::class, 'archive']);
+        Route::post('/threads/{threadId}/unarchive', [MessagingController::class, 'unarchive']);
+        Route::post('/threads/{threadId}/leave', [MessagingController::class, 'leave']);
+        Route::post('/threads/{threadId}/read', [MessagingController::class, 'markRead']);
+        // Auto create helpers
+        Route::post('/auto/team/{teamId}', [MessagingController::class, 'createTeamThread']);
+        Route::post('/auto/venue/{venueId}', [MessagingController::class, 'createVenueThread']);
+        Route::post('/auto/game/{eventId}', [MessagingController::class, 'createGameThread']);
+    });
     // Route::get('/notifications', [NotifController::class, 'index']);
     Route::get('/users/notifications', [NotifController::class, 'userNotifications']);
     Route::post('/users/notifications/{id}/read', [NotifController::class, 'markAsRead']);
@@ -118,6 +135,10 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/venues/edit/{venueId}', [VenueController::class, 'update']);
     Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
     Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
+    Route::get('/venues/owner/archived', [VenueController::class, 'OwnerArchivedVenues']);
+    Route::post('/venues/{venueId}/close', [VenueController::class, 'closeVenue']);
+    Route::post('/venues/{venueId}/reopen', [VenueController::class, 'reopenVenue']);
+    Route::post('/venues/{venueId}/transfer-ownership', [VenueController::class, 'transferOwnership']);
     
     // Facilities list route must come before the {facilityId} route to avoid route conflict
     Route::get('/venues/{venueId}/facilities/list', [VenueController::class, 'getFacilitiesList']);
@@ -164,6 +185,10 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'deleteClosureDate']);
 
     Route::get('/teams', [TeamController::class, 'index']);
+    // Discover teams open to new members
+    Route::get('/lookingfor/teams', [TeamController::class, 'discoverLookingForTeams']);
+    // My outgoing (pending) join requests
+    Route::get('/me/team-join-requests', [TeamController::class, 'myJoinRequests']);
     Route::post('/teams/create', [TeamController::class, 'store']);
     Route::patch('/teams/{teamId}', [TeamController::class, 'update']);
     Route::post('/teams/{teamId}/photo', [TeamController::class, 'updatePhoto']);
