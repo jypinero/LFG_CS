@@ -9,6 +9,10 @@ use App\Http\Controllers\PostController;
 use App\Http\Controllers\NotifController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\MessagingController;
+use App\Http\Controllers\Auth\OtpAuthController;
+use App\Http\Controllers\Admin\AuditLogController;
+use App\Http\Middleware\EnsureAdmin;
+use App\Http\Middleware\LogAdminAction;
 
 /*
 |--------------------------------------------------------------------------
@@ -25,6 +29,10 @@ use App\Http\Controllers\MessagingController;
 Route::post('/register', [AuthController::class, 'register']);
 Route::get('/register/check-availability', [AuthController::class, 'checkAvailability']);
 Route::post('/login', [AuthController::class, 'login']);
+// OTP login flow
+Route::post('/auth/login', [OtpAuthController::class, 'login'])->middleware('throttle:otp-send');
+Route::post('/auth/verify-otp', [OtpAuthController::class, 'verify'])->middleware('throttle:otp-verify');
+Route::post('/auth/resend-otp', [OtpAuthController::class, 'resend'])->middleware('throttle:otp-send');
 Route::get('/roles', [AuthController::class, 'getRoles']);
 Route::get('/sports', [AuthController::class, 'getSports']);
 
@@ -228,3 +236,57 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/teams/{teamId}', [TeamController::class, 'destroy']);
 
 }); 
+
+// Admin routes (JWT protected + admin-only)
+Route::middleware(['auth:api', EnsureAdmin::class, LogAdminAction::class, 'throttle:admin-writes'])->prefix('admin')->group(function () {
+    Route::get('/audit-logs', [AuditLogController::class, 'index']);
+    // Users admin
+    Route::get('/users', [\App\Http\Controllers\Admin\UserAdminController::class, 'index']);
+    Route::get('/users/{id}', [\App\Http\Controllers\Admin\UserAdminController::class, 'show']);
+    Route::post('/users', [\App\Http\Controllers\Admin\UserAdminController::class, 'store']);
+    Route::patch('/users/{id}', [\App\Http\Controllers\Admin\UserAdminController::class, 'update']);
+    Route::delete('/users/{id}', [\App\Http\Controllers\Admin\UserAdminController::class, 'destroy']);
+    Route::post('/users/{id}/ban', [\App\Http\Controllers\Admin\UserAdminController::class, 'ban']);
+    Route::post('/users/{id}/unban', [\App\Http\Controllers\Admin\UserAdminController::class, 'unban']);
+    Route::get('/users/{id}/activity', [\App\Http\Controllers\Admin\UserAdminController::class, 'activity']);
+    // Tickets admin
+    Route::get('/tickets', [\App\Http\Controllers\Admin\TicketAdminController::class, 'index']);
+    Route::get('/tickets/{id}', [\App\Http\Controllers\Admin\TicketAdminController::class, 'show']);
+    Route::post('/tickets', [\App\Http\Controllers\Admin\TicketAdminController::class, 'store']);
+    Route::patch('/tickets/{id}', [\App\Http\Controllers\Admin\TicketAdminController::class, 'update']);
+    Route::post('/tickets/{id}/close', [\App\Http\Controllers\Admin\TicketAdminController::class, 'close']);
+    // Venues admin
+    Route::get('/venues', [\App\Http\Controllers\Admin\VenueAdminController::class, 'index']);
+    Route::get('/venues/{id}', [\App\Http\Controllers\Admin\VenueAdminController::class, 'show']);
+    Route::patch('/venues/{id}', [\App\Http\Controllers\Admin\VenueAdminController::class, 'update']);
+    Route::post('/venues/{id}/approve', [\App\Http\Controllers\Admin\VenueAdminController::class, 'approve']);
+    Route::post('/venues/{id}/reject', [\App\Http\Controllers\Admin\VenueAdminController::class, 'reject']);
+    // Events admin
+    Route::get('/events', [\App\Http\Controllers\Admin\EventAdminController::class, 'index']);
+    Route::get('/events/{id}', [\App\Http\Controllers\Admin\EventAdminController::class, 'show']);
+    Route::get('/events/{id}/participants', [\App\Http\Controllers\Admin\EventAdminController::class, 'participants']);
+    Route::get('/events/{id}/scores', [\App\Http\Controllers\Admin\EventAdminController::class, 'scores']);
+    Route::patch('/events/{id}', [\App\Http\Controllers\Admin\EventAdminController::class, 'update']);
+    // Dashboards
+    Route::get('/dashboards/overview', [\App\Http\Controllers\Admin\DashboardAdminController::class, 'overview']);
+    Route::get('/dashboards/events', [\App\Http\Controllers\Admin\DashboardAdminController::class, 'events']);
+    Route::get('/dashboards/venues', [\App\Http\Controllers\Admin\DashboardAdminController::class, 'venues']);
+    Route::get('/dashboards/support', [\App\Http\Controllers\Admin\DashboardAdminController::class, 'support']);
+    Route::get('/dashboards/ratings', [\App\Http\Controllers\Admin\DashboardAdminController::class, 'ratings']);
+    // Exports
+    Route::get('/exports/users', [\App\Http\Controllers\Admin\ExportAdminController::class, 'users']);
+    Route::get('/exports/venues', [\App\Http\Controllers\Admin\ExportAdminController::class, 'venues']);
+    Route::get('/exports/events', [\App\Http\Controllers\Admin\ExportAdminController::class, 'events']);
+    Route::get('/exports/tickets', [\App\Http\Controllers\Admin\ExportAdminController::class, 'tickets']);
+    Route::get('/exports/ratings', [\App\Http\Controllers\Admin\ExportAdminController::class, 'ratings']);
+    // Admin ratings views
+    Route::get('/events/{id}/ratings', [\App\Http\Controllers\Admin\RatingAdminController::class, 'listByEvent']);
+    Route::get('/ratings/leaderboard', [\App\Http\Controllers\Admin\RatingAdminController::class, 'leaderboard']);
+});
+
+// Ratings (user-facing, protected)
+Route::middleware('auth:api')->group(function () {
+    Route::get('/events/{id}/pending-ratings', [\App\Http\Controllers\EventRatingController::class, 'pending']);
+    Route::post('/events/{id}/ratings', [\App\Http\Controllers\EventRatingController::class, 'submit']);
+    Route::get('/events/{id}/ratings/summary', [\App\Http\Controllers\EventRatingController::class, 'summary']);
+});

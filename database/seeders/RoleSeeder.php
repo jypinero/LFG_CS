@@ -20,7 +20,7 @@ class RoleSeeder extends Seeder
         ];
 
         foreach ($roles as $roleName) {
-            $role = Role::create(['name' => $roleName]);
+			Role::firstOrCreate(['name' => $roleName]);
         }
     }
 }
