@@ -229,7 +229,13 @@ class EventController extends Controller
                     'team_id' => $eventTeam->team_id,
                     'team_name' => $eventTeam->team->name ?? 'Unknown Team',
                     'members' => $teamMembers->map(function($member) {
-                        return $member->user ? $member->user->username : 'Unknown User';
+                        return $member->user ? [
+                            'username' => $member->user->username,
+                            'profile_photo' => $member->user->profile_photo ? asset('storage/' . $member->user->profile_photo) : null,
+                        ] : [
+                            'username' => 'Unknown User',
+                            'profile_photo' => null,
+                        ];
                     })
                 ];
             });
@@ -237,7 +243,13 @@ class EventController extends Controller
             $eventData['slots'] = $event->participants_count . '/' . $event->slots;
             $eventData['participants'] = [
                 'name' => $participants->map(function($participant) {
-                    return $participant->user ? $participant->user->username : 'Unknown User';
+                    return $participant->user ? [
+                        'username' => $participant->user->username,
+                        'profile_photo' => $participant->user->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
+                    ] : [
+                        'username' => 'Unknown User',
+                        'profile_photo' => null,
+                    ];
                 })
             ];
         }
@@ -1104,6 +1116,7 @@ class EventController extends Controller
             return [
                 'user_id' => $participant->user_id,
                 'username' => $participant->user->username,
+                'profile_photo' => $participant->user->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
                 'status' => $participant->status,
                 'checked_in' => $checkin ? true : false,
                 'checkin_time' => $checkin ? $checkin->checkin_time : null,
@@ -1852,6 +1865,7 @@ class EventController extends Controller
                 return [
                     'user_id' => $participant->user_id,
                     'username' => $participant->user->username,
+                    'profile_photo' => $participant->user->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
                     'status' => $participant->status,
                     'checked_in' => $checkin ? true : false,
                     'checkin_time' => $checkin ? $checkin->checkin_time : null,
