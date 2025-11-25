@@ -63,6 +63,9 @@ class VenueController extends Controller
                         'venue_id' => $facility->venue_id,
                         'price_per_hr' => $facility->price_per_hr,
                         'type' => $facility->type,
+                        'name' => $facility->name,
+                        'capacity' => $facility->capacity,
+                        'covered' => $facility->covered,
                         // Show all facility photos
                         'photos' => $facility->photos->map(function ($photo) {
                             return [
@@ -121,6 +124,9 @@ class VenueController extends Controller
                         'venue_id' => $facility->venue_id,
                         'price_per_hr' => $facility->price_per_hr,
                         'type' => $facility->type,
+                        'name' => $facility->name,
+                        'capacity' => $facility->capacity,
+                        'covered' => $facility->covered,
                         'photos' => $facility->photos->map(function ($photo) {
                             return [
                                 'id' => $photo->id,
@@ -594,6 +600,9 @@ class VenueController extends Controller
                             'venue_id' => $facility->venue_id,
                             'price_per_hr' => $facility->price_per_hr,
                             'type' => $facility->type,
+                            'name' => $facility->name,
+                            'capacity' => $facility->capacity,
+                            'covered' => $facility->covered,
                             'photos' => $facility->photos->map(fn($p) => ['id'=>$p->id,'image_url'=>Storage::url($p->image_path),'uploaded_at'=>$p->uploaded_at]),
                         ];
                     }),
@@ -951,6 +960,9 @@ class VenueController extends Controller
             'venue_id' => $facility->venue_id,
             'price_per_hr' => $facility->price_per_hr,
             'type' => $facility->type,
+            'name' => $facility->name,
+            'capacity' => $facility->capacity,
+            'covered' => $facility->covered,
             'photos' => $facility->photos->map(fn($p) => [
                 'id' => $p->id,
                 'image_url' => Storage::url($p->image_path),
@@ -1063,13 +1075,24 @@ class VenueController extends Controller
         $validated = $request->validate([
             'price_per_hr' => 'nullable|numeric|min:0',
             'type' => 'nullable|string|max:255',
+            'name' => 'nullable|string|max:255',
+            'capacity' => 'nullable|integer|min:1',
+            'covered' => 'nullable|boolean',
             'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:8192',
         ]);
 
-        $allowed = ['price_per_hr','type'];
+        $allowed = ['price_per_hr', 'type', 'name', 'capacity', 'covered'];
         $data = [];
         foreach ($allowed as $f) {
-            if ($request->has($f)) $data[$f] = $request->input($f);
+            if ($request->has($f)) {
+                $value = $request->input($f);
+                // Handle boolean for 'covered' field
+                if ($f === 'covered' && $request->has($f)) {
+                    $data[$f] = filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
+                } else {
+                    $data[$f] = $value;
+                }
+            }
         }
         $data = array_filter($data, fn($v) => !is_null($v) && $v !== '');
 
@@ -1111,6 +1134,9 @@ class VenueController extends Controller
                     'venue_id' => $facility->venue_id,
                     'price_per_hr' => $facility->price_per_hr,
                     'type' => $facility->type,
+                    'name' => $facility->name,
+                    'capacity' => $facility->capacity,
+                    'covered' => $facility->covered,
                     'photos' => $facility->photos->map(fn($p) => ['id'=>$p->id,'image_url'=>Storage::url($p->image_path),'uploaded_at'=>$p->uploaded_at]),
                     'created_at' => $facility->created_at,
                     'updated_at' => $facility->updated_at,
@@ -1134,7 +1160,31 @@ class VenueController extends Controller
             'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
         ]);
 
-        $facility = Facilities::findOrFail($facilityId);
+        $facility = Facilities::with('venue')->where('id', $facilityId)
+            ->where('venue_id', $venueId)
+            ->first();
+
+        if (! $facility) {
+            \Log::warning('facility.photo.add.facility_not_found', ['venue_id'=>$venueId,'facility_id'=>$facilityId]);
+            return response()->json(['status' => 'error', 'message' => 'Facility not found for this venue'], 404);
+        }
+
+        $venue = $facility->venue;
+        $user = auth()->user();
+
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = false;
+        if ($venue && class_exists(\App\Models\VenueUser::class)) {
+            $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+                ->where('user_id', $user->id)
+                ->where(function($q){ $q->where('role','owner')->orWhere('is_primary_owner', true); })
+                ->exists();
+        }
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            \Log::warning('facility.photo.add.forbidden', ['venue_id'=>$venueId,'facility_id'=>$facilityId,'user_id'=>$user->id ?? null]);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
         $addedPhotos = [];
 
         // Normalize to array — even if only one file is uploaded
@@ -1208,6 +1258,73 @@ class VenueController extends Controller
             return response()->json(['status' => 'success', 'message' => 'Facility photo deleted', 'data' => ['photo_id' => $photoId]], 200);
         } catch (\Throwable $e) {
             \Log::error('facility.photo.delete.exception', ['facility_id'=>$facilityId,'photo_id'=>$photoId,'error'=>$e->getMessage()]);
+            return response()->json(['status' => 'error', 'message' => 'Delete failed', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Delete a facility by venue (owner only)
+     * DELETE /api/venues/{venueId}/facilities/delete/{facilityId}
+     */
+    public function destroyFacilityByVenue(string $venueId, string $facilityId)
+    {
+        $facility = Facilities::with(['photos', 'venue'])
+            ->where('id', $facilityId)
+            ->where('venue_id', $venueId)
+            ->first();
+
+        if (! $facility) {
+            \Log::warning('facility.delete.not_found_for_venue', ['venue_id'=>$venueId,'facility_id'=>$facilityId]);
+            return response()->json(['status' => 'error', 'message' => 'Facility not found for this venue'], 404);
+        }
+
+        $venue = $facility->venue;
+        $user = auth()->user();
+
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = false;
+        if ($venue && class_exists(\App\Models\VenueUser::class)) {
+            $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+                ->where('user_id', $user->id)
+                ->where(function($q){ $q->where('role','owner')->orWhere('is_primary_owner', true); })
+                ->exists();
+        }
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            \Log::warning('facility.delete.forbidden_for_venue', ['venue_id'=>$venueId,'facility_id'=>$facilityId,'user_id'=>$user->id ?? null]);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        try {
+            DB::transaction(function () use ($facility, $facilityId, $venueId) {
+                // Delete all facility photos
+                foreach ($facility->photos as $photo) {
+                    try {
+                        Storage::disk('public')->delete($photo->image_path);
+                    } catch (\Throwable $e) {
+                        \Log::warning('facility.delete.delete_photo_failed', ['photo_id'=>$photo->id,'error'=>$e->getMessage()]);
+                    }
+                    $photo->delete();
+                }
+
+                // Delete the facility
+                $facility->delete();
+            });
+
+            \Log::info('facility.deleted_for_venue', ['facility_id'=>$facilityId,'venue_id'=>$venueId,'deleted_by'=>$user->id ?? null]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Facility deleted successfully',
+                'data' => ['facility_id' => $facilityId]
+            ], 200);
+        } catch (\Throwable $e) {
+            \Log::error('facility.delete.exception_for_venue', [
+                'error'=>$e->getMessage(),
+                'facility_id'=>$facilityId,
+                'venue_id'=>$venueId,
+                'trace'=>$e->getTraceAsString()
+            ]);
             return response()->json(['status' => 'error', 'message' => 'Delete failed', 'error' => $e->getMessage()], 500);
         }
     }
