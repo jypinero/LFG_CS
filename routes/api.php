@@ -9,6 +9,7 @@ use App\Http\Controllers\PostController;
 use App\Http\Controllers\NotifController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\MessagingController;
+use App\Http\Controllers\TournamentController;
 use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\Admin\AuditLogController;
 use App\Http\Middleware\EnsureAdmin;
@@ -234,6 +235,21 @@ Route::middleware('auth:api')->group(function () {
     
     // Delete team
     Route::delete('/teams/{teamId}', [TeamController::class, 'destroy']);
+
+
+    // Tournament Management Routes
+    // Tournament CRUD
+    Route::post('tournaments/create', [TournamentController::class, 'create']);
+    Route::get('tournaments/show/{id}', [TournamentController::class, 'show']);
+    Route::put('tournaments/update/{id}', [TournamentController::class, 'update']);
+    Route::delete('tournaments/delete/{id}', [TournamentController::class, 'destroy']);
+    Route::get('/tournaments', [TournamentController::class, 'index']);
+
+    Route::post('tournaments/{tournamentid}/creategames', [TournamentController::class, 'createGame']);
+    Route::get('tournaments/{tournamentid}/getgames', [TournamentController::class, 'getGames']);
+    Route::put('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
+    Route::patch('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
+    Route::delete('tournaments/{tournamentid}/deletegames/{gameid}', [TournamentController::class, 'deleteGame']);
 
 }); 
 

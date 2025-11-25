@@ -4,6 +4,8 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\Relations\HasMany;
+use Carbon\Carbon;
 
 class Event extends Model
 {
@@ -25,12 +27,86 @@ class Event extends Model
         'cancelled_at',
         'is_approved',
         'approved_at',
+        // tournament-related fields
+        'tournament_id',
+        'game_number',
+        'game_status',
+        'is_tournament_game',
     ];
 
     protected $casts = [
         'is_approved' => 'boolean',
         'approved_at' => 'datetime',
+        'date' => 'date',
+        'start_time' => 'string',
+        'end_time' => 'string',
+        'is_tournament_game' => 'boolean',
     ];
+
+    // include computed status in arrays / JSON
+    protected $appends = ['status'];
+
+    /**
+     * Accessor for computed status.
+     * Accepts the raw $value (if column 'status' exists) to avoid recursion.
+     */
+    public function getStatusAttribute($value)
+    {
+        // If DB has explicit status column value, return it
+        if (! is_null($value)) {
+            return $value;
+        }
+
+        // Fallback: check raw attributes array (safe, avoids accessor)
+        if (array_key_exists('status', $this->attributes) && ! is_null($this->attributes['status'])) {
+            return $this->attributes['status'];
+        }
+
+        // Cancelled override
+        if (! empty($this->cancelled_at)) {
+            return 'cancelled';
+        }
+
+        // If scheduled_at present, use it to determine state
+        if (! empty($this->scheduled_at)) {
+            $now = now();
+            $start = \Carbon\Carbon::parse($this->scheduled_at);
+            $end = $start->copy()->addHours(3);
+
+            if ($now->lt($start)) {
+                return 'upcoming';
+            }
+            if ($now->between($start, $end)) {
+                return 'ongoing';
+            }
+            return 'completed';
+        }
+
+        // Fallback to date + start_time / end_time logic
+        if (! empty($this->date) && ! empty($this->start_time) && ! empty($this->end_time)) {
+            $now = now();
+
+            // normalize date to YYYY-MM-DD to avoid double time strings
+            try {
+                $dateOnly = \Carbon\Carbon::parse($this->date)->toDateString();
+            } catch (\Throwable $e) {
+                $dateOnly = (string) $this->date;
+            }
+
+            $eventStart = \Carbon\Carbon::parse($dateOnly . ' ' . $this->start_time);
+            $eventEnd = \Carbon\Carbon::parse($dateOnly . ' ' . $this->end_time);
+
+            if ($now->lt($eventStart)) {
+                return 'upcoming';
+            }
+            if ($now->between($eventStart, $eventEnd)) {
+                return 'ongoing';
+            }
+            return 'completed';
+        }
+
+        return 'scheduled';
+    }
 
     public function venue()
     {
@@ -72,29 +148,21 @@ class Event extends Model
         return $this->hasMany(EventCheckin::class);
     }
 
-    public function getStatusAttribute()
+    public function tournament()
     {
-        if ($this->cancelled_at) {
-            return 'cancelled';
-        }
-
-        $now = now();
-        $eventStart = \Carbon\Carbon::parse($this->date . ' ' . $this->start_time);
-        $eventEnd = \Carbon\Carbon::parse($this->date . ' ' . $this->end_time);
-
-        if ($now < $eventStart) {
-            return 'upcoming';
-        }
-
-        if ($now >= $eventStart && $now <= $eventEnd) {
-            return 'ongoing';
-        }
-
-        return 'completed';
+        return $this->belongsTo(\App\Models\Tournament::class, 'tournament_id');
     }
 
     public function isCompetitive()
     {
         return in_array($this->event_type, ['tournament', 'team vs team']);
+    }
+
+    /**
+     * Get all bookings for this event.
+     */
+    public function bookings(): HasMany
+    {
+        return $this->hasMany(Booking::class);
     }
 }
