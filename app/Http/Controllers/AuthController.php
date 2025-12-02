@@ -391,6 +391,7 @@ class AuthController extends Controller
             'data' => [
                 'username' => $user->username,
                 'city' => $user->city,
+                'role' => $user->role->name,
                 'province' => $user->province,
                 'profile_photo' => $user->profile_photo ? \Storage::url($user->profile_photo) : null,
                 'first_name' => $user->first_name,
