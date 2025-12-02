@@ -239,17 +239,28 @@ Route::middleware('auth:api')->group(function () {
 
     // Tournament Management Routes
     // Tournament CRUD
+    Route::get('/tournaments', [TournamentController::class, 'index']);
     Route::post('tournaments/create', [TournamentController::class, 'create']);
     Route::get('tournaments/show/{id}', [TournamentController::class, 'show']);
     Route::put('tournaments/update/{id}', [TournamentController::class, 'update']);
     Route::delete('tournaments/delete/{id}', [TournamentController::class, 'destroy']);
-    Route::get('/tournaments', [TournamentController::class, 'index']);
-
+    
+    // Games (existing)
     Route::post('tournaments/{tournamentid}/creategames', [TournamentController::class, 'createGame']);
     Route::get('tournaments/{tournamentid}/getgames', [TournamentController::class, 'getGames']);
     Route::put('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
     Route::patch('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
     Route::delete('tournaments/{tournamentid}/deletegames/{gameid}', [TournamentController::class, 'deleteGame']);
+
+    // Registration & participant management routes (added)
+    // Single registration endpoint (handles individual OR team registration)
+    Route::post('tournaments/{tournamentid}/register/{eventid}', [TournamentController::class, 'register']);
+
+    // Participants list and admin actions
+    Route::get('tournaments/{tournamentid}/participants', [TournamentController::class, 'getParticipants']);
+    Route::post('tournaments/{tournamentid}/participants/{participantid}/approve', [TournamentController::class, 'approveParticipant']);
+    Route::post('tournaments/{tournamentid}/participants/{participantid}/reject', [TournamentController::class, 'rejectParticipant']);
+    Route::post('tournaments/{tournamentid}/participants/{participantid}/ban', [TournamentController::class, 'banParticipant']);
 
 }); 
 

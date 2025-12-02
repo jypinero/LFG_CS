@@ -14,6 +14,7 @@ class EventParticipant extends Model
         'user_id',
         'team_id',
         'status',
+        'tournament_id',  // added
     ];
 
     public function event()
@@ -30,4 +31,9 @@ class EventParticipant extends Model
     {
         return $this->belongsTo(Team::class);
     }
-} 
+
+    public function tournament()
+    {
+        return $this->belongsTo(Tournament::class);
+    }
+}

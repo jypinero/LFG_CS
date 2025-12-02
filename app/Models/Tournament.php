@@ -6,6 +6,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\SoftDeletes;
+use Illuminate\Database\Eloquent\Relations\HasMany;
 
 class Tournament extends Model
 {
@@ -15,6 +16,7 @@ class Tournament extends Model
         'name',
         'description',
         'type',
+        'tournament_type',  // ADD THIS
         'created_by',
         'start_date',
         'end_date',
@@ -39,6 +41,14 @@ class Tournament extends Model
         'settings' => 'array',
     ];
 
+    /**
+     * Tournament has many events
+     */
+    public function events(): HasMany
+    {
+        return $this->hasMany(Event::class);
+    }
+
     public function creator()
     {
         return $this->belongsTo(User::class, 'created_by');
@@ -52,11 +62,6 @@ class Tournament extends Model
     public function organizers()
     {
         return $this->hasMany(TournamentOrganizer::class);
-    }
-
-    public function events()
-    {
-        return $this->hasMany(Event::class);
     }
 
     public function matchups()

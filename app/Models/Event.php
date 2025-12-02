@@ -5,6 +5,7 @@ namespace App\Models;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\HasMany;
+use Illuminate\Database\Eloquent\Relations\BelongsTo;
 use Carbon\Carbon;
 
 class Event extends Model
@@ -148,9 +149,12 @@ class Event extends Model
         return $this->hasMany(EventCheckin::class);
     }
 
-    public function tournament()
+    /**
+     * Event belongs to a Tournament
+     */
+    public function tournament(): BelongsTo
     {
-        return $this->belongsTo(\App\Models\Tournament::class, 'tournament_id');
+        return $this->belongsTo(Tournament::class);
     }
 
     public function isCompetitive()

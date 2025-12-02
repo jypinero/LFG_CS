@@ -1,0 +1,25 @@
+<?php
+
+use Illuminate\Database\Migrations\Migration;
+use Illuminate\Database\Schema\Blueprint;
+use Illuminate\Support\Facades\Schema;
+
+return new class extends Migration
+{
+    /**
+     * Run the migrations.
+     */
+    public function up()
+    {
+        Schema::table('tournaments', function (Blueprint $table) {
+            $table->enum('tournament_type', ['team vs team', 'free for all'])->default('free for all')->after('type');
+        });
+    }
+
+    public function down()
+    {
+        Schema::table('tournaments', function (Blueprint $table) {
+            $table->dropColumn('tournament_type');
+        });
+    }
+};

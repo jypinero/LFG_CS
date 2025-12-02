@@ -5,7 +5,11 @@ namespace App\Http\Controllers;
 use App\Models\Tournament;
 use App\Models\TournamentOrganizer;
 use App\Models\TournamentAnalytics;
-use App\Models\Event;                // added
+use App\Models\Event;
+use App\Models\TournamentParticipant;
+use App\Models\Team;
+use App\Models\TeamMember;
+use App\Models\EventParticipant;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Carbon\Carbon;
@@ -32,85 +36,27 @@ class TournamentController extends Controller
 
     public function index()
     {
-        $events = Event::with(['venue.photos', 'facility', 'teams.team'])
-            ->where('is_approved', true)
-            ->where('event_type', 'tournament') // only tournament events
-            ->withCount('participants')
-            ->get()
-            ->map(function($event) {
-                // Calculate hours
-                $start = Carbon::parse($event->start_time);
-                $end = Carbon::parse($event->end_time);
-                $hours = $start->diffInMinutes($end) / 60;
-
-                // Calculate total cost
-                $pricePerHour = $event->facility->price_per_hr ?? 0;
-                $totalCost = $hours * $pricePerHour;
-
-                $participantsCount = $event->participants_count ?? 0;
-                $divide = $participantsCount > 0 ? ($totalCost / $participantsCount) : 0;
-                $dividedpay = round($divide, 2);
-                
-                // Determine venue primary photo url (latest upload if available)
-                $firstPhotoPath = null;
-                if ($event->venue && $event->venue->photos && $event->venue->photos->count() > 0) {
-                    $firstPhoto = $event->venue->photos->sortByDesc('uploaded_at')->first();
-                    $firstPhotoPath = $firstPhoto ? $firstPhoto->image_path : null;
-                }
-                $venuePhotoUrl = $firstPhotoPath ? url('storage/' . ltrim($firstPhotoPath, '/')) : null;
-
-                $eventData = [
-                    'id' => $event->id,
-                    'name' => $event->name,
-                    'description' => $event->description,
-                    'sport' => $event->sport,
-                    'date' => $event->date,
-                    'start_time' => $event->start_time,
-                    'end_time' => $event->end_time,
-                    'participants_count' => $participantsCount,
-                    'total_slots' => $event->slots,
-                    'venue' => $event->venue->name ?? null,
-                    'facility' => $event->facility->type ?? null,
-                    'longitude' => $event->venue->longitude ?? null,
-                    'latitude' => $event->venue->latitude ?? null,
-                    'venue_photo_url' => $venuePhotoUrl,
-                    'hours' => $hours,
-                    'total_cost' => $totalCost,
-                    'cost_per_slot' => $dividedpay,
-                    'host' => optional(User::find($event->created_by))->username,
-                    'event_type' => $event->event_type,
-                    'is_approved' => (bool) $event->is_approved,
-                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
-                    'approved_at' => $event->approved_at,
-                    'tournament_id' => $event->tournament_id,
-                    'game_number' => $event->game_number,
-                    'game_status' => $event->game_status,
-                    'is_tournament_game' => $event->tournament_id ? true : false,
-                ];
-
-                // Add team information for team vs team events
-                if ($event->event_type === 'tournament') {
-                    $eventData['teams'] = $event->teams->map(function($eventTeam) {
-                        return [
-                            'team_id' => $eventTeam->team_id,
-                            'team_name' => $eventTeam->team->name ?? 'Unknown Team',
-                        ];
-                    });
-                    $eventData['teams_count'] = $event->teams->count();
-                    $eventData['slots_display'] = $event->teams->count() . '/' . $event->slots . ' teams';
-                } else {
-                    $eventData['slots_display'] = $participantsCount . '/' . $event->slots . ' participants';
-                }
-
-                return $eventData;
-            });
+        $tournaments = Tournament::with([
+            'events' => function($query) {
+                $query->where('is_approved', true);
+            },
+            'participants',
+            'organizers.user',
+            'documents',
+            'analytics',
+            'announcements'
+        ])
+        ->whereHas('events', function($query) {
+            $query->where('is_approved', true);
+        })
+        ->get();
 
         return response()->json([
             'status' => 'success',
-            'events' => $events
+            'data' => $tournaments,
+            'count' => $tournaments->count()
         ]);
     }
-
     /**
      * Create a tournament
      */
@@ -122,6 +68,7 @@ class TournamentController extends Controller
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
             'type' => ['required', Rule::in(['single_sport', 'multisport'])],
+            'tournament_type' => ['required', Rule::in(['team vs team', 'free for all'])],  // ADD THIS
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'registration_deadline' => 'nullable|date',
@@ -347,6 +294,22 @@ class TournamentController extends Controller
             }
         }
 
+        // Check tournament type: single_sport vs multisport
+        if ($tournament->type === 'single_sport') {
+            // For single_sport, get the first sport used in existing games
+            $existingEvent = Event::where('tournament_id', $tournament->id)
+                ->where('is_tournament_game', true)
+                ->first();
+
+            if ($existingEvent && $existingEvent->sport !== $sport) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Single-sport tournament can only have events with ' . $existingEvent->sport
+                ], 422);
+            }
+        }
+        // For multisport, different sports are allowed - no additional check needed
+
         // check venue open/availability
         $venue = \App\Models\Venue::find($request->venue_id);
         if ($venue && data_get($venue, 'is_closed')) {
@@ -373,12 +336,10 @@ class TournamentController extends Controller
             $gameNumber = ($maxNumber ?? 0) + 1;
 
             $event = Event::create(array_merge($request->only([
-
                 'name','description','venue_id','facility_id','slots','date','start_time','end_time'
             ]), [
                 'sport' => $sport,
                 'created_by' => $user->id,
-                // generate 4-char code to match small DB column
                 'checkin_code' => $this->generateCheckinCode(),
                 'is_approved' => false,
                 'approved_at' => null,
@@ -400,15 +361,6 @@ class TournamentController extends Controller
                     'end_time' => $event->end_time,
                     'purpose' => 'Tournament game: '.$event->name,
                     'status' => 'pending',
-                ]);
-            }
-
-            // enroll creating user as participant when EventParticipant model exists
-            if (class_exists(\App\Models\EventParticipant::class)) {
-                \App\Models\EventParticipant::create([
-                    'event_id' => $event->id,
-                    'user_id' => $user->id,
-                    'status' => 'confirmed',
                 ]);
             }
 
@@ -555,5 +507,466 @@ class TournamentController extends Controller
         });
 
         return response()->json(['status' => 'success', 'message' => 'Event deleted']);
+    }
+
+    /**
+     * Single registration endpoint (handles individual OR team registration)
+     *
+     * Rules:
+     *  - team registrations allowed ONLY for tournament_type === 'team vs team'
+     *  - individual registrations allowed ONLY for tournament_type === 'free for all'
+     *    or when settings.allow_individual = true
+     *  - team registrations require caller to be team owner or manager
+     */
+    public function register(Request $request, $tournamentId, $eventId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        $event = Event::where('id', $eventId)->where('tournament_id', $tournamentId)->first();
+        
+        if (! $tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        if ($tournament->status !== 'open_registration') {
+            return response()->json(['status' => 'error', 'message' => 'Registration is not open'], 422);
+        }
+        if ($tournament->registration_deadline && now()->isAfter($tournament->registration_deadline)) {
+            return response()->json(['status' => 'error', 'message' => 'Registration deadline has passed'], 422);
+        }
+
+        $data = $request->validate([
+            'team_id' => 'sometimes|nullable|exists:teams,id',
+        ]);
+
+        $teamId = $data['team_id'] ?? null;
+        $tpStatus = $tournament->requires_documents ? 'pending' : 'approved';
+        // event participant status mirrors tournament participant (approved => confirmed)
+        $epStatus = $tpStatus === 'approved' ? 'confirmed' : 'pending';
+
+        DB::beginTransaction();
+        try {
+            // TEAM REGISTRATION PATH - ONLY 'team vs team'
+            if ($teamId) {
+                if ($tournament->tournament_type !== 'team vs team') {
+                    return response()->json(['status' => 'error', 'message' => 'This tournament does not accept team registrations'], 422);
+                }
+
+                $team = Team::find($teamId);
+                if (! $team) {
+                    return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+                }
+
+                $isOwner = $team->owner_id === $user->id;
+                $isManager = TeamMember::where('team_id', $teamId)
+                    ->where('user_id', $user->id)
+                    ->whereIn('role', ['owner', 'manager'])
+                    ->exists();
+                if (! $isOwner && ! $isManager) {
+                    return response()->json(['status' => 'error', 'message' => 'Not authorized to register this team'], 403);
+                }
+
+                $exists = TournamentParticipant::where('tournament_id', $tournament->id)
+                    ->where('team_id', $teamId)
+                    ->where('participant_type', 'team')
+                    ->exists();
+                if ($exists) {
+                    return response()->json(['status' => 'error', 'message' => 'Team already registered'], 422);
+                }
+
+                if ($tournament->max_teams) {
+                    $count = TournamentParticipant::where('tournament_id', $tournament->id)
+                        ->where('participant_type', 'team')
+                        ->whereIn('status', ['approved', 'pending'])
+                        ->count();
+                    if ($count >= $tournament->max_teams) {
+                        return response()->json(['status' => 'error', 'message' => 'Tournament is full'], 422);
+                    }
+                }
+
+                if ($tournament->min_teams) {
+                    $teamMembersCount = TeamMember::where('team_id', $teamId)->where('roster_status', 'active')->count();
+                    if ($teamMembersCount < $tournament->min_teams) {
+                        return response()->json(['status' => 'error', 'message' => "Team must have at least {$tournament->min_teams} members"], 422);
+                    }
+                }
+
+                $participant = TournamentParticipant::create([
+                    'tournament_id' => $tournament->id,
+                    'team_id' => $teamId,
+                    'user_id' => $user->id,
+                    'type' => 'team',
+                    'participant_type' => 'team',
+                    'status' => $tpStatus,
+                    'registered_at' => now(),
+                ]);
+
+                // create a tournament-level EventParticipant record (no event_id) for quick lookups / removals
+                EventParticipant::create([
+                    'event_id' => $event->id ?? null,
+                    'user_id' => null,
+                    'team_id' => $teamId,
+                    'status' => $epStatus,
+                    'tournament_id' => $tournament->id,
+                ]);
+
+                // increment analytics only if auto-approved
+                if ($tpStatus === 'approved') {
+                    $tournament->analytics?->increment('total_teams');
+                    $tournament->analytics?->increment('total_participants', TeamMember::where('team_id', $teamId)->where('status', 'active')->count());
+                }
+
+                DB::commit();
+                return response()->json([
+                    'status' => 'success',
+                    'participant' => $participant,
+                    'message' => $tpStatus === 'pending' ? 'Team registration pending' : 'Team registered'
+                ], 201);
+            }
+
+            // INDIVIDUAL REGISTRATION PATH - ONLY 'free for all' OR settings.allow_individual
+            $allowIndividuals = data_get($tournament, 'settings.allow_individual', false);
+            if ($tournament->tournament_type !== 'free for all' && ! $allowIndividuals) {
+                return response()->json(['status' => 'error', 'message' => 'This tournament does not accept individual registrations'], 422);
+            }
+
+            $exists = TournamentParticipant::where('tournament_id', $tournament->id)
+                ->where('user_id', $user->id)
+                ->where('participant_type', 'individual')
+                ->exists();
+            if ($exists) {
+                return response()->json(['status' => 'error', 'message' => 'User already registered', 'tournament' => $tournament->id, 'user' => $user->id], 422);
+            }
+
+            if ($tournament->max_teams) {
+                $count = TournamentParticipant::where('tournament_id', $tournament->id)
+                    ->where('participant_type', 'individual')
+                    ->whereIn('status', ['approved', 'pending'])
+                    ->count();
+                if ($count >= $tournament->max_teams) {
+                    return response()->json(['status' => 'error', 'message' => 'Tournament is full'], 422);
+                }
+            }
+
+            $participant = TournamentParticipant::create([
+                'tournament_id' => $tournament->id,
+                'user_id' => $user->id,
+                'type' => 'individual',
+                'participant_type' => 'individual',
+                'status' => $tpStatus,
+                'registered_at' => now(),
+            ]);
+
+            // create a tournament-level EventParticipant record for this user
+            EventParticipant::create([
+                'event_id' => $event->id ?? null,
+                'user_id' => $user->id,
+                'team_id' => null,
+                'status' => $epStatus,
+                'tournament_id' => $tournament->id,
+            ]);
+
+            if ($tpStatus === 'approved') {
+                $tournament->analytics?->increment('total_participants');
+            }
+
+            DB::commit();
+            return response()->json([
+                'status' => 'success',
+                'participant' => $participant,
+                'message' => $tpStatus === 'pending' ? 'Registration pending' : 'Registered'
+            ], 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['status' => 'error', 'message' => 'Registration failed', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * List participants (filter by status/type)
+     *
+     * Returns both TournamentParticipant rows and the tournament-level EventParticipant rows
+     * so callers can see tournament participants and any event-specific enrollment entries.
+     */
+    public function getParticipants(Request $request, $tournamentId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) {
+            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+        }
+
+        $tpQuery = TournamentParticipant::with(['user','team'])
+            ->where('tournament_id',$tournament->id);
+
+        if ($request->filled('status')) {
+            $tpQuery->where('status',$request->input('status'));
+        }
+        if ($request->filled('type')) {
+            $tpQuery->where('participant_type',$request->input('type'));
+        }
+
+        $tournamentParticipants = $tpQuery->orderBy('registered_at')->get();
+
+        // gather tournament-level event participants (fast lookup / active-game references)
+        $epQuery = EventParticipant::with(['user','team'])
+            ->where('tournament_id', $tournament->id);
+        if ($request->filled('status')) {
+            $epQuery->where('status', $request->input('status'));
+        }
+        $eventParticipants = $epQuery->orderBy('id')->get();
+
+        return response()->json([
+            'status'=>'success',
+            'tournament_participants' => $tournamentParticipants,
+            'event_participants' => $eventParticipants,
+            'count' => $tournamentParticipants->count()
+        ]);
+    }
+
+    /**
+     * Approve participant (organizer/owner)
+     *
+     * Also updates tournament-level EventParticipant to 'confirmed' when present.
+     */
+    public function approveParticipant(Request $request, $tournamentId, $participantId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) {
+            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)
+            ->where('user_id',$user->id)
+            ->whereIn('role',['owner','organizer'])
+            ->exists();
+        if (! $isCreator && ! $isOrganizer) {
+            return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+        }
+
+        $participant = TournamentParticipant::where('id',$participantId)->where('tournament_id',$tournament->id)->first();
+        if (! $participant) {
+            return response()->json(['status'=>'error','message'=>'Participant not found'], 404);
+        }
+        if ($participant->status === 'approved') {
+            return response()->json(['status'=>'error','message'=>'Already approved'], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $participant->update(['status'=>'approved','approved_at'=>now()]);
+
+            // update matching tournament-level EventParticipant(s)
+            $epQuery = EventParticipant::where('tournament_id', $tournament->id);
+            if ($participant->participant_type === 'individual') {
+                $epQuery->where('user_id', $participant->user_id);
+            } else {
+                $epQuery->where('team_id', $participant->team_id);
+            }
+            $epQuery->update(['status' => 'confirmed']);
+
+            // Send notification
+            $notifyUserId = $participant->participant_type === 'individual' 
+                ? $participant->user_id
+                : Team::find($participant->team_id)?->owner_id;
+
+            if ($notifyUserId) {
+                $notification = \App\Models\Notification::create([
+                    'type' => 'participant_approved',
+                    'data' => [
+                        'tournament_id' => $tournament->id,
+                        'tournament_name' => $tournament->name,
+                        'participant_id' => $participant->id,
+                        'participant_type' => $participant->participant_type,
+                        'message' => "Your {$participant->participant_type} registration for {$tournament->name} has been approved.",
+                    ],
+                    'created_by' => $user->id,
+                ]);
+
+                \App\Models\UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $notifyUserId,
+                    'is_read' => false,
+                ]);
+            }
+
+            // update analytics
+            if ($participant->participant_type === 'team') {
+                $tournament->analytics?->increment('total_teams');
+            } else {
+                $tournament->analytics?->increment('total_participants');
+            }
+
+            DB::commit();
+            return response()->json(['status'=>'success','participant'=>$participant,'message'=>'Participant approved']);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['status'=>'error','message'=>'Failed to approve participant','error'=>$e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Reject participant
+     *
+     * Keeps tournament_participants record with rejected status.
+     */
+    public function rejectParticipant(Request $request, $tournamentId, $participantId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) {
+            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)
+            ->where('user_id',$user->id)
+            ->whereIn('role',['owner','organizer'])
+            ->exists();
+        if (! $isCreator && ! $isOrganizer) {
+            return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+        }
+
+        $data = $request->validate(['reason'=>'nullable|string|max:500']);
+
+        $participant = TournamentParticipant::where('id',$participantId)->where('tournament_id',$tournament->id)->first();
+        if (! $participant) {
+            return response()->json(['status'=>'error','message'=>'Participant not found'], 404);
+        }
+
+        DB::beginTransaction();
+        try {
+            $participant->update([
+                'status' => 'rejected',
+                'rejection_reason' => $data['reason'] ?? null,
+                'rejected_at' => now(),
+            ]);
+
+            // Send notification
+            $notifyUserId = $participant->participant_type === 'individual' 
+                ? $participant->user_id
+                : Team::find($participant->team_id)?->owner_id;
+
+            if ($notifyUserId) {
+                $notification = \App\Models\Notification::create([
+                    'type' => 'participant_rejected',
+                    'data' => [
+                        'tournament_id' => $tournament->id,
+                        'tournament_name' => $tournament->name,
+                        'participant_id' => $participant->id,
+                        'participant_type' => $participant->participant_type,
+                        'reason' => $data['reason'] ?? null,
+                        'message' => "Your {$participant->participant_type} registration for {$tournament->name} has been rejected.",
+                    ],
+                    'created_by' => $user->id,
+                ]);
+
+                \App\Models\UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $notifyUserId,
+                    'is_read' => false,
+                ]);
+            }
+
+            DB::commit();
+            return response()->json(['status'=>'success','participant'=>$participant,'message'=>'Participant rejected']);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['status'=>'error','message'=>'Failed to reject participant','error'=>$e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Ban participant and remove from active games
+     */
+    public function banParticipant(Request $request, $tournamentId, $participantId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) {
+            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)
+            ->where('user_id',$user->id)
+            ->whereIn('role',['owner','organizer'])
+            ->exists();
+        if (! $isCreator && ! $isOrganizer) {
+            return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+        }
+
+        $data = $request->validate(['reason'=>'nullable|string|max:500']);
+
+        $participant = TournamentParticipant::where('id',$participantId)->where('tournament_id',$tournament->id)->first();
+        if (! $participant) {
+            return response()->json(['status'=>'error','message'=>'Participant not found'], 404);
+        }
+
+        DB::beginTransaction();
+        try {
+            // remove tournament-level event participants
+            if ($participant->participant_type === 'individual' && $participant->user_id) {
+                EventParticipant::where('tournament_id', $tournament->id)
+                    ->where('user_id', $participant->user_id)
+                    ->delete();
+            }
+
+            if ($participant->participant_type === 'team' && $participant->team_id) {
+                $memberIds = TeamMember::where('team_id',$participant->team_id)->pluck('user_id')->toArray();
+                // remove team-level entries and per-user entries
+                EventParticipant::where('tournament_id', $tournament->id)
+                    ->where(function($q) use ($participant, $memberIds) {
+                        $q->where('team_id', $participant->team_id)
+                          ->orWhereIn('user_id', $memberIds);
+                    })->delete();
+            }
+
+            $participant->update([
+                'status' => 'banned',
+                'ban_reason' => $data['reason'] ?? null,
+                'banned_at' => now(),
+            ]);
+
+            // Send notification
+            $notifyUserId = $participant->participant_type === 'individual' 
+                ? $participant->user_id
+                : Team::find($participant->team_id)?->owner_id;
+
+            if ($notifyUserId) {
+                $notification = \App\Models\Notification::create([
+                    'type' => 'participant_banned',
+                    'data' => [
+                        'tournament_id' => $tournament->id,
+                        'tournament_name' => $tournament->name,
+                        'participant_id' => $participant->id,
+                        'participant_type' => $participant->participant_type,
+                        'reason' => $data['reason'] ?? null,
+                        'message' => "You have been banned from {$tournament->name}.",
+                    ],
+                    'created_by' => $user->id,
+                ]);
+
+                \App\Models\UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $notifyUserId,
+                    'is_read' => false,
+                ]);
+            }
+
+            // update analytics
+            if ($participant->participant_type === 'team') {
+                $tournament->analytics?->decrement('total_teams');
+            } else {
+                $tournament->analytics?->decrement('total_participants');
+            }
+
+            DB::commit();
+            return response()->json(['status'=>'success','participant'=>$participant,'message'=>'Participant banned']);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['status'=>'error','message'=>'Failed to ban participant','error'=>$e->getMessage()], 500);
+        }
     }
 }
