@@ -11,21 +11,23 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('tournament_participants', function (Blueprint $table) {
-            $table->id();
-            $table->foreignId('tournament_id')->constrained()->onDelete('cascade');
-            $table->foreignId('team_id')->nullable()->constrained()->onDelete('cascade');
-            $table->foreignId('user_id')->nullable()->constrained()->onDelete('cascade'); // For individual tournaments
-            $table->enum('type', ['team', 'individual'])->default('team');
-            $table->enum('status', ['pending', 'approved', 'rejected', 'banned'])->default('pending');
-            $table->text('rejection_reason')->nullable();
-            $table->foreignId('approved_by')->nullable()->constrained('users');
-            $table->timestamp('approved_at')->nullable();
-            $table->timestamps();
-            
-            $table->unique(['tournament_id', 'team_id'], 'unique_tournament_team');
-            $table->unique(['tournament_id', 'user_id'], 'unique_tournament_user');
-        });
+        if (!Schema::hasTable('tournament_participants')) {
+            Schema::create('tournament_participants', function (Blueprint $table) {
+                $table->id();
+                $table->foreignId('tournament_id')->constrained()->onDelete('cascade');
+                $table->foreignId('team_id')->nullable()->constrained()->onDelete('cascade');
+                $table->foreignId('user_id')->nullable()->constrained()->onDelete('cascade'); // For individual tournaments
+                $table->enum('type', ['team', 'individual'])->default('team');
+                $table->enum('status', ['pending', 'approved', 'rejected', 'banned'])->default('pending');
+                $table->text('rejection_reason')->nullable();
+                $table->foreignId('approved_by')->nullable()->constrained('users');
+                $table->timestamp('approved_at')->nullable();
+                $table->timestamps();
+                
+                $table->unique(['tournament_id', 'team_id'], 'unique_tournament_team');
+                $table->unique(['tournament_id', 'user_id'], 'unique_tournament_user');
+            });
+        }
     }
 
     /**

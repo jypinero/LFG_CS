@@ -317,7 +317,11 @@ class AuthController extends Controller
         foreach ($eventParticipants as $ep) {
             $event = $ep->event;
             if ($event && $event->start_time && $event->end_time) {
-                $eventDate = $event->date ?? now()->toDateString();
+                try {
+                    $eventDate = $event->date ? \Carbon\Carbon::parse($event->date)->toDateString() : now()->toDateString();
+                } catch (\Throwable $e) {
+                    $eventDate = now()->toDateString();
+                }
                 $start = \Carbon\Carbon::parse($eventDate . ' ' . $event->start_time);
                 $end = \Carbon\Carbon::parse($eventDate . ' ' . $event->end_time);
                 $diff = $start->diffInMinutes($end) / 60;
@@ -387,6 +391,7 @@ class AuthController extends Controller
             'data' => [
                 'username' => $user->username,
                 'city' => $user->city,
+                'role' => $user->role->name,
                 'province' => $user->province,
                 'profile_photo' => $user->profile_photo ? \Storage::url($user->profile_photo) : null,
                 'first_name' => $user->first_name,
