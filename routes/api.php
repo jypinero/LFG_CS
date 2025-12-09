@@ -11,6 +11,7 @@ use App\Http\Controllers\TeamController;
 use App\Http\Controllers\MessagingController;
 use App\Http\Controllers\TournamentController;
 use App\Http\Controllers\Auth\OtpAuthController;
+use App\Http\Controllers\Auth\SocialiteController;
 use App\Http\Controllers\Admin\AuditLogController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\LogAdminAction;
@@ -34,6 +35,10 @@ Route::post('/login', [AuthController::class, 'login']);
 Route::post('/auth/login', [OtpAuthController::class, 'login'])->middleware('throttle:otp-send');
 Route::post('/auth/verify-otp', [OtpAuthController::class, 'verify'])->middleware('throttle:otp-verify');
 Route::post('/auth/resend-otp', [OtpAuthController::class, 'resend'])->middleware('throttle:otp-send');
+// Google OAuth routes
+Route::get('/auth/google', [SocialiteController::class, 'redirectToGoogle']);
+Route::get('/auth/google/callback', [SocialiteController::class, 'handleGoogleCallback']);
+Route::post('/auth/google/complete', [SocialiteController::class, 'completeSocialRegistration'])->middleware('auth:api');
 Route::get('/roles', [AuthController::class, 'getRoles']);
 Route::get('/sports', [AuthController::class, 'getSports']);
 
@@ -50,8 +55,14 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
+    Route::post('/auth/change-password', [AuthController::class, 'changePassword']);
 
-    Route::get('/users', [AuthController::class, 'showprofile']);
+    // ✅ Add route for getting user by ID (for venue owners, etc.)
+    Route::get('/users/{id}', [AuthController::class, 'showprofile']);
+    
+    // ❌ Remove or fix this line - showprofile requires an ID parameter
+    // Route::get('/users', [AuthController::class, 'showprofile']);
+    
     Route::get('/profile/me', [AuthController::class, 'myprofile']);
     Route::post('/profile/update', [AuthController::class, 'updateProfile']);
     Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);

@@ -851,6 +851,7 @@ class EventController extends Controller
         $validator = \Validator::make($request->all(), [
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'sport' => 'required|exists:sports,name',  // ✅ Validate that sport name exists in sports table
             'event_type' => 'required|in:free for all,team vs team,tournament,multisport',
             'venue_id' => 'required|exists:venues,id',
             'facility_id' => 'required|exists:facilities,id',
@@ -916,29 +917,12 @@ class EventController extends Controller
         }
 
         $user = auth()->user();
-        $userProfile = $user->userProfile;
-
-        if (!$userProfile) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User profile not found'
-            ], 404);
-        }
-
-        // Get main sport name from user's profile
-        $mainSport = \App\Models\Sport::find($userProfile->main_sport_id);
-        if (!$mainSport) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'User main sport not found'
-            ], 404);
-        }
 
         $event = Event::create([
             'name' => $request->name,
             'description' => $request->description,
             'event_type' => $request->event_type,
-            'sport' => $request->sport,
+            'sport' => $request->sport,  // ✅ Use sport name from request
             'venue_id' => $request->venue_id,
             'facility_id' => $request->facility_id,
             'slots' => $request->slots,

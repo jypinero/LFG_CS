@@ -5,8 +5,11 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Password;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\DB;
 use App\Models\User;
 use App\Models\Role;
 use App\Models\UserProfile;
@@ -17,6 +20,10 @@ use App\Models\Sport;
 use App\Models\EventParticipant;
 use App\Models\TeamMember;
 use App\Models\Team;
+use App\Mail\PasswordResetMail;
+use App\Http\Requests\Auth\ForgotPasswordRequest;
+use App\Http\Requests\Auth\ResetPasswordRequest;
+use App\Http\Requests\Auth\ChangePasswordRequest;
 
 class AuthController extends Controller
 {
@@ -27,7 +34,7 @@ class AuthController extends Controller
      */
     public function __construct()
     {
-        $this->middleware('auth:api', ['except' => ['login', 'register', 'getRoles', 'getSports', 'checkAvailability']]);
+        $this->middleware('auth:api', ['except' => ['login', 'register', 'getRoles', 'getSports', 'checkAvailability', 'forgotPassword', 'resetPassword']]);
     }
 
     /**
@@ -529,6 +536,153 @@ class AuthController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to update profile',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Send password reset link to user's email.
+     *
+     * @param  \App\Http\Requests\Auth\ForgotPasswordRequest  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function forgotPassword(ForgotPasswordRequest $request)
+    {
+        try {
+            $user = User::where('email', $request->email)->first();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'We could not find a user with that email address.',
+                ], 404);
+            }
+
+            // Generate password reset token
+            $status = Password::broker()->sendResetLink(
+                $request->only('email')
+            );
+
+            if ($status === Password::RESET_LINK_SENT) {
+                // Get the token from the password_reset_tokens table
+                $tokenData = \DB::table('password_reset_tokens')
+                    ->where('email', $request->email)
+                    ->first();
+
+                if ($tokenData) {
+                    // Send custom email with token
+                    Mail::to($user->email)->send(new PasswordResetMail(
+                        $tokenData->token,
+                        $request->email,
+                        config('auth.passwords.users.expire', 10080)
+                    ));
+                }
+
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Password reset link has been sent to your email address.',
+                ]);
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unable to send password reset link. Please try again later.',
+            ], 500);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to send password reset link.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Reset user password using token.
+     *
+     * @param  \App\Http\Requests\Auth\ResetPasswordRequest  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function resetPassword(ResetPasswordRequest $request)
+    {
+        try {
+            $status = Password::broker()->reset(
+                $request->only('email', 'password', 'password_confirmation', 'token'),
+                function ($user, $password) {
+                    $user->password = Hash::make($password);
+                    $user->save();
+                }
+            );
+
+            if ($status === Password::PASSWORD_RESET) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'Password has been reset successfully.',
+                ]);
+            }
+
+            if ($status === Password::INVALID_TOKEN) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Invalid or expired reset token.',
+                ], 400);
+            }
+
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unable to reset password. Please try again.',
+            ], 500);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to reset password.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Change password for authenticated user.
+     *
+     * @param  \App\Http\Requests\Auth\ChangePasswordRequest  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function changePassword(ChangePasswordRequest $request)
+    {
+        try {
+            $user = Auth::guard('api')->user();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not authenticated',
+                ], 401);
+            }
+
+            // Verify current password
+            if (!Hash::check($request->current_password, $user->password)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Current password is incorrect.',
+                ], 422);
+            }
+
+            // Update password
+            $user->password = Hash::make($request->password);
+            $user->save();
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Password changed successfully.',
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to change password.',
                 'error' => $e->getMessage(),
             ], 500);
         }

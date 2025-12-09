@@ -10,7 +10,6 @@ use App\Http\Requests\Auth\LoginRequest;
 use App\Http\Requests\Auth\VerifyOtpRequest;
 use App\Http\Requests\Auth\ResendOtpRequest;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Mail;
 use Tymon\JWTAuth\Facades\JWTAuth;
 
@@ -19,8 +18,8 @@ class OtpAuthController extends Controller
 	public function login(LoginRequest $request)
 	{
 		$user = User::where('email', $request->input('email'))->first();
-		if (!$user || !Hash::check($request->input('password'), $user->password)) {
-			return response()->json(['message' => 'Invalid credentials'], 401);
+		if (!$user) {
+			return response()->json(['message' => 'User not found'], 404);
 		}
 
 		$code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
