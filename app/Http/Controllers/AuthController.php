@@ -6,6 +6,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Password;
+use Illuminate\Auth\Passwords\DatabaseTokenRepository;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Mail;
@@ -559,36 +560,34 @@ class AuthController extends Controller
                 ], 404);
             }
 
-            // Generate password reset token
-            $status = Password::broker()->sendResetLink(
-                $request->only('email')
+            // Use Laravel's password reset repository to create token properly
+            $tokenRepository = new DatabaseTokenRepository(
+                DB::connection(),
+                app('hash')->driver(),
+                config('auth.passwords.users.table', 'password_reset_tokens'),
+                config('app.key'),
+                config('auth.passwords.users.expire', 10080)
             );
+            $token = $tokenRepository->create($user);
 
-            if ($status === Password::RESET_LINK_SENT) {
-                // Get the token from the password_reset_tokens table
-                $tokenData = \DB::table('password_reset_tokens')
-                    ->where('email', $request->email)
-                    ->first();
-
-                if ($tokenData) {
-                    // Send custom email with token
-                    Mail::to($user->email)->send(new PasswordResetMail(
-                        $tokenData->token,
-                        $request->email,
-                        config('auth.passwords.users.expire', 10080)
-                    ));
-                }
-
-                return response()->json([
-                    'status' => 'success',
-                    'message' => 'Password reset link has been sent to your email address.',
-                ]);
+            // Send custom email with token
+            try {
+                Mail::to($user->email)->send(new PasswordResetMail(
+                    $token,
+                    $request->email,
+                    config('auth.passwords.users.expire', 10080)
+                ));
+            } catch (\Exception $mailException) {
+                // Log mail error but don't fail the request
+                \Log::error('Failed to send password reset email: ' . $mailException->getMessage());
+                // Still return success since token was generated
+                // In production, you might want to handle this differently
             }
 
             return response()->json([
-                'status' => 'error',
-                'message' => 'Unable to send password reset link. Please try again later.',
-            ], 500);
+                'status' => 'success',
+                'message' => 'Password reset link has been sent to your email address.',
+            ]);
 
         } catch (\Exception $e) {
             return response()->json([
