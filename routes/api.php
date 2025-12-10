@@ -31,6 +31,9 @@ use App\Http\Middleware\LogAdminAction;
 Route::post('/register', [AuthController::class, 'register']);
 Route::get('/register/check-availability', [AuthController::class, 'checkAvailability']);
 Route::post('/login', [AuthController::class, 'login']);
+// Password reset routes
+Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
+Route::post('/reset-password', [AuthController::class, 'resetPassword']);
 // OTP login flow
 Route::post('/auth/login', [OtpAuthController::class, 'login'])->middleware('throttle:otp-send');
 Route::post('/auth/verify-otp', [OtpAuthController::class, 'verify'])->middleware('throttle:otp-verify');
