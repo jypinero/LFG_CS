@@ -12,6 +12,9 @@ use App\Http\Requests\Auth\ResendOtpRequest;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Mail;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use App\Models\Venue;
+use App\Models\Team;
+use App\Models\TeamMember;
 
 class OtpAuthController extends Controller
 {
