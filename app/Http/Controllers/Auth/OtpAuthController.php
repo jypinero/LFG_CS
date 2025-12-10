@@ -72,9 +72,25 @@ class OtpAuthController extends Controller
 
 		$token = JWTAuth::fromUser($user);
 
+		// Load user relations (same as AuthController login)
+		$user->load('role', 'userProfile', 'userAdditionalSports.sport');
+
 		return response()->json([
-			'token' => $token,
-			'user' => $user->only(['id', 'first_name', 'last_name', 'email', 'role_id']),
+			'status' => 'success',
+			'message' => 'Login successful',
+			'authorization' => [
+				'token' => $token,
+				'type' => 'bearer',
+			],
+			'user' => $user->only(['id', 'first_name', 'last_name', 'email', 'username', 'role_id']),
+			'has_team' => TeamMember::where('user_id', $user->id)->exists(),
+			'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
+				->get(['id', 'name'])
+				->map(function ($t) { return ['id' => $t->id, 'name' => $t->name]; }),
+			'has_venue' => Venue::where('owner_id', $user->id)->exists(),
+			'venues' => Venue::where('owner_id', $user->id)
+				->get(['id', 'name'])
+				->map(function ($v) { return ['id' => $v->id, 'name' => $v->name]; }),
 		]);
 	}
 
