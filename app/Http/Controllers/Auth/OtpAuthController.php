@@ -90,8 +90,8 @@ class OtpAuthController extends Controller
 			'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
 				->get(['id', 'name'])
 				->map(function ($t) { return ['id' => $t->id, 'name' => $t->name]; }),
-			'has_venue' => Venue::where('owner_id', $user->id)->exists(),
-			'venues' => Venue::where('owner_id', $user->id)
+			'has_venue' => Venue::where('created_by', $user->id)->exists(),
+			'venues' => Venue::where('created_by', $user->id)
 				->get(['id', 'name'])
 				->map(function ($v) { return ['id' => $v->id, 'name' => $v->name]; }),
 		]);
