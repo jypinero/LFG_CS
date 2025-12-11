@@ -23,6 +23,7 @@ use Illuminate\Validation\Rule;
 use App\Models\EventResult;
 use App\Models\EventPenalty;
 use Illuminate\Support\Facades\Storage;
+use App\Services\TournamentBracketGenerator; // added import
 
 class TournamentController extends Controller
 {
@@ -175,7 +176,7 @@ class TournamentController extends Controller
             ->whereIn('role', ['owner', 'organizer'])
             ->exists();
         if (! $isCreator && ! $isOrganizer) {
-            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden', 'tournament' => $tournament->id, 'user' => $user->id], 403);
         }
 
         // Allow updates only if draft OR registration not started/closed
@@ -1750,5 +1751,203 @@ class TournamentController extends Controller
         }
 
         return response()->json(['status'=>'success','uploaded'=>$uploaded]);
+    }
+
+    /**
+     * Generate brackets for an event
+     * Body: { "type":"single_elimination", "options": { "shuffle": true } }
+     */
+    public function generateBrackets(Request $request, $tournamentId, $eventId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)
+            ->where('user_id',$user->id)
+            ->whereIn('role',['owner','organizer'])
+            ->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        $data = $request->validate([
+            'type' => 'required|string|in:single_elimination,double_elimination,round_robin',
+            'options' => 'sometimes|array',
+        ]);
+
+        $event = Event::where('tournament_id',$tournament->id)->where('id',$eventId)->first();
+        if (! $event) return response()->json(['status'=>'error','message'=>'Event not found'], 404);
+
+        try {
+            $generator = new TournamentBracketGenerator();
+            $matchups = $generator->generate($event, $data['type'], $data['options'] ?? []);
+            
+            // Load relations and format response with user names for free-for-all
+            $matchups = $matchups->load(['tournament','event'])->map(function($m) use ($tournament) {
+                $row = [
+                    'id' => $m->id,
+                    'tournament_id' => $m->tournament_id,
+                    'event_id' => $m->event_id,
+                    'round_number' => $m->round_number,
+                    'match_number' => $m->match_number,
+                    'match_stage' => $m->match_stage,
+                    'team_a_id' => $m->team_a_id,
+                    'team_b_id' => $m->team_b_id,
+                    'winner_team_id' => $m->winner_team_id,
+                    'status' => $m->status,
+                    'team_a_score' => $m->team_a_score,
+                    'team_b_score' => $m->team_b_score,
+                    'scheduled_at' => $m->scheduled_at,
+                    'started_at' => $m->started_at,
+                    'completed_at' => $m->completed_at,
+                    'notes' => $m->notes,
+                    'penalties' => $m->penalties,
+                    'meta' => $m->meta,
+                    'created_at' => $m->created_at,
+                    'updated_at' => $m->updated_at,
+                ];
+
+                // For team tournaments, include team names when available
+                if ($tournament->tournament_type === 'team vs team') {
+                    if ($m->team_a_id) {
+                        $teamA = Team::find($m->team_a_id);
+                        $row['team_a_name'] = $teamA ? ($teamA->name ?? ($teamA->display_name ?? null)) : null;
+                    } else {
+                        $row['team_a_name'] = null;
+                    }
+                    if ($m->team_b_id) {
+                        $teamB = Team::find($m->team_b_id);
+                        $row['team_b_name'] = $teamB ? ($teamB->name ?? ($teamB->display_name ?? null)) : null;
+                    } else {
+                        $row['team_b_name'] = null;
+                    }
+                }
+
+                // For free-for-all, enrich meta with user names
+                if ($tournament->tournament_type === 'free for all' && is_array($m->meta)) {
+                    if (isset($m->meta['user_a_id'])) {
+                        $userA = User::find($m->meta['user_a_id']);
+                        $row['meta']['user_a_name'] = $userA ? $userA->first_name . ' ' . $userA->last_name : 'Unknown';
+                    }
+                    if (isset($m->meta['user_b_id'])) {
+                        $userB = User::find($m->meta['user_b_id']);
+                        $row['meta']['user_b_name'] = $userB ? $userB->first_name . ' ' . $userB->last_name : 'Unknown';
+                    }
+                }
+
+                return $row;
+            });
+
+            return response()->json(['status'=>'success','bracket_type'=>$data['type'],'matchups'=>$matchups]);
+        } catch (\Throwable $e) {
+            \Log::error('generateBrackets failed', ['error' => $e->getMessage(), 'trace' => $e->getTraceAsString()]);
+            return response()->json(['status'=>'error','message'=>$e->getMessage()], 422);
+        }
+    }
+
+    protected function generateSingleElimination($tournamentId, $eventId, array $participants, $tournamentType = 'team vs team')
+    {
+        if (count($participants) < 2) {
+            throw new \RuntimeException('Need at least 2 participants for single elimination');
+        }
+
+        $n = 1;
+        while ($n < count($participants)) $n *= 2;
+        while (count($participants) < $n) $participants[] = null;
+
+        // Validate team/user existence before DB writes to avoid FK failures
+        if ($tournamentType === 'team vs team') {
+            $candidateTeamIds = array_values(array_filter($participants, fn($v) => $v !== null));
+            $validTeamIds = Team::whereIn('id', $candidateTeamIds)->pluck('id')->map(fn($v) => (int)$v)->toArray();
+            $missing = array_values(array_diff($candidateTeamIds, $validTeamIds));
+            if (! empty($missing)) {
+                throw new \RuntimeException('Missing team IDs: ' . implode(',', $missing));
+            }
+        } else {
+            // for free-for-all you can optionally validate users similarly
+            // (left out for brevity; add if you want strict validation)
+        }
++
+        DB::transaction(function() use ($tournamentId, $eventId, $participants, $tournamentType) {
+            // clear existing
+            TeamMatchup::where('tournament_id', $tournamentId)->where('event_id', $eventId)->delete();
+
+            // If team tournament, verify team ids exist to avoid FK violations
+            $validTeamIds = [];
+            if ($tournamentType === 'team vs team') {
+                $validTeamIds = \App\Models\Team::whereIn('id', array_filter($participants))->pluck('id')->values()->all();
+            }
+
+            $round = 1;
+            $matchNumber = 1;
+            for ($i = 0; $i < count($participants); $i += 2) {
+                $p1 = $participants[$i] ?? null;
+                $p2 = $participants[$i+1] ?? null;
+                $status = ($p1 === null || $p2 === null) ? 'bye' : 'pending';
+
+                if ($tournamentType === 'team vs team') {
+                    // null out any ids that don't exist (shouldn't happen after validation)
+                    $tA = in_array($p1, $validTeamIds, true) ? $p1 : null;
+                    $tB = in_array($p2, $validTeamIds, true) ? $p2 : null;
+
+                    TeamMatchup::create([
+                        'tournament_id' => $tournamentId,
+                        'event_id' => $eventId,
+                        'round_number' => $round,
+                        'match_number' => $matchNumber++,
+                        'match_stage' => 'winners',
+                        'team_a_id' => $tA,
+                        'team_b_id' => $tB,
+                        'status' => $status,
+                        'meta' => [
+                            'original_team_a' => $p1,
+                            'original_team_b' => $p2,
+                        ],
+                    ]);
+                } else {
+                    // free-for-all: store user ids in meta, keep team_x null to satisfy FK
+                    TeamMatchup::create([
+                        'tournament_id' => $tournamentId,
+                        'event_id' => $eventId,
+                        'round_number' => $round,
+                        'match_number' => $matchNumber++,
+                        'match_stage' => 'winners',
+                        'team_a_id' => null,
+                        'team_b_id' => null,
+                        'status' => $status,
+                        'meta' => [
+                            'user_a_id' => $p1,
+                            'user_b_id' => $p2,
+                        ],
+                    ]);
+                }
+            }
+
+            // placeholders for later rounds
+            $matchesThisRound = intdiv(count($participants), 2);
+            $round++;
+            while ($matchesThisRound > 1) {
+                $matchNumber = 1;
+                for ($m = 0; $m < $matchesThisRound; $m++) {
+                    TeamMatchup::create([
+                        'tournament_id' => $tournamentId,
+                        'event_id' => $eventId,
+                        'round_number' => $round,
+                        'match_number' => $matchNumber++,
+                        'match_stage' => 'winners',
+                        'team_a_id' => null,
+                        'team_b_id' => null,
+                        'status' => 'pending',
+                    ]);
+                }
+                $matchesThisRound = intdiv($matchesThisRound, 2);
+                $round++;
+            }
+        });
+
+        return TeamMatchup::where('tournament_id', $tournamentId)
+            ->where('event_id', $eventId)
+            ->orderBy('match_stage')->orderBy('round_number')->orderBy('match_number')
+            ->get();
     }
 }
