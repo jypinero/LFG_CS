@@ -276,6 +276,29 @@ Route::middleware('auth:api')->group(function () {
     Route::post('tournaments/{tournamentid}/participants/{participantid}/reject', [TournamentController::class, 'rejectParticipant']);
     Route::post('tournaments/{tournamentid}/participants/{participantid}/ban', [TournamentController::class, 'banParticipant']);
 
+     // Document Management
+    Route::post('tournaments/{tournamentid}/documents/upload', [TournamentController::class, 'uploadDocument']);
+    Route::get('tournaments/{tournamentid}/documents', [TournamentController::class, 'getDocuments']);
+    Route::get('tournaments/{tournamentid}/participants/{participantId}/documents', [TournamentController::class, 'getParticipantDocuments']);
+    Route::post('tournaments/{tournamentid}/documents/{documentId}/verify', [TournamentController::class, 'verifyDocument']);
+    Route::delete('tournaments/{tournamentid}/documents/{documentId}/delete', [TournamentController::class, 'deleteDocument']);
+
+    // Team Management within Tournaments (organizers)
+    Route::post('tournaments/{tournamentid}/events/{eventid}/assign-teams', [TournamentController::class, 'assignTeams']);
+    Route::post('tournaments/{tournamentid}/events/{eventid}/auto-balance', [TournamentController::class, 'autoBalanceTeams']);
+    Route::post('tournaments/{tournamentid}/teams/{teamid}/replace-player', [TournamentController::class, 'replacePlayer']);
+    Route::post('tournaments/{tournamentid}/participants/{participantid}/no-show', [TournamentController::class, 'markNoShow']);
+
+    // Match Management
+    Route::get('tournaments/{tournamentid}/matches', [\App\Http\Controllers\TournamentController::class, 'getMatches']);
+    Route::get('tournaments/{tournamentid}/matches/{match}', [\App\Http\Controllers\TournamentController::class, 'getMatchDetails']);
+    Route::post('tournaments/{tournamentid}/matches/{match}/start', [\App\Http\Controllers\TournamentController::class, 'startMatch']);
+    Route::post('tournaments/{tournamentid}/matches/{match}/end', [\App\Http\Controllers\TournamentController::class, 'endMatch']);
+    Route::post('tournaments/{tournamentid}/matches/{match}/score', [\App\Http\Controllers\TournamentController::class, 'updateScore']);
+    Route::post('tournaments/{tournamentid}/matches/{match}/penalty', [\App\Http\Controllers\TournamentController::class, 'issuePenalty']);
+    Route::post('tournaments/{tournamentid}/matches/{match}/forfeit', [\App\Http\Controllers\TournamentController::class, 'markForfeit']);
+    Route::post('tournaments/{tournamentid}/matches/{match}/results', [\App\Http\Controllers\TournamentController::class, 'uploadResult']);
+
 }); 
 
 // Admin routes (JWT protected + admin-only)
