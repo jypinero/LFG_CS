@@ -78,8 +78,10 @@ class EventController extends Controller
      */
     public function index()
     {
+        // Get regular events (exclude tournament games)
         $events = Event::with(['venue.photos', 'facility', 'teams.team'])
             ->where('is_approved', true)
+            ->where('is_tournament_game', false) // Exclude tournament games
             ->withCount('participants')
             ->get()
             ->map(function($event) {
@@ -92,8 +94,11 @@ class EventController extends Controller
                 $pricePerHour = $event->facility->price_per_hr ?? 0;
                 $totalCost = $hours * $pricePerHour;
 
-                $divide = $totalCost / $event->participants_count;
-                $dividedpay = round($divide, 2);
+                // Fix division by zero - check if participants_count > 0
+                $divide = $event->participants_count > 0 
+                    ? round($totalCost / $event->participants_count, 2)
+                    : 0;
+                $dividedpay = $divide;
                 
                 // Determine venue primary photo url (latest upload if available)
                 $firstPhotoPath = null;
@@ -148,6 +153,85 @@ class EventController extends Controller
         return response()->json([
             'status' => 'success',
             'events' => $events
+        ]);
+    }
+
+    /**
+     * Get suggested tournament games based on user location
+     * Returns tournament games near the user's location
+     */
+    public function getSuggestedTournamentGames(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'latitude' => 'required|numeric',
+            'longitude' => 'required|numeric',
+            'radius' => 'sometimes|numeric|min:1|max:100', // radius in km, default 10km
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        $latitude = $request->input('latitude');
+        $longitude = $request->input('longitude');
+        $radius = $request->input('radius', 10); // default 10km
+
+        // Calculate distance using Haversine formula
+        $haversine = "(6371 * acos(cos(radians(?)) 
+            * cos(radians(venues.latitude)) 
+            * cos(radians(venues.longitude) - radians(?)) 
+            + sin(radians(?)) 
+            * sin(radians(venues.latitude))))";
+
+        $tournamentGames = Event::with(['venue.photos', 'facility', 'tournament'])
+            ->join('venues', 'events.venue_id', '=', 'venues.id')
+            ->where('events.is_approved', true)
+            ->where('events.is_tournament_game', true)
+            ->whereNotNull('venues.latitude')
+            ->whereNotNull('venues.longitude')
+            ->selectRaw("events.*, {$haversine} AS distance", [$latitude, $longitude, $latitude])
+            ->havingRaw("distance <= ?", [$radius])
+            ->orderBy('distance')
+            ->limit(20) // Limit to 20 nearest tournament games
+            ->get()
+            ->map(function($event) {
+                // Determine venue primary photo url
+                $firstPhotoPath = null;
+                if ($event->venue && $event->venue->photos && $event->venue->photos->count() > 0) {
+                    $firstPhoto = $event->venue->photos->sortByDesc('uploaded_at')->first();
+                    $firstPhotoPath = $firstPhoto ? $firstPhoto->image_path : null;
+                }
+                $venuePhotoUrl = $firstPhotoPath ? url('storage/' . ltrim($firstPhotoPath, '/')) : null;
+
+                return [
+                    'id' => $event->id,
+                    'name' => $event->name,
+                    'description' => $event->description,
+                    'sport' => $event->sport,
+                    'date' => $event->date,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                    'venue' => $event->venue->name,
+                    'facility' => $event->facility->type ?? null,
+                    'longitude' => $event->venue->longitude ?? null,
+                    'latitude' => $event->venue->latitude ?? null,
+                    'venue_photo_url' => $venuePhotoUrl,
+                    'distance' => round($event->distance, 2), // distance in km
+                    'tournament_id' => $event->tournament_id,
+                    'tournament_name' => $event->tournament->name ?? null,
+                    'is_tournament_game' => true,
+                    'is_suggested' => true, // Mark as suggested
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'suggested_tournament_games' => $tournamentGames,
+            'count' => $tournamentGames->count()
         ]);
     }
 

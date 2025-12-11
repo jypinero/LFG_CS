@@ -108,6 +108,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Event routes
     Route::get('/events',[EventController::class, 'index']);
+    Route::get('/events/suggested-tournaments', [EventController::class, 'getSuggestedTournamentGames']);
     Route::post('/events/create', [EventController::class, 'store']);
     Route::get('/events/{id}', [EventController::class, 'show']);
     Route::put('/events/{id}', [EventController::class, 'update']);
