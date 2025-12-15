@@ -15,6 +15,7 @@ class Tournament extends Model
     protected $fillable = [
         'name',
         'description',
+        'location',
         'type',
         'tournament_type',  // ADD THIS
         'created_by',

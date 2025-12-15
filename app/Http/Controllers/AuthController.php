@@ -261,7 +261,7 @@ class AuthController extends Controller
         
         return response()->json([
             'status' => 'success',
-            'user' => $user->load('role', 'userProfile', 'userCertifications', 'userAdditionalSports.sport'),
+            'user' => $user->load('role', 'userProfile', 'userCertifications', 'userDocuments', 'userAdditionalSports.sport'),
             'has_team' => TeamMember::where('user_id', $user->id)->exists(),
             'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
                 ->get(['id', 'name'])
@@ -296,12 +296,22 @@ class AuthController extends Controller
 
     public function showprofile($id)
     {
-        $user = \App\Models\User::with([
+        $currentUser = auth()->user();
+        $isOwnProfile = $currentUser && $currentUser->id == $id;
+        
+        // Only load sensitive documents if viewing own profile
+        $relations = [
             'role',
             'userProfile.mainSport',
             'userCertifications',
             'userAdditionalSports.sport'
-        ])->find($id);
+        ];
+        
+        if ($isOwnProfile) {
+            $relations[] = 'userDocuments';
+        }
+        
+        $user = \App\Models\User::with($relations)->find($id);
 
         if (!$user) {
             return response()->json([
