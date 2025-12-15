@@ -13,6 +13,9 @@ use App\Http\Controllers\TournamentController;
 use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\Auth\SocialiteController;
 use App\Http\Controllers\Admin\AuditLogController;
+use App\Http\Controllers\CoachController;
+use App\Http\Controllers\TrainingSessionController;
+use App\Http\Controllers\TrainingAnalyticsController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\LogAdminAction;
 
@@ -355,6 +358,44 @@ Route::middleware('auth:api')->group(function () {
     Route::put('/tournaments/templates/{templateId}', [TournamentController::class, 'updateTemplate']);
     Route::delete('/tournaments/templates/{templateId}', [TournamentController::class, 'deleteTemplate']);
 
+
+    // Coach Application Routes
+    Route::post('/coach/createprofile', [CoachController::class, 'createProfile']);
+    Route::get('/coach/getmyprofile', [CoachController::class, 'getMyProfile']);
+    Route::put('/coach/updateprofile', [CoachController::class, 'updateProfile']);
+
+    Route::get('/coach/swipe/card', [CoachController::class, 'getSwipeCard']);
+    Route::get('/coach/matches/pending', [CoachController::class, 'getPendingMatches']);
+    Route::get('/coach/students', [CoachController::class, 'getStudents']);
+    Route::get('/coach/sessions', [CoachController::class, 'getDashboardSessions']);
+    Route::get('/coach/analytics', [CoachController::class, 'getAnalytics']);
+    
+    // Public/consumer coach endpoints (students)
+    Route::get('/coaches/discover', [CoachController::class, 'discover']);
+    Route::get('/coaches/{coachId}', [CoachController::class, 'show']);
+    Route::post('/coaches/{coachId}/swipe', [CoachController::class, 'swipe']);
+    Route::get('/student/matches', [CoachController::class, 'getMatches']);
+
+     // Training session routes
+    Route::post('/sessions/request/{coachId}', [\App\Http\Controllers\TrainingSessionController::class, 'requestSession']);
+    Route::get('/sessions', [\App\Http\Controllers\TrainingSessionController::class, 'index']);
+    Route::get('/sessions/upcoming', [\App\Http\Controllers\TrainingSessionController::class, 'getUpcoming']);
+    Route::get('/sessions/pending', [\App\Http\Controllers\TrainingSessionController::class, 'getPending']);
+    Route::post('/sessions/{sessionId}/accept', [\App\Http\Controllers\TrainingSessionController::class, 'accept']);
+    Route::post('/sessions/{sessionId}/reject', [\App\Http\Controllers\TrainingSessionController::class, 'reject']);
+    Route::post('/sessions/{sessionId}/cancel', [\App\Http\Controllers\TrainingSessionController::class, 'cancel']);
+    Route::post('/sessions/{sessionId}/complete', [\App\Http\Controllers\TrainingSessionController::class, 'complete']);
+    Route::post('/sessions/{sessionId}/reschedule', [\App\Http\Controllers\TrainingSessionController::class, 'reschedule']);
+
+    //create review for coach
+    Route::post('/sessions/{sessionId}/createreviews', [\App\Http\Controllers\CoachReviewController::class, 'create']);
+    Route::get('/coach/{coachId}/reviews', [\App\Http\Controllers\CoachReviewController::class, 'getCoachReviews']);
+
+    // Training analytics routes
+    Route::get('students/{studentId}/analytics', [TrainingAnalyticsController::class, 'getStudentAnalytics']);
+    Route::get('coaches/{coachId}/analytics',  [TrainingAnalyticsController::class, 'getCoachAnalytics']);
+    // Use POST for force-calc (or GET if you prefer)
+    Route::post('analytics/calculate/{userId}/{userType}', [TrainingAnalyticsController::class, 'calculateAnalytics']);
 
 }); 
 
