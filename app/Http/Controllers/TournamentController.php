@@ -107,12 +107,43 @@ class TournamentController extends Controller
             });
         }
 
-        // Only show tournaments with approved events (unless filtered)
+        // Status-based visibility logic (better for tournament lifecycle)
+        // - 'draft': Only visible to organizers (hide from public)
+        // - 'open_registration' & 'registration_closed': Show even without games (registration phase)
+        // - 'ongoing': Only show if it has games (in-progress tournaments should have matches)
+        // - 'completed' & 'cancelled': Show regardless (historical tournaments)
+        
+        $userId = auth()->id();
+        
+        // Hide draft tournaments from non-organizers
         if (!$request->filled('include_draft')) {
-            $query->whereHas('events', function($query) {
-                $query->where('is_approved', true);
+            $query->where(function($q) use ($userId) {
+                $q->where('status', '!=', 'draft')
+                  ->orWhere(function($subQ) use ($userId) {
+                      // Show drafts only to creators or organizers
+                      $subQ->where('status', 'draft')
+                           ->where(function($creatorOrOrganizerQ) use ($userId) {
+                               $creatorOrOrganizerQ->where('created_by', $userId)
+                                   ->orWhereHas('organizers', function($orgQ) use ($userId) {
+                                       $orgQ->where('user_id', $userId);
+                                   });
+                           });
+                  });
             });
         }
+        
+        // Only enforce "must have games" rule for ongoing tournaments
+        // (Let registration-phase tournaments show even without games)
+        $query->where(function($q) {
+            $q->whereIn('status', ['open_registration', 'registration_closed', 'completed', 'cancelled'])
+              ->orWhere(function($ongoingQ) {
+                  // Ongoing tournaments must have at least one approved game
+                  $ongoingQ->where('status', 'ongoing')
+                           ->whereHas('events', function($eventQ) {
+                               $eventQ->where('is_approved', true);
+                           });
+              });
+        });
 
         // Sorting
         $sortBy = $request->input('sort_by', 'created_at');
