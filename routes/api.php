@@ -68,7 +68,7 @@ Route::middleware('auth:api')->group(function () {
     
     Route::get('/profile/me', [AuthController::class, 'myprofile']);
     Route::post('/profile/update', [AuthController::class, 'updateProfile']);
-    Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);
+    // NOTE: /profile/{username} moved below /profile/documents routes to prevent wildcard matching "documents" as a username
 
     // Messaging
     Route::prefix('messaging')->group(function () {
@@ -97,6 +97,20 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/', [AuthController::class, 'me']);
         Route::post('/photo', [AuthController::class, 'updateProfilePhoto']);
     });
+
+    // User documents management
+    Route::prefix('profile/documents')->group(function () {
+        Route::get('/', [\App\Http\Controllers\UserDocumentController::class, 'index']);
+        Route::post('/', [\App\Http\Controllers\UserDocumentController::class, 'store']);
+        Route::get('/statistics', [\App\Http\Controllers\UserDocumentController::class, 'statistics']);
+        Route::get('/{id}', [\App\Http\Controllers\UserDocumentController::class, 'show']);
+        Route::post('/{id}', [\App\Http\Controllers\UserDocumentController::class, 'update']); // POST for file upload support
+        Route::delete('/{id}', [\App\Http\Controllers\UserDocumentController::class, 'destroy']);
+        Route::get('/{id}/download', [\App\Http\Controllers\UserDocumentController::class, 'download']);
+    });
+
+    // Wildcard username route - MUST be after all specific /profile/* routes
+    Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);
 
     Route::get('/schedules', [EventController::class, 'allschedule']);
     Route::get('/schedules/user-created', [EventController::class, 'allusercreated']);
@@ -259,6 +273,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('tournaments/show/{id}', [TournamentController::class, 'show']);
     Route::put('tournaments/update/{id}', [TournamentController::class, 'update']);
     Route::delete('tournaments/delete/{id}', [TournamentController::class, 'destroy']);
+    Route::get('/tournaments/my', [TournamentController::class, 'myTournaments']);
     
     // Games (existing)
     Route::post('tournaments/{tournamentid}/creategames', [TournamentController::class, 'createGame']);
@@ -370,6 +385,24 @@ Route::middleware(['auth:api', EnsureAdmin::class, LogAdminAction::class, 'throt
     Route::post('/users/{id}/ban', [\App\Http\Controllers\Admin\UserAdminController::class, 'ban']);
     Route::post('/users/{id}/unban', [\App\Http\Controllers\Admin\UserAdminController::class, 'unban']);
     Route::get('/users/{id}/activity', [\App\Http\Controllers\Admin\UserAdminController::class, 'activity']);
+    // User documents admin (verification)
+    Route::get('/documents', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'index']);
+    Route::get('/documents/statistics', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'statistics']);
+    Route::get('/documents/{id}', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'show']);
+    Route::get('/users/{userId}/documents', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'userDocuments']);
+    Route::post('/documents/{id}/verify', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'verify']);
+    Route::post('/documents/{id}/reject', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'reject']);
+    Route::post('/documents/{id}/reset', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'resetVerification']);
+    Route::post('/documents/bulk-verify', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'bulkVerify']);
+    Route::post('/documents/bulk-reject', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'bulkReject']);
+    Route::get('/documents/{id}/download', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'download']);
+    Route::delete('/documents/{id}', [\App\Http\Controllers\Admin\UserDocumentAdminController::class, 'destroy']);
+    // AI Document Verification (admin)
+    Route::get('/documents/ai/smart-queue', [\App\Http\Controllers\AIDocumentController::class, 'smartQueue']);
+    Route::get('/documents/ai/statistics', [\App\Http\Controllers\AIDocumentController::class, 'statistics']);
+    Route::get('/documents/{id}/ai-analysis', [\App\Http\Controllers\AIDocumentController::class, 'getAnalysis']);
+    Route::post('/documents/{id}/ai-reprocess', [\App\Http\Controllers\AIDocumentController::class, 'reprocess']);
+    Route::get('/ai/check-service', [\App\Http\Controllers\AIDocumentController::class, 'checkService']);
     // Tickets admin
     Route::get('/tickets', [\App\Http\Controllers\Admin\TicketAdminController::class, 'index']);
     Route::get('/tickets/{id}', [\App\Http\Controllers\Admin\TicketAdminController::class, 'show']);

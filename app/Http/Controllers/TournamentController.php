@@ -174,6 +174,45 @@ class TournamentController extends Controller
             'count' => $tournaments->count()
         ]);
     }
+
+    public function myTournaments(Request $request)
+    {
+        $user = auth()->user();
+        
+        $query = Tournament::with([
+            'events' => function($query) {
+                $query->where('is_approved', true);
+            },
+            'participants',
+            'organizers.user',
+            'documents',
+            'analytics',
+            'announcements'
+        ])->where(function($q) use ($user) {
+            $q->where('created_by', $user->id)
+              ->orWhereHas('organizers', function($orgQ) use ($user) {
+                  $orgQ->where('user_id', $user->id);
+              });
+        });
+        
+        // Add same filters, sorting, pagination as index method
+        // ... (copy from index method)
+        
+        $perPage = min($request->input('per_page', 15), 100);
+        $tournaments = $query->paginate($perPage);
+        
+        return response()->json([
+            'status' => 'success',
+            'data' => $tournaments->items(),
+            'pagination' => [
+                'current_page' => $tournaments->currentPage(),
+                'last_page' => $tournaments->lastPage(),
+                'per_page' => $tournaments->perPage(),
+                'total' => $tournaments->total(),
+            ],
+        ]);
+    }
+
     /**
      * Create a tournament
      */
@@ -184,6 +223,7 @@ class TournamentController extends Controller
         $data = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string',
+            'location' => 'nullable|string|max:255',
             'type' => ['required', Rule::in(['single_sport', 'multisport'])],
             'tournament_type' => ['required', Rule::in(['team vs team', 'free for all'])],  // ADD THIS
             'start_date' => 'required|date',
@@ -298,6 +338,7 @@ class TournamentController extends Controller
         $data = $request->validate([
             'name' => 'sometimes|string|max:255',
             'description' => 'nullable|string',
+            'location' => 'nullable|string|max:255',
             'type' => [ 'sometimes', Rule::in(['single_sport', 'multisport']) ],
             'start_date' => 'sometimes|date',
             'end_date' => 'sometimes|date',

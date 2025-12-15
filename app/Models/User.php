@@ -112,6 +112,11 @@ class User extends Authenticatable implements JWTSubject
         return $this->hasMany(UserCertification::class);
     }
 
+    public function userDocuments()
+    {
+        return $this->hasMany(UserDocument::class);
+    }
+
     public function userAdditionalSports()
     {
         return $this->hasMany(UserAdditionalSport::class);
