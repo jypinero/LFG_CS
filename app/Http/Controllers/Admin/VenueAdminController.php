@@ -12,13 +12,13 @@ class VenueAdminController extends Controller
 {
 	public function index(Request $request)
 	{
-		$query = Venue::query();
+		$query = Venue::with(['photos', 'facilities']);
 		if ($request->filled('q')) {
 			$q = $request->get('q');
 			$query->where(function ($sub) use ($q) {
 				$sub->where('name', 'like', '%'.$q.'%')
 					->orWhere('address', 'like', '%'.$q.'%')
-					->orWhere('city', 'like', '%'.$q.'%');
+					->orWhere('description', 'like', '%'.$q.'%');
 			});
 		}
 		if ($request->filled('status')) {
