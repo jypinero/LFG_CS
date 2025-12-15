@@ -379,4 +379,101 @@ class TournamentBracketGenerator
             ->orderByRaw("FIELD(match_stage,'winners','losers','grand_final')")->orderBy('round_number')->orderBy('match_number')
             ->get();
     }
+
+    /**
+     * Advance winner to next match automatically
+     */
+    public function advanceWinner($matchupId)
+    {
+        $match = TeamMatchup::find($matchupId);
+        if (!$match || $match->status !== 'completed') {
+            throw new \RuntimeException('Match not found or not completed');
+        }
+
+        $tournament = $match->tournament;
+        $tournamentType = $tournament->tournament_type ?? 'team vs team';
+
+        // Determine winner ID
+        $winnerId = null;
+        if ($tournamentType === 'team vs team') {
+            $winnerId = $match->winner_team_id;
+        } else {
+            // Free for all - get winner from meta
+            $meta = $match->meta ?? [];
+            $winnerId = $meta['winner_user_id'] ?? null;
+        }
+
+        if (!$winnerId) {
+            throw new \RuntimeException('No winner set for match');
+        }
+
+        // Find next match
+        $nextMatchId = $match->next_match_id;
+        if (!$nextMatchId) {
+            // No next match - this might be the final
+            return null;
+        }
+
+        $nextMatch = TeamMatchup::find($nextMatchId);
+        if (!$nextMatch) {
+            return null;
+        }
+
+        // Determine which slot to fill (team_a or team_b)
+        // Check if team_a is already filled
+        $fillSlotA = false;
+        if ($tournamentType === 'team vs team') {
+            if (!$nextMatch->team_a_id) {
+                $fillSlotA = true;
+            } elseif (!$nextMatch->team_b_id) {
+                $fillSlotA = false;
+            } else {
+                // Both slots filled - shouldn't happen, but skip
+                return $nextMatch;
+            }
+        } else {
+            // Free for all - check meta
+            $nextMeta = $nextMatch->meta ?? [];
+            if (!isset($nextMeta['user_a_id'])) {
+                $fillSlotA = true;
+            } elseif (!isset($nextMeta['user_b_id'])) {
+                $fillSlotA = false;
+            } else {
+                return $nextMatch;
+            }
+        }
+
+        // Fill the appropriate slot
+        if ($fillSlotA) {
+            if ($tournamentType === 'team vs team') {
+                $nextMatch->team_a_id = $winnerId;
+            } else {
+                $nextMeta['user_a_id'] = $winnerId;
+                $nextMatch->meta = $nextMeta;
+            }
+        } else {
+            if ($tournamentType === 'team vs team') {
+                $nextMatch->team_b_id = $winnerId;
+            } else {
+                $nextMeta['user_b_id'] = $winnerId;
+                $nextMatch->meta = $nextMeta;
+            }
+        }
+
+        // Update next match status if both slots are now filled
+        $bothFilled = false;
+        if ($tournamentType === 'team vs team') {
+            $bothFilled = $nextMatch->team_a_id && $nextMatch->team_b_id;
+        } else {
+            $bothFilled = isset($nextMeta['user_a_id']) && isset($nextMeta['user_b_id']);
+        }
+
+        if ($bothFilled && $nextMatch->status === 'pending') {
+            // Keep as pending - organizer will start when ready
+        }
+
+        $nextMatch->save();
+
+        return $nextMatch;
+    }
 }

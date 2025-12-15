@@ -18,10 +18,12 @@ class TournamentParticipant extends Model
         'rejection_reason',
         'approved_by',
         'approved_at',
+        'withdrawn_at',
     ];
 
     protected $casts = [
         'approved_at' => 'datetime',
+        'withdrawn_at' => 'datetime',
     ];
 
     public function tournament()
