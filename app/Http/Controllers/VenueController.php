@@ -927,6 +927,9 @@ class VenueController extends Controller
                     'venue_id' => $facility->venue_id,
                     'price_per_hr' => $facility->price_per_hr,
                     'type' => $facility->type,
+                    'name' => $facility->name,
+                    'capacity' => $facility->capacity,
+                    'covered' => $facility->covered,
                     'photos' => $facility->photos->map(fn($p) => ['id'=>$p->id,'image_url'=>Storage::url($p->image_path),'uploaded_at'=>$p->uploaded_at]),
                     'created_at' => $facility->created_at,
                     'updated_at' => $facility->updated_at,
@@ -1063,8 +1066,9 @@ class VenueController extends Controller
         if ($venue && class_exists(\App\Models\VenueUser::class)) {
             $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
                 ->where('user_id', $user->id)
-                ->where(function($q){ $q->where('role','owner')->orWhere('is_primary_owner', true); })
-                ->exists();
+                ->where(function($q) {
+                    $q->where('role', 'owner')->orWhere('is_primary_owner', true);
+                })->exists();
         }
 
         if (! $isCreator && ! $isVenueUserOwner) {
@@ -1096,11 +1100,14 @@ class VenueController extends Controller
         }
         $data = array_filter($data, fn($v) => !is_null($v) && $v !== '');
 
+        \Log::debug('facility.update.prep', ['facility_id' => $facility->id, 'prepared' => $data, 'has_file' => $request->hasFile('image')]);
+
         try {
             if (! empty($data)) {
                 $facility->fill($data);
+                \Log::debug('facility.update.before_save', ['facility_id' => $facility->id, 'dirty' => $facility->getDirty()]);
                 $facility->save();
-                \Log::info('facility.update.saved_for_venue', ['facility_id'=>$facility->id,'venue_id'=>$venueId]);
+                \Log::info('facility.update.saved', ['facility_id' => $facility->id, 'changes' => $facility->getChanges()]);
             }
 
             $newPhoto = null;
@@ -1112,15 +1119,23 @@ class VenueController extends Controller
                 $imagePath = $file->storeAs('facility_photo', $fileName, 'public');
 
                 if ($first) {
-                    try { Storage::disk('public')->delete($first->image_path); } catch (\Throwable $e) { \Log::warning('facility.update.delete_old_photo_failed', ['photo_id'=>$first->id,'error'=>$e->getMessage()]); }
-                    $first->update(['image_path'=>$imagePath, 'uploaded_at'=>now()]);
+                    try {
+                        Storage::disk('public')->delete($first->image_path);
+                    } catch (\Throwable $e) {
+                        \Log::warning('facility.update.delete_old_photo_failed', ['photo_id' => $first->id, 'error' => $e->getMessage()]);
+                    }
+                    $first->update(['image_path' => $imagePath, 'uploaded_at' => now()]);
                     $newPhoto = $first;
                 } else {
-                    $newPhoto = FacilityPhoto::create(['facility_id'=>$facility->id,'image_path'=>$imagePath,'uploaded_at'=>now()]);
+                    $newPhoto = FacilityPhoto::create([
+                        'facility_id' => $facility->id,
+                        'image_path' => $imagePath,
+                        'uploaded_at' => now(),
+                    ]);
                 }
 
                 $imageUrl = Storage::url($imagePath);
-                \Log::info('facility.update.image_saved_for_venue', ['facility_id'=>$facility->id,'path'=>$imagePath]);
+                \Log::info('facility.update.image_saved', ['facility_id' => $facility->id, 'path' => $imagePath, 'photo_id' => $newPhoto->id ?? null]);
             }
 
             $facility->refresh();
@@ -1143,9 +1158,10 @@ class VenueController extends Controller
                 ],
                 'uploaded_photo' => $newPhoto ? ['id' => $newPhoto->id, 'image_url' => $imageUrl, 'uploaded_at' => $newPhoto->uploaded_at] : null,
             ], 200);
+
         } catch (\Throwable $e) {
-            \Log::error('facility.update.exception_for_venue', ['error'=>$e->getMessage(),'facility_id'=>$facilityId,'venue_id'=>$venueId]);
-            return response()->json(['status'=>'error','message'=>'Update failed','error'=>$e->getMessage()], 500);
+            \Log::error('facility.update.exception', ['facility_id' => $facility->id, 'error' => $e->getMessage()]);
+            return response()->json(['status' => 'error', 'message' => 'Update failed', 'error' => $e->getMessage()], 500);
         }
     }
 
@@ -2158,6 +2174,7 @@ class VenueController extends Controller
                     ->join('facilities', 'events.facility_id', '=', 'facilities.id')
                     ->whereIn('events.venue_id', $venueIds)
                     ->whereNull('events.cancelled_at');
+
                 if ($facilityId) $q->where('events.facility_id', $facilityId);
                 
                 if ($dateRange['start'] && $dateRange['end'] && $dateRange['period'] === 'custom') {
@@ -2859,4 +2876,107 @@ class VenueController extends Controller
         ]);
     }
     
+    /**
+     * GET /api/venues/member
+     *
+     * Return venues where authenticated user is Manager or Staff (not owner).
+     */
+    public function memberVenues()
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+        }
+
+        $userId = $user->id;
+
+        $venues = Venue::whereHas('venue_users', function ($q) use ($userId) {
+                $q->where('user_id', $userId)
+                  ->whereIn('role', ['manager', 'Manager', 'staff', 'Staff']);
+            })
+            ->where('created_by', '!=', $userId)
+            ->with(['photos', 'facilities.photos', 'venue_users.user', 'creator'])
+            ->get();
+
+        $payload = $venues->map(function ($venue) {
+            $reviewsCount = DB::table('venue_reviews')->where('venue_id', $venue->id)->count();
+            $avgRating = DB::table('venue_reviews')->where('venue_id', $venue->id)->avg('rating');
+
+            $members = $venue->venue_users->map(function ($vu) {
+                $u = $vu->user;
+                return [
+                    'id' => $vu->id,
+                    'user_id' => $vu->user_id,
+                    'username' => $u->username ?? null,
+                    'email' => $u->email ?? null,
+                    'profile_photo' => $u->profile_photo ?? ($u->profile_photo_path ?? null),
+                    'role' => $vu->role ?? null,
+                    'is_primary_owner' => (bool) ($vu->is_primary_owner ?? false),
+                    'joined_at' => $vu->created_at,
+                ];
+            });
+
+            return [
+                'id' => $venue->id,
+                'venue_id' => $venue->id,
+                'name' => $venue->name,
+                'description' => $venue->description,
+                'address' => $venue->address,
+                'latitude' => $venue->latitude,
+                'longitude' => $venue->longitude,
+                'phone_number' => $venue->phone_number,
+                'email' => $venue->email,
+                'facebook_url' => $venue->facebook_url,
+                'instagram_url' => $venue->instagram_url,
+                'website' => $venue->website,
+                'house_rules' => $venue->house_rules,
+                'photos' => $venue->photos->map(function ($p) {
+                    return [
+                        'id' => $p->id,
+                        'image_url' => Storage::url($p->image_path),
+                        'uploaded_at' => $p->uploaded_at,
+                    ];
+                }),
+                'facilities' => $venue->facilities->map(function ($facility) {
+                    return [
+                        'id' => $facility->id,
+                        'venue_id' => $facility->venue_id,
+                        'name' => $facility->name,
+                        'price_per_hr' => $facility->price_per_hr,
+                        'type' => $facility->type,
+                        'capacity' => $facility->capacity,
+                        'covered' => $facility->covered,
+                        'photos' => $facility->photos->map(function ($p) {
+                            return [
+                                'id' => $p->id,
+                                'image_url' => Storage::url($p->image_path),
+                                'uploaded_at' => $p->uploaded_at,
+                            ];
+                        }),
+                        'created_at' => $facility->created_at,
+                        'updated_at' => $facility->updated_at,
+                    ];
+                }),
+                'members' => $members,
+                'creator' => $venue->creator ? [
+                    'id' => $venue->creator->id,
+                    'username' => $venue->creator->username ?? null,
+                    'email' => $venue->creator->email ?? null,
+                    'profile_photo' => $venue->creator->profile_photo ?? ($venue->creator->profile_photo_path ?? null),
+                ] : null,
+                'verified_at' => $venue->verified_at,
+                'verification_expires_at' => $venue->verification_expires_at,
+                'closed_at' => $venue->closed_at,
+                'is_closed' => $venue->is_closed,
+                'closed_reason' => $venue->closed_reason,
+                'created_by' => $venue->created_by,
+                'created_at' => $venue->created_at,
+                'updated_at' => $venue->updated_at,
+                'reviews_count' => (int) $reviewsCount,
+                'average_rating' => $avgRating !== null ? round((float) $avgRating, 2) : null,
+            ];
+        });
+
+        return response()->json(['status' => 'success', 'data' => ['venues' => $payload]]);
+    }
 }

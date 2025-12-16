@@ -180,6 +180,8 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/venues/{venueId}/close', [VenueController::class, 'closeVenue']);
     Route::post('/venues/{venueId}/reopen', [VenueController::class, 'reopenVenue']);
     Route::post('/venues/{venueId}/transfer-ownership', [VenueController::class, 'transferOwnership']);
+
+    Route::get('/venues/member', [VenueController::class, 'memberVenues']);
     
     // Facilities list route must come before the {facilityId} route to avoid route conflict
     Route::get('/venues/{venueId}/facilities/list', [VenueController::class, 'getFacilitiesList']);
@@ -249,7 +251,8 @@ Route::middleware('auth:api')->group(function () {
     Route::patch('/teams/{teamId}/members/{memberId}/roster', [TeamController::class, 'updateRoster']);
     Route::get('/teams/{teamId}/roster', [TeamController::class, 'getRoster']);
     Route::patch('/teams/{teamId}/roster-limit', [TeamController::class, 'setRosterLimit']);
-    
+    Route::get('/teams/my', [TeamController::class, 'myTeams']);
+
     // Invite links
     Route::post('/teams/{teamId}/invites/generate', [TeamController::class, 'generateInvite']);
     Route::post('/teams/invites/{token}/accept', [TeamController::class, 'acceptInvite']);

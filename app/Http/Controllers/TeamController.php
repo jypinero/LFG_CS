@@ -1751,4 +1751,21 @@ class TeamController extends Controller
             'message' => 'Team deleted successfully',
         ]);
     }
+
+    /**
+     * GET /api/teams/my
+     */
+    public function myTeams(Request $request)
+    {
+        $user = auth()->user();
+
+        $teams = Team::with(['sport','members.user','creator'])
+            ->where('created_by', $user->id)
+            ->orWhereHas('members', function ($q) use ($user) {
+                $q->where('user_id', $user->id);
+            })
+            ->get();
+
+        return response()->json(['status' => 'success', 'teams' => $teams], 200);
+    }
 }

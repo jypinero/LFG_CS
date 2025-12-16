@@ -98,4 +98,12 @@ class Venue extends Model
             }
         });
     }
+
+    /**
+     * Creator (user who created the venue)
+     */
+    public function creator()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'created_by');
+    }
 }
