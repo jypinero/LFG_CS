@@ -106,6 +106,7 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/', [\App\Http\Controllers\UserDocumentController::class, 'index']);
         Route::post('/', [\App\Http\Controllers\UserDocumentController::class, 'store']);
         Route::get('/statistics', [\App\Http\Controllers\UserDocumentController::class, 'statistics']);
+        Route::post('/sync-certifications', [\App\Http\Controllers\UserDocumentController::class, 'syncCertifications']);
         Route::get('/{id}', [\App\Http\Controllers\UserDocumentController::class, 'show']);
         Route::post('/{id}', [\App\Http\Controllers\UserDocumentController::class, 'update']); // POST for file upload support
         Route::delete('/{id}', [\App\Http\Controllers\UserDocumentController::class, 'destroy']);

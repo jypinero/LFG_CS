@@ -368,9 +368,65 @@ class UserDocumentController extends Controller
     }
 
     /**
+     * Sync coach certifications from uploaded documents
+     */
+    public function syncCertifications()
+    {
+        $user = auth()->user();
+        
+        $coachProfile = CoachProfile::where('user_id', $user->id)->first();
+        
+        if (!$coachProfile) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not a coach'
+            ], 400);
+        }
+
+        // Get all certification documents for this user
+        $certificationDocuments = UserDocument::where('user_id', $user->id)
+            ->where(function($query) {
+                $query->where(function($q) {
+                    $q->where('document_type', 'other')
+                      ->whereNotNull('custom_type');
+                })->orWhere('document_type', 'medical_certificate');
+            })
+            ->get();
+
+        // Build certifications array from documents
+        $certifications = [];
+        foreach ($certificationDocuments as $document) {
+            $certificationName = null;
+
+            if ($document->document_type === 'other' && $document->custom_type) {
+                $certificationName = $document->custom_type;
+            } elseif ($document->document_type === 'medical_certificate') {
+                $certificationName = $document->document_name ?: 'Medical Certificate';
+            }
+
+            if ($certificationName && !in_array($certificationName, $certifications)) {
+                $certifications[] = $certificationName;
+            }
+        }
+
+        // Update coach profile
+        $oldCertifications = $coachProfile->certifications ?? [];
+        $coachProfile->certifications = $certifications;
+        $coachProfile->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Certifications synced successfully',
+            'certifications' => $certifications,
+            'documents_processed' => $certificationDocuments->count(),
+            'was_updated' => $oldCertifications !== $certifications
+        ]);
+    }
+
+    /**
      * Update coach profile certifications based on uploaded certification documents
      */
-    private function updateCoachCertifications($userId, $document)
+    public function updateCoachCertifications($userId, $document)
     {
         // Check if user is a coach
         $coachProfile = CoachProfile::where('user_id', $userId)->first();
