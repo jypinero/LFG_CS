@@ -97,7 +97,7 @@ class PostController extends Controller
 
         $validated = $request->validate([
             'location' => 'nullable|string',
-            'image_url' => 'required|image|mimes:jpeg,png,jpg,gif|max:2048', // Required image
+            'image_url' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048', // Required image
             'caption' => 'nullable|string',
             'created_at' => 'required|date',
         ]);
