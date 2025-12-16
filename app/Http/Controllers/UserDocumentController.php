@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\UserDocument;
+use App\Models\CoachProfile;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -110,6 +111,9 @@ class UserDocumentController extends Controller
             \App\Jobs\ProcessDocumentWithFreeAI::dispatch($document->id);
         }
 
+        // Update coach profile certifications if this is a coach certification document
+        $this->updateCoachCertifications($user->id, $document);
+
         return response()->json([
             'status' => 'success',
             'message' => config('ai-verification.enabled') 
@@ -199,6 +203,11 @@ class UserDocumentController extends Controller
             ], 422);
         }
 
+        // Store old values for coach certification update
+        $oldCustomType = $document->custom_type;
+        $oldDocumentType = $document->document_type;
+        $oldDocumentName = $document->document_name;
+
         // If new file uploaded, replace old one
         if ($request->hasFile('document')) {
             // Delete old file
@@ -248,6 +257,17 @@ class UserDocumentController extends Controller
 
         $document->save();
 
+        // Update coach profile certifications if this is a coach certification document
+        // Remove old certification if it changed
+        if (($oldDocumentType === 'other' && $oldCustomType) || 
+            (in_array($oldDocumentType, ['medical_certificate']))) {
+            $oldCertName = $oldDocumentType === 'other' ? $oldCustomType : ($oldDocumentName ?: 'Medical Certificate');
+            $this->removeCoachCertificationByName($user->id, $oldCertName);
+        }
+
+        // Add new certification
+        $this->updateCoachCertifications($user->id, $document->fresh());
+
         return response()->json([
             'status' => 'success',
             'message' => 'Document updated successfully',
@@ -277,6 +297,9 @@ class UserDocumentController extends Controller
         if ($document->file_path && Storage::disk('public')->exists($document->file_path)) {
             Storage::disk('public')->delete($document->file_path);
         }
+
+        // Remove from coach profile certifications if this was a certification document
+        $this->removeCoachCertification($user->id, $document);
 
         $document->delete(); // Soft delete
 
@@ -342,6 +365,103 @@ class UserDocumentController extends Controller
             'status' => 'success',
             'statistics' => $stats
         ]);
+    }
+
+    /**
+     * Update coach profile certifications based on uploaded certification documents
+     */
+    private function updateCoachCertifications($userId, $document)
+    {
+        // Check if user is a coach
+        $coachProfile = CoachProfile::where('user_id', $userId)->first();
+        
+        if (!$coachProfile) {
+            return; // User is not a coach, skip
+        }
+
+        // Check if this is a certification document
+        // Certification documents are those with document_type 'other' and custom_type provided
+        // Or we can check if custom_type contains certification-related keywords
+        $isCertification = false;
+        $certificationName = null;
+
+        if ($document->document_type === 'other' && $document->custom_type) {
+            $isCertification = true;
+            $certificationName = $document->custom_type;
+        } elseif (in_array($document->document_type, ['medical_certificate'])) {
+            // Medical certificates can also be coach certifications
+            $isCertification = true;
+            $certificationName = $document->document_name ?: 'Medical Certificate';
+        }
+
+        if (!$isCertification) {
+            return; // Not a certification document
+        }
+
+        // Get current certifications array
+        $certifications = $coachProfile->certifications ?? [];
+        
+        // Ensure it's an array
+        if (!is_array($certifications)) {
+            $certifications = [];
+        }
+
+        // Add certification if not already present
+        if (!in_array($certificationName, $certifications)) {
+            $certifications[] = $certificationName;
+            $coachProfile->certifications = $certifications;
+            $coachProfile->save();
+        }
+    }
+
+    /**
+     * Remove certification from coach profile when document is deleted
+     */
+    private function removeCoachCertification($userId, $document)
+    {
+        // Determine certification name to remove
+        $certificationName = null;
+
+        if ($document->document_type === 'other' && $document->custom_type) {
+            $certificationName = $document->custom_type;
+        } elseif (in_array($document->document_type, ['medical_certificate'])) {
+            $certificationName = $document->document_name ?: 'Medical Certificate';
+        }
+
+        if (!$certificationName) {
+            return; // Not a certification document
+        }
+
+        $this->removeCoachCertificationByName($userId, $certificationName);
+    }
+
+    /**
+     * Remove a specific certification by name from coach profile
+     */
+    private function removeCoachCertificationByName($userId, $certificationName)
+    {
+        // Check if user is a coach
+        $coachProfile = CoachProfile::where('user_id', $userId)->first();
+        
+        if (!$coachProfile) {
+            return; // User is not a coach, skip
+        }
+
+        // Get current certifications array
+        $certifications = $coachProfile->certifications ?? [];
+        
+        // Ensure it's an array
+        if (!is_array($certifications)) {
+            return;
+        }
+
+        // Remove certification if present
+        $certifications = array_values(array_filter($certifications, function($cert) use ($certificationName) {
+            return $cert !== $certificationName;
+        }));
+
+        $coachProfile->certifications = $certifications;
+        $coachProfile->save();
     }
 }
 
