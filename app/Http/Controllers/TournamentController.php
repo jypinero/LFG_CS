@@ -225,7 +225,7 @@ class TournamentController extends Controller
             'description' => 'nullable|string',
             'location' => 'nullable|string|max:255',
             'type' => ['required', Rule::in(['single_sport', 'multisport'])],
-            'tournament_type' => ['required', Rule::in(['team vs team', 'free for all'])],  // ADD THIS
+            'tournament_type' => ['required', Rule::in(['team vs team', 'free for all'])],
             'start_date' => 'required|date',
             'end_date' => 'required|date|after_or_equal:start_date',
             'registration_deadline' => 'nullable|date',
@@ -238,6 +238,7 @@ class TournamentController extends Controller
             'registration_fee' => 'nullable|numeric|min:0',
             'rules' => 'nullable|string',
             'prizes' => 'nullable|string',
+            'photo' => 'sometimes|file|image|max:5120|mimes:jpg,jpeg,png',
         ]);
 
         // Optional: if request includes team ownership validation
@@ -255,6 +256,14 @@ class TournamentController extends Controller
                 'created_by' => $user->id,
                 'status' => $data['status'] ?? 'draft',
             ]));
+
+            // handle photo upload AFTER create so tournament id is available
+            if ($request->hasFile('photo')) {
+                $file = $request->file('photo');
+                $path = $file->store("tournaments/{$tournament->id}/photo");
+                $tournament->photo = $path;
+                $tournament->save();
+            }
 
             // Add creator as owner organizer
             TournamentOrganizer::create([
@@ -309,7 +318,7 @@ class TournamentController extends Controller
     /**
      * Update a tournament (allowed in draft or while registration open and before deadline)
      */
-    public function update(Request $request, $id)
+        public function update(Request $request, $id)
     {
         $user = auth()->user();
         $tournament = Tournament::find($id);
@@ -352,9 +361,21 @@ class TournamentController extends Controller
             'registration_fee' => 'nullable|numeric|min:0',
             'rules' => 'nullable|string',
             'prizes' => 'nullable|string',
+            'photo' => 'sometimes|file|image|max:5120|mimes:jpg,jpeg,png',
         ]);
 
         $tournament->fill($data);
+
+        // handle photo replacement inline
+        if ($request->hasFile('photo')) {
+            // delete old file if present
+            if (!empty($tournament->photo)) {
+                try { Storage::delete($tournament->photo); } catch (\Throwable $ex) {}
+            }
+            $path = $request->file('photo')->store("tournaments/{$tournament->id}/photo");
+            $tournament->photo = $path;
+        }
+
         $tournament->save();
 
         return response()->json(['status' => 'success', 'tournament' => $tournament]);
@@ -1399,6 +1420,7 @@ class TournamentController extends Controller
     {
         $user = auth()->user();
         $tournament = Tournament::find($tournamentId);
+
         if (! $tournament) {
             return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
         }
@@ -1432,25 +1454,26 @@ class TournamentController extends Controller
     {
         $user = auth()->user();
         $tournament = Tournament::find($tournamentId);
+
         if (! $tournament) {
-            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
         }
 
         $isCreator = $tournament->created_by === $user->id;
-        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)
-            ->where('user_id',$user->id)
-            ->whereIn('role',['owner','organizer'])
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
             ->exists();
         if (! $isCreator && ! $isOrganizer) {
-            return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden', 'tournament' => $tournament->id, 'user' => $user->id], 403);
         }
 
         $participant = TournamentParticipant::where('id',$participantId)->where('tournament_id',$tournament->id)->first();
         if (! $participant) {
-            return response()->json(['status'=>'error','message'=>'Participant not found'], 404);
+            return response()->json(['status' => 'error', 'message' => 'Participant not found'], 404);
         }
         if ($participant->status === 'approved') {
-            return response()->json(['status'=>'error','message'=>'Already approved'], 422);
+            return response()->json(['status' => 'error', 'message' => 'Already approved'], 422);
         }
 
         DB::beginTransaction();
@@ -1515,17 +1538,18 @@ class TournamentController extends Controller
     {
         $user = auth()->user();
         $tournament = Tournament::find($tournamentId);
+
         if (! $tournament) {
-            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
         }
 
         $isCreator = $tournament->created_by === $user->id;
-        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)
-            ->where('user_id',$user->id)
-            ->whereIn('role',['owner','organizer'])
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
             ->exists();
         if (! $isCreator && ! $isOrganizer) {
-            return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
         }
 
         $data = $request->validate(['reason'=>'nullable|string|max:500']);
@@ -1584,15 +1608,17 @@ class TournamentController extends Controller
     {
         $user = auth()->user();
         $tournament = Tournament::find($tournamentId);
+
         if (! $tournament) {
-            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
         }
 
         $isCreator = $tournament->created_by === $user->id;
-        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)
-            ->where('user_id',$user->id)
-            ->whereIn('role',['owner','organizer'])
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'owner')
             ->exists();
+
         if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
 
         $data = $request->validate(['reason'=>'nullable|string|max:500']);
@@ -2234,7 +2260,7 @@ class TournamentController extends Controller
             ->exists();
 
         if (!$isCreator && !$isOwnerOrganizer) {
-            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden', 'tournament' => $tournament->id, 'user' => $user->id], 403);
         }
 
         $data = $request->validate([
@@ -2614,7 +2640,7 @@ class TournamentController extends Controller
                             'data' => [
                                 'tournament_id' => $tournament->id,
                                 'tournament_name' => $tournament->name,
-                                'participant_id' => $newParticipant->id,
+                                'participant_id' => $participant->id,
                                 'message' => "You have been promoted from the waitlist for {$tournament->name}",
                             ],
                             'created_by' => $user->id,
@@ -3434,7 +3460,7 @@ class TournamentController extends Controller
 
         // Send notifications to participants
         $participants = TournamentParticipant::where('tournament_id', $tournament->id)
-            ->whereIn('status', ['approved', 'pending'])
+            ->whereIn('status', ['approved', 'pending', 'confirmed'])
             ->get();
 
         foreach ($participants as $participant) {
@@ -3598,7 +3624,7 @@ class TournamentController extends Controller
                     'type' => 'tournament_completed',
                     'data' => [
                         'tournament_id' => $tournament->id,
-                        'tournament_name' => $tournament->name,
+                                               'tournament_name' => $tournament->name,
                         'message' => "Tournament {$tournament->name} has been completed!",
                     ],
                     'created_by' => $user->id,
