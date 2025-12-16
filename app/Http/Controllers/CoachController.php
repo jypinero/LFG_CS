@@ -87,7 +87,15 @@ class CoachController extends Controller
 
     public function discover(Request $request)
     {
+        $authId = Auth::id();
+        $authIsCoach = $authId && CoachProfile::where('user_id', $authId)->exists();
+
         $q = CoachProfile::query()->where('is_active', true);
+
+        // if requester is a coach, exclude their own profile from listings
+        if ($authIsCoach) {
+            $q->where('user_id', '!=', $authId);
+        }
 
         if ($request->filled('specialization')) {
             $q->whereJsonContains('specializations', $request->input('specialization'));
@@ -105,7 +113,6 @@ class CoachController extends Controller
         }
 
         if ($request->filled('location_key') && $request->filled('location_value')) {
-            // simple JSON key filtering: e.g. location_key=city location_value=London
             $q->whereJsonContains("location->{$request->input('location_key')}", $request->input('location_value'));
         }
 
@@ -121,10 +128,15 @@ class CoachController extends Controller
 
         $seenCoachIds = CoachMatch::where('student_id', $studentId)->pluck('coach_id')->toArray();
 
-        $coach = CoachProfile::where('is_active', true)
-            ->where('user_id', '!=', $studentId)
-            ->whereNotIn('user_id', $seenCoachIds)
-            ->orderByDesc('rating')
+        $q = CoachProfile::where('is_active', true)
+            ->whereNotIn('user_id', $seenCoachIds);
+
+        // if requester is a coach, ensure they don't see their own profile
+        if ($studentId && CoachProfile::where('user_id', $studentId)->exists()) {
+            $q->where('user_id', '!=', $studentId);
+        }
+
+        $coach = $q->orderByDesc('rating')
             ->with('user')
             ->first();
 
