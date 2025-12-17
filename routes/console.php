@@ -9,3 +9,4 @@ Artisan::command('inspire', function () {
 })->purpose('Display an inspiring quote');
 
 Schedule::command('tournaments:update-statuses')->daily();
+Schedule::command('events:close-groupchats')->hourly();

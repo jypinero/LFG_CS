@@ -257,16 +257,51 @@ class AuthController extends Controller
      */
     public function me()
     {
-        $user = Auth::guard('api')->user();
-        
-        return response()->json([
-            'status' => 'success',
-            'user' => $user->load('role', 'userProfile', 'userCertifications', 'userDocuments', 'userAdditionalSports.sport'),
-            'has_team' => TeamMember::where('user_id', $user->id)->exists(),
-            'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
-                ->get(['id', 'name'])
-                ->map(function ($t) { return ['id' => $t->id, 'name' => $t->name]; })
-        ]);
+        try {
+            $user = Auth::guard('api')->user();
+            
+            // Check if user exists in database
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not authenticated',
+                    'code' => 'USER_NOT_AUTHENTICATED'
+                ], 401);
+            }
+            
+            // Verify user still exists in database (in case user was deleted after token was issued)
+            $userExists = User::find($user->id);
+            if (!$userExists) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User account not found. Please log in again.',
+                    'code' => 'USER_NOT_FOUND',
+                    'user_id' => $user->id
+                ], 404);
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'user' => $user->load('role', 'userProfile', 'userCertifications', 'userDocuments', 'userAdditionalSports.sport'),
+                'has_team' => TeamMember::where('user_id', $user->id)->exists(),
+                'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
+                    ->get(['id', 'name'])
+                    ->map(function ($t) { return ['id' => $t->id, 'name' => $t->name]; })
+            ]);
+        } catch (\Tymon\JWTAuth\Exceptions\UserNotDefinedException $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'User account not found. Please log in again.',
+                'code' => 'USER_NOT_FOUND'
+            ], 404);
+        } catch (\Exception $e) {
+            \Log::error('Error in /me endpoint: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Authentication error',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
     }
 
     public function myprofile()
@@ -456,6 +491,55 @@ class AuthController extends Controller
                 'type' => 'bearer',
             ]
         ]);
+    }
+
+    /**
+     * Validate session - check if token is valid and user exists
+     * Used by frontend to verify session before redirecting
+     *
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function validateSession()
+    {
+        try {
+            $userId = auth()->id();
+            
+            if (!$userId) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'No valid session',
+                    'code' => 'NO_SESSION',
+                    'valid' => false
+                ], 401);
+            }
+            
+            // Verify user exists in database
+            $user = User::find($userId);
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User account not found',
+                    'code' => 'USER_NOT_FOUND',
+                    'valid' => false,
+                    'user_id' => $userId
+                ], 404);
+            }
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Session is valid',
+                'valid' => true,
+                'user_id' => $userId
+            ]);
+            
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Session validation failed',
+                'code' => 'VALIDATION_ERROR',
+                'valid' => false
+            ], 401);
+        }
     }
 
     /**

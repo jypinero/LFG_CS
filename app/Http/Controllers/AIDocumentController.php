@@ -124,6 +124,10 @@ class AIDocumentController extends Controller
             'ai_results' => [
                 'extracted_data' => $document->ai_extracted_data ?? [],
                 'name_matches' => $document->ai_name_matches,
+                'name_match_confidence' => $document->ai_extracted_data['name_match_confidence'] ?? null,
+                'name_on_document' => $document->ai_extracted_data['name_on_document'] ?? null,
+                'expected_name' => $document->ai_extracted_data['expected_name'] ?? null,
+                'name_match_status' => $document->ai_extracted_data['name_match_status'] ?? null,
                 'flags' => $document->ai_flags ?? [],
                 'validation_notes' => $document->ai_validation_notes,
                 'auto_verified' => $document->ai_auto_verified,
@@ -169,6 +173,60 @@ class AIDocumentController extends Controller
         return response()->json([
             'status' => 'success',
             'message' => 'Document queued for AI reprocessing'
+        ]);
+    }
+
+    /**
+     * Bulk requeue processed documents for AI reprocessing
+     */
+    public function bulkRequeue(Request $request)
+    {
+        $request->validate([
+            'document_ids' => 'nullable|array',
+            'document_ids.*' => 'exists:user_documents,id',
+            'requeue_all' => 'nullable|boolean',
+            'status_filter' => 'nullable|in:all,verified,pending,rejected',
+        ]);
+
+        $query = UserDocument::where('ai_processed', true);
+
+        // Filter by status if provided
+        if ($request->filled('status_filter') && $request->status_filter !== 'all') {
+            $query->where('verification_status', $request->status_filter);
+        }
+
+        // Filter by document IDs if provided
+        if ($request->filled('document_ids') && !$request->input('requeue_all', false)) {
+            $query->whereIn('id', $request->document_ids);
+        }
+
+        $documents = $query->get();
+        $count = 0;
+
+        foreach ($documents as $document) {
+            // Reset AI fields
+            $document->update([
+                'ai_processed' => false,
+                'ai_confidence_score' => null,
+                'ai_extracted_data' => null,
+                'ai_validation_notes' => null,
+                'ai_flags' => null,
+                'ai_quality_score' => null,
+                'ai_name_matches' => null,
+                'ai_auto_verified' => false,
+                'ai_processed_at' => null,
+                'ai_ocr_text' => null,
+            ]);
+
+            // Queue for reprocessing
+            ProcessDocumentWithFreeAI::dispatch($document->id);
+            $count++;
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "{$count} document(s) queued for AI reprocessing with enhanced verification",
+            'count' => $count
         ]);
     }
 

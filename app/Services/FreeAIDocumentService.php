@@ -53,7 +53,8 @@ class FreeAIDocumentService
             $recommendation = $this->getRecommendation(
                 $finalConfidence,
                 $aiResult['flags'],
-                $aiResult['name_matches']
+                $aiResult['name_matches'],
+                $aiResult['name_match_confidence'] ?? 0
             );
             
             return [
@@ -66,6 +67,7 @@ class FreeAIDocumentService
                 'flags' => $aiResult['flags'] ?? [],
                 'quality_score' => $aiResult['quality_score'] ?? 0,
                 'name_matches' => $aiResult['name_matches'] ?? false,
+                'name_match_confidence' => $aiResult['name_match_confidence'] ?? 0,
                 'is_expired' => $aiResult['is_expired'] ?? false,
                 'recommendation' => $recommendation,
                 'notes' => $aiResult['notes'] ?? ''
@@ -82,6 +84,8 @@ class FreeAIDocumentService
                 'flags' => ['Processing error: ' . $e->getMessage()],
                 'quality_score' => 0,
                 'name_matches' => false,
+                'name_match_confidence' => 0,
+                'is_expired' => false,
                 'recommendation' => 'MANUAL_REVIEW',
                 'notes' => 'Error during processing - manual review required'
             ];
@@ -104,9 +108,9 @@ class FreeAIDocumentService
     }
     
     /**
-     * Get recommendation based on confidence and flags
+     * Get recommendation based on confidence, flags, and name matching
      */
-    private function getRecommendation($confidence, $flags, $nameMatches)
+    private function getRecommendation($confidence, $flags, $nameMatches, $nameMatchConfidence = 0)
     {
         $autoApproveThreshold = config('ai-verification.auto_approve_threshold', 85);
         $quickReviewThreshold = config('ai-verification.quick_review_threshold', 70);
@@ -129,11 +133,18 @@ class FreeAIDocumentService
             return 'MANUAL_REVIEW';
         }
         
-        if ($confidence >= $autoApproveThreshold && empty($flags) && $nameMatches !== false) {
+        // Require high name match confidence for auto-approval
+        $nameMatchThreshold = 80; // Require 80%+ confidence in name match
+        if ($confidence >= $autoApproveThreshold && empty($flags) && $nameMatches && $nameMatchConfidence >= $nameMatchThreshold) {
             return 'AUTO_APPROVE';
         }
         
-        if ($confidence >= $quickReviewThreshold) {
+        // If name doesn't match or low confidence, require review
+        if (!$nameMatches || $nameMatchConfidence < 50) {
+            return 'MANUAL_REVIEW';
+        }
+        
+        if ($confidence >= $quickReviewThreshold && $nameMatchConfidence >= 50) {
             return 'QUICK_REVIEW';
         }
         
@@ -156,6 +167,7 @@ class FreeAIDocumentService
         return $this->aiService->isAvailable();
     }
 }
+
 
 
 
