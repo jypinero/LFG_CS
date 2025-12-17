@@ -393,14 +393,20 @@ class EventController extends Controller
         $user = auth()->user();
 
         // Get all events where user is the creator only
-        $events = Event::with(['venue', 'facility'])
+        $events = Event::with(['venue', 'facility', 'participants', 'checkins'])
             ->where('created_by', $user->id)
             ->orderBy('date')
             ->orderBy('start_time')
             ->get()
-            ->map(function($event) {
+            ->map(function($event) use ($user) {
+                // Get current user's check-in status if they're a participant
+                $userCheckin = $event->checkins->where('user_id', $user->id)->first();
+                
                 return [
                     'id' => $event->id,
+                    'name' => $event->name,
+                    'description' => $event->description,
+                    'event_type' => $event->event_type,
                     'date' => $event->date,
                     'sport' => $event->sport,
                     'host' => User::find($event->created_by)->username ?? null,
@@ -410,9 +416,17 @@ class EventController extends Controller
                     'facility' => $event->facility->type ?? null,
                     'start_time' => $event->start_time,
                     'end_time' => $event->end_time,
+                    'slots' => $event->slots,
+                    'participants_count' => $event->participants->count(),
                     'is_approved' => (bool) $event->is_approved,
                     'approval_status' => $event->is_approved ? 'approved' : 'pending',
                     'approved_at' => $event->approved_at,
+                    'cancelled_at' => $event->cancelled_at,
+                    // Check-in related fields
+                    'checkin_code' => $event->checkin_code,
+                    'can_checkin' => $event->is_approved && !$event->cancelled_at,
+                    'user_checked_in' => $userCheckin ? true : false,
+                    'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
                 ];
             });
 
