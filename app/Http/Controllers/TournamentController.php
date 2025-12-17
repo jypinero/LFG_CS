@@ -25,13 +25,40 @@ use App\Models\EventResult;
 use App\Models\EventPenalty;
 use Illuminate\Support\Facades\Storage;
 use App\Services\TournamentBracketGenerator; // added import
+use Illuminate\Support\Str;
+use Illuminate\Support\Facades\Cache;
+use Symfony\Component\HttpFoundation\StreamedResponse;
+use Illuminate\Support\Facades\URL;
 
 class TournamentController extends Controller
 {
     public function __construct()
     {
         // Ensure authenticated for create/update/delete
-        $this->middleware('auth')->only(['create', 'update', 'destroy', 'createGame', 'updateGame', 'deleteGame']);
+        // $this->middleware('auth')->only(['create', 'update', 'destroy', 'createGame', 'updateGame', 'deleteGame']);
+        // $this->middleware('auth')->only(['create', 'update', 'destroy', 'createGame', 'updateGame', 'deleteGame', 'bulkImportParticipants','createInviteLink','setParticipantLock','generateBracketsPreview','exportParticipants','exportResults','checkinEvent','resetMatch','resetBracket']);
+        
+        // Use Sanctum for API authentication and protect controller mutating endpoints
+        $this->middleware('auth')->only([
+            'create', 'update', 'destroy',
+            'createGame', 'updateGame', 'deleteGame',
+            'register', 'withdraw',
+            'bulkImportParticipants', 'createInviteLink', 'setParticipantLock',
+            'generateBracketsPreview', 'generateBrackets',
+            'exportParticipants', 'exportResults',
+            'checkinEvent', 'checkinQR', 'checkinCode', 'checkinManual', 'viewCheckins',
+            'assignTeams', 'autoBalanceTeams', 'replacePlayer',
+            'approveParticipant', 'rejectParticipant', 'banParticipant', 'markNoShow',
+            'uploadDocument', 'getDocuments', 'getParticipantDocuments', 'verifyDocument', 'deleteDocument',
+            'resetMatch', 'resetBracket',
+            'startMatch', 'endMatch', 'updateScore', 'issuePenalty', 'markForfeit', 'uploadResult',
+            'createPhase', 'listPhases', 'updatePhase', 'deletePhase', 'reorderPhases',
+            'addOrganizer', 'removeOrganizer', 'listOrganizers', 'updateOrganizerRole',
+            'joinWaitlist', 'removeFromWaitlist', 'getWaitlist', 'promoteFromWaitlist',
+            'createTemplate', 'listTemplates', 'createFromTemplate', 'updateTemplate', 'deleteTemplate',
+            'advanceBracket'
+        ]);
+    
     }
 
     private function generateCheckinCode()
@@ -934,6 +961,32 @@ class TournamentController extends Controller
         }
 
         $tournamentParticipants = $tpQuery->orderBy('registered_at')->get();
+
+        // If CSV requested, stream CSV response
+        if (strtolower($request->input('format','')) === 'csv') {
+            $filename = 'tournament_'.$tournament->id.'_participants_'.date('Ymd_His').'.csv';
+            $callback = function() use ($tournamentParticipants) {
+                $out = fopen('php://output','w');
+                fputcsv($out, ['id','participant_type','user_id','username','team_id','team_name','status','registered_at']);
+                foreach ($tournamentParticipants as $p) {
+                    fputcsv($out, [
+                        $p->id,
+                        $p->participant_type,
+                        $p->user_id,
+                        $p->user?->username,
+                        $p->team_id,
+                        $p->team?->name,
+                        $p->status,
+                        $p->registered_at,
+                    ]);
+                }
+                fclose($out);
+            };
+            return response()->streamDownload($callback, $filename, [
+                'Content-Type' => 'text/csv',
+                'Content-Disposition' => "attachment; filename=\"{$filename}\""
+            ]);
+        }
 
         // gather tournament-level event participants (fast lookup / active-game references)
         $epQuery = EventParticipant::with(['user','team'])
@@ -3624,7 +3677,7 @@ class TournamentController extends Controller
                     'type' => 'tournament_completed',
                     'data' => [
                         'tournament_id' => $tournament->id,
-                                               'tournament_name' => $tournament->name,
+                        'tournament_name' => $tournament->name,
                         'message' => "Tournament {$tournament->name} has been completed!",
                     ],
                     'created_by' => $user->id,
@@ -3972,5 +4025,615 @@ class TournamentController extends Controller
             'status' => 'success',
             'message' => 'Template deleted successfully'
         ]);
+    }
+
+    /**
+     * Bulk import participants (JSON array or CSV file).
+     * POST /api/tournaments/{id}/participants/bulk
+     */
+    public function bulkImportParticipants(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->whereIn('role',['owner','organizer'])->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        // accept JSON array OR CSV upload
+        $importRows = [];
+        if ($request->hasFile('file')) {
+            $file = $request->file('file');
+            $handle = fopen($file->getRealPath(), 'r');
+            $header = null;
+            while (($row = fgetcsv($handle)) !== false) {
+                if (!$header) {
+                    $header = $row;
+                    continue;
+                }
+                $importRows[] = array_combine($header, $row);
+            }
+            fclose($handle);
+        } else {
+            $data = $request->input('participants', []);
+            if (!is_array($data)) return response()->json(['status'=>'error','message'=>'Invalid payload'], 422);
+            $importRows = $data;
+        }
+
+        // DEBUG: return parsed rows and stop when ?debug=1
+        if ($request->boolean('debug')) {
+            return response()->json(['status'=>'debug','parsed_rows' => $importRows]);
+        }
+
+         // PER-ROW DIAGNOSTICS: use ?debug2=1 to return reasons why rows would be skipped
+        if ($request->boolean('debug2')) {
+            $diag = [];
+            foreach ($importRows as $i => $r) {
+                $type = strtolower($r['participant_type'] ?? $r['type'] ?? 'individual');
+                $userId = $r['user_id'] ?? null;
+                $teamId = $r['team_id'] ?? null;
+
+                $userExists = $userId ? User::where('id', $userId)->exists() : false;
+                $teamExists = $teamId ? Team::where('id', $teamId)->exists() : false;
+
+                $already = false;
+                if ($type === 'team' && $teamId) {
+                    $already = TournamentParticipant::where('tournament_id', $tournament->id)->where('team_id', $teamId)->exists();
+                } elseif ($type === 'individual' && $userId) {
+                    $already = TournamentParticipant::where('tournament_id', $tournament->id)->where('user_id', $userId)->exists();
+                }
+
+                $skipReason = null;
+                if ($type === 'team') {
+                    if (empty($teamId)) $skipReason = 'missing team_id';
+                    elseif (! $teamExists) $skipReason = 'team not found';
+                    elseif ($already) $skipReason = 'already registered';
+                    else $skipReason = 'ok';
+                } else {
+                    if (empty($userId)) $skipReason = 'missing user_id';
+                    elseif (! $userExists) $skipReason = 'user not found';
+                    elseif ($already) $skipReason = 'already registered';
+                    else $skipReason = 'ok';
+                }
+
+                $diag[] = [
+                    'row_index' => $i,
+                    'row' => $r,
+                    'type' => $type,
+                    'user_exists' => $userExists,
+                    'team_exists' => $teamExists,
+                    'already_registered' => $already,
+                    'skip_reason' => $skipReason,
+                ];
+            }
+
+            return response()->json(['status' => 'debug', 'rows' => $diag]);
+        }
+
+        $created = [];
+        DB::beginTransaction();
+        try {
+            foreach ($importRows as $r) {
+                // expected keys: participant_type (individual|team), user_id, team_id
+                $type = $r['participant_type'] ?? ($r['type'] ?? 'individual');
+                if ($type === 'team' && !empty($r['team_id'])) {
+                    $exists = TournamentParticipant::where('tournament_id',$tournament->id)->where('team_id',$r['team_id'])->exists();
+                    if ($exists) continue;
+                    $participant = TournamentParticipant::create([
+                        'tournament_id' => $tournament->id,
+                        'team_id' => $r['team_id'],
+                        'user_id' => $r['user_id'] ?? null,
+                        'type' => 'team',
+                        'participant_type' => 'team',
+                        'status' => $tournament->requires_documents ? 'pending' : 'approved',
+                        'registered_at' => now(),
+                    ]);
+                    $created[] = $participant;
+                } else {
+                    // individual
+                    $uid = $r['user_id'] ?? null;
+                    if (!$uid) continue;
+                    $exists = TournamentParticipant::where('tournament_id',$tournament->id)->where('user_id',$uid)->exists();
+                    if ($exists) continue;
+                    $participant = TournamentParticipant::create([
+                        'tournament_id' => $tournament->id,
+                        'user_id' => $uid,
+                        'type' => 'individual',
+                        'participant_type' => 'individual',
+                        'status' => $tournament->requires_documents ? 'pending' : 'approved',
+                        'registered_at' => now(),
+                    ]);
+                    $created[] = $participant;
+                }
+            }
+            DB::commit();
+            return response()->json(['status'=>'success','created_count'=>count($created),'created'=>$created], 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['status'=>'error','message'=>'Import failed','error'=>$e->getMessage()], 500);
+        }
+    }
+
+    /**
+     * Create an invite token (cached) and return invite URL.
+     * POST /api/tournaments/{id}/invite-link
+     */
+    public function createInviteLink(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->whereIn('role',['owner','organizer'])->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        $ttl = $request->input('ttl_days', 7);
+        $token = Str::random(40);
+        Cache::put("tournament_invite:{$token}", $tournament->id, now()->addDays($ttl));
+
+        // return a simple path; frontend will route appropriately
+        $url = url("/invite/tournament/{$token}");
+
+        return response()->json(['status'=>'success','invite' => ['token' => $token, 'url' => $url, 'expires_in_days' => $ttl]]);
+    }
+
+    /**
+     * Toggle participant lock stored in tournament.settings.participants_locked
+     * PATCH /api/tournaments/{id}/lock-participants
+     */
+    public function setParticipantLock(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->whereIn('role',['owner','organizer'])->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        $data = $request->validate(['locked' => 'required|boolean']);
+        $settings = (array) $tournament->settings;
+        $settings['participants_locked'] = (bool) $data['locked'];
+        $tournament->settings = $settings;
+        $tournament->save();
+
+        return response()->json(['status'=>'success','tournament_id'=>$tournament->id,'participants_locked'=>$settings['participants_locked']]);
+    }
+
+    /**
+     * Generate bracket preview WITHOUT persisting (single_elimination only for now).
+     * GET /api/tournaments/{id}/bracket-preview?type=single_elimination&persist=0
+     */
+    public function generateBracketsPreview(Request $request, $tournamentId, $eventId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $type = $request->input('type', 'single_elimination');
+        $persist = (bool) $request->boolean('persist', false);
+
+        // collect participant ids (approved)
+        $participantType = $tournament->tournament_type === 'team vs team' ? 'team' : 'individual';
+        $partQuery = TournamentParticipant::where('tournament_id', $tournament->id)->where('participant_type', $participantType)->where('status', 'approved');
+
+        $participantIds = $partQuery->pluck($tournament->tournament_type === 'team vs team' ? 'team_id' : 'user_id')
+            ->filter()->values()->all();
+
+        if (count($participantIds) < 2) {
+            return response()->json(['status'=>'error','message'=>'Need at least 2 approved participants for preview'], 422);
+        }
+
+        // Build a lightweight bracket array (no DB writes)
+        $buildSingle = function(array $participants) use ($tournamentId, $eventId, $tournament) {
+            $n = 1;
+            while ($n < count($participants)) $n *= 2;
+            $padded = $participants;
+            while (count($padded) < $n) $padded[] = null;
+            $round = 1;
+            $matches = [];
+            $matchNumber = 1;
+            for ($i = 0; $i < count($padded); $i += 2) {
+                $a = $padded[$i] ?? null;
+                $b = $padded[$i+1] ?? null;
+                $matches[] = [
+                    'round_number' => $round,
+                    'match_number' => $matchNumber++,
+                    'team_a_id' => $a,
+                    'team_b_id' => $b,
+                    'team_a_name' => $a ? ($tournament->tournament_type === 'team vs team' ? Team::find($a)?->name : User::find($a)?->first_name . ' ' . User::find($a)?->last_name) : null,
+                    'team_b_name' => $b ? ($tournament->tournament_type === 'team vs team' ? Team::find($b)?->name : User::find($b)?->first_name . ' ' . User::find($b)?->last_name) : null,
+                    'status' => ($a === null || $b === null) ? 'bye' : 'pending',
+                ];
+            }
+            return $matches;
+        };
+
+        if ($type !== 'single_elimination') {
+            return response()->json(['status'=>'error','message'=>'Preview only supports single_elimination currently'], 422);
+        }
+
+        $bracket = $buildSingle($participantIds);
+
+        // optionally persist by delegating to existing generator (if persist requested)
+        if ($persist) {
+            try {
+                $generator = new TournamentBracketGenerator();
+                $generator->generate(Event::find($eventId), $type, ['persist' => true]);
+            } catch (\Throwable $e) {
+                // ignore persistence errors for preview endpoint but report
+                \Log::warning('Bracket persist failed during preview call', ['error'=>$e->getMessage()]);
+            }
+        }
+
+        return response()->json(['status'=>'success','type'=>$type,'preview'=>$bracket]);
+    }
+
+    /**
+     * Export participants CSV (streamed)
+     * POST /api/tournaments/{id}/participants/export
+     */
+    public function exportParticipants(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->whereIn('role',['owner','organizer'])->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        $participants = TournamentParticipant::with(['user','team'])->where('tournament_id',$tournament->id)->get();
+
+        $callback = function() use ($participants) {
+            $out = fopen('php://output','w');
+            fputcsv($out, ['id','participant_type','user_id','username','team_id','team_name','status','registered_at']);
+            foreach ($participants as $p) {
+                $row = [
+                    $p->id,
+                    $p->participant_type,
+                    $p->user_id,
+                    $p->user?->username,
+                    $p->team_id,
+                    $p->team?->name,
+                    $p->status,
+                    $p->registered_at,
+                ];
+                fputcsv($out, $row);
+            }
+            fclose($out);
+        };
+
+        $filename = 'tournament_'.$tournament->id.'_participants_'.date('Ymd_His').'.csv';
+        return response()->streamDownload($callback, $filename, ['Content-Type'=>'text/csv']);
+    }
+
+    /**
+     * Export results CSV (streamed)
+     * POST /api/tournaments/{id}/results/export
+     */
+    public function exportResults(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->whereIn('role',['owner','organizer'])->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        $matchups = \App\Models\TeamMatchup::where('tournament_id',$tournament->id)->with(['event'])->orderBy('round_number')->get();
+
+        $callback = function() use ($matchups) {
+            $out = fopen('php://output','w');
+            fputcsv($out, ['id','event_id','round','match_number','team_a_id','team_b_id','team_a_score','team_b_score','winner_team_id','status','completed_at']);
+            foreach ($matchups as $m) {
+                fputcsv($out, [
+                    $m->id,
+                    $m->event_id,
+                    $m->round_number,
+                    $m->match_number,
+                    $m->team_a_id,
+                    $m->team_b_id,
+                    $m->team_a_score,
+                    $m->team_b_score,
+                    $m->winner_team_id,
+                    $m->status,
+                    $m->completed_at,
+                ]);
+            }
+            fclose($out);
+        };
+
+        $filename = 'tournament_'.$tournament->id.'_results_'.date('Ymd_His').'.csv';
+        return response()->streamDownload($callback, $filename, ['Content-Type'=>'text/csv']);
+    }
+
+    /**
+     * Check-in to an event using QR code
+     */
+    public function checkinQR(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'qr_data' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status' => 'error','message' => 'Validation failed','errors' => $validator->errors()], 422);
+        }
+
+        $user = auth()->user();
+        $userId = $user->id;
+
+        $qrData = json_decode($request->qr_data, true);
+        $eventId = $qrData['event_id'] ?? null;
+        if (!$eventId) return response()->json(['status'=>'error','message'=>'Invalid QR code data.'], 400);
+
+        $event = Event::find($eventId);
+        if (! $event) return response()->json(['status'=>'error','message'=>'Event not found'], 404);
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) return $approvalResponse;
+        if ($event->cancelled_at) return response()->json(['status'=>'error','message'=>'Cannot check-in to a cancelled event.'], 400);
+
+        $participant = EventParticipant::where('event_id', $event->id)->where('user_id', $userId)->first();
+        if (! $participant) return response()->json(['status'=>'error','message'=>'You are not a participant in this event.'], 403);
+
+        $existingCheckin = \App\Models\EventCheckin::where('event_id', $event->id)->where('user_id', $userId)->first();
+        if ($existingCheckin) return response()->json(['status'=>'error','message'=>'You have already checked in to this event.'], 409);
+
+        $checkin = \App\Models\EventCheckin::create([
+            'event_id' => $event->id,
+            'user_id' => $userId,
+            'checked_in_by' => $userId,
+            'checkin_type' => 'qr_self',
+            'checkin_time' => now(),
+        ]);
+
+        $participant->update(['status' => 'checked_in']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Successfully checked in to the event.',
+            'checkin' => $checkin,
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'venue_name' => $event->venue?->name,
+            ]
+        ]);
+    }
+
+    /**
+     * Check-in to an event using 4-digit code
+     */
+    public function checkinCode(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'code' => 'required|string|size:4',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $user = auth()->user();
+        $userId = $user->id;
+        $event = Event::find($request->event_id);
+        if (! $event) return response()->json(['status'=>'error','message'=>'Event not found.'], 404);
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) return $approvalResponse;
+        if ($event->checkin_code !== $request->code) return response()->json(['status'=>'error','message'=>'Invalid check-in code.'], 400);
+        if ($event->cancelled_at) return response()->json(['status'=>'error','message'=>'Cannot check-in to a cancelled event.'], 400);
+
+        $participant = EventParticipant::where('event_id', $event->id)->where('user_id', $userId)->first();
+        if (! $participant) return response()->json(['status'=>'error','message'=>'You are not a participant in this event.'], 403);
+
+        $existingCheckin = \App\Models\EventCheckin::where('event_id', $event->id)->where('user_id', $userId)->first();
+        if ($existingCheckin) return response()->json(['status'=>'error','message'=>'You have already checked in to this event.'], 409);
+
+        $checkin = \App\Models\EventCheckin::create([
+            'event_id' => $event->id,
+            'user_id' => $userId,
+            'checked_in_by' => $userId,
+            'checkin_type' => 'code_entry',
+            'checkin_time' => now(),
+        ]);
+
+        $participant->update(['status' => 'checked_in']);
+
+        return response()->json(['status'=>'success','message'=>'Successfully checked in to the event.','checkin'=>$checkin]);
+    }
+
+    /**
+     * Manual check-in by event organizer
+     */
+    public function checkinManual(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+            'user_id' => 'required|exists:users,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $organizerId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+        if (! $event) return response()->json(['status'=>'error','message'=>'Event not found.'], 404);
+
+        if ($approvalResponse = $this->approvalRequiredResponse($event)) return $approvalResponse;
+        if ($event->created_by !== $organizerId) return response()->json(['status'=>'error','message'=>'You can only check-in participants for events you created.'], 403);
+        if ($event->cancelled_at) return response()->json(['status'=>'error','message'=>'Cannot check-in participants for a cancelled event.'], 400);
+
+        $participant = EventParticipant::where('event_id', $event->id)->where('user_id', $request->user_id)->first();
+        if (! $participant) return response()->json(['status'=>'error','message'=>'User is not a participant in this event.'], 404);
+
+        $existingCheckin = \App\Models\EventCheckin::where('event_id', $event->id)->where('user_id', $request->user_id)->first();
+        if ($existingCheckin) return response()->json(['status'=>'error','message'=>'User has already checked in to this event.'], 409);
+
+        $checkin = \App\Models\EventCheckin::create([
+            'event_id' => $event->id,
+            'user_id' => $request->user_id,
+            'checked_in_by' => $organizerId,
+            'checkin_type' => 'manual_by_organizer',
+            'checkin_time' => now(),
+        ]);
+
+        $participant->update(['status' => 'checked_in']);
+
+        return response()->json(['status'=>'success','message'=>'User successfully checked in to the event.','checkin'=>$checkin]);
+    }
+
+    /**
+     * View check-in status for an event
+     */
+    public function viewCheckins(Request $request)
+    {
+        $validator = \Validator::make($request->all(), [
+            'event_id' => 'required|exists:events,id',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
+        }
+
+        $userId = auth()->user()->id;
+        $event = Event::find($request->event_id);
+        if (! $event) return response()->json(['status'=>'error','message'=>'Event not found.'], 404);
+
+        if (! $this->canViewEvent($event, $userId)) {
+            return response()->json(['status'=>'error','message'=>'Event is pending venue approval'], 403);
+        }
+
+        $isCreator = $event->created_by === $userId;
+        $isParticipant = EventParticipant::where('event_id', $event->id)->where('user_id', $userId)->exists();
+        if (! $isCreator && ! $isParticipant) {
+            return response()->json(['status'=>'error','message'=>'You can only view check-ins for events you created or participate in.'], 403);
+        }
+
+        $participants = EventParticipant::where('event_id', $event->id)->with(['user','team'])->get()->map(function($participant) use ($event) {
+            $checkin = \App\Models\EventCheckin::where('event_id', $event->id)->where('user_id', $participant->user_id)->first();
+            return [
+                'user_id' => $participant->user_id,
+                'username' => $participant->user?->username,
+                'profile_photo' => $participant->user?->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
+                'status' => $participant->status,
+                'checked_in' => $checkin ? true : false,
+                'checkin_time' => $checkin?->checkin_time,
+                'checkin_type' => $checkin?->checkin_type,
+                'team_id' => $participant->team_id,
+                'team_name' => $participant->team?->name,
+            ];
+        });
+
+        $checkedInCount = $participants->where('checked_in', true)->count();
+        $totalParticipants = $participants->count();
+
+        return response()->json([
+            'status'=>'success',
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'checkin_code' => $event->checkin_code,
+                'status' => $event->status,
+                'is_approved' => (bool) $event->is_approved,
+                'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                'approved_at' => $event->approved_at,
+            ],
+            'checkin_summary' => [
+                'total_participants' => $totalParticipants,
+                'checked_in' => $checkedInCount,
+                'not_checked_in' => $totalParticipants - $checkedInCount,
+            ],
+            'participants' => $participants
+        ]);
+    }
+
+    protected function approvalRequiredResponse($event)
+    {
+        if ($event->is_approved) return null;
+
+        $user = auth()->user();
+        if ($user && ($event->created_by === $user->id)) return null;
+
+        // allow tournament organizers to proceed
+        if ($event->tournament_id && TournamentOrganizer::where('tournament_id', $event->tournament_id)->where('user_id', $user->id)->exists()) {
+            return null;
+        }
+
+        return response()->json(['status'=>'error','message'=>'Event pending venue approval'], 403);
+    }
+
+    /**
+     * Helper: can the user view event (approval/ownership checks)
+     */
+    protected function canViewEvent($event, $userId)
+    {
+        if ($event->is_approved) return true;
+        if ($event->created_by === $userId) return true;
+        if ($event->tournament_id && TournamentOrganizer::where('tournament_id', $event->tournament_id)->where('user_id', $userId)->exists()) {
+            return true;
+        }
+        return false;
+    }
+
+
+    /**
+     * Reset a match to pre-start (admin).
+     * POST /api/tournaments/{id}/matches/{matchId}/reset
+     */
+    public function resetMatch(Request $request, $tournamentId, $matchId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->whereIn('role',['owner','organizer'])->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        $teamMatchup = \App\Models\TeamMatchup::where('tournament_id',$tournament->id)->where('event_id',$matchId)->first();
+        if (! $teamMatchup) return response()->json(['status'=>'error','message'=>'Match not found in bracket'], 404);
+
+        $teamMatchup->update([
+            'status' => 'pending',
+            'team_a_score' => null,
+            'team_b_score' => null,
+            'winner_team_id' => null,
+            'completed_at' => null,
+            'is_disputed' => false,
+            'dispute_reason' => null,
+            'notes' => null,
+        ]);
+
+        // also reset Event record if exists
+        $event = Event::where('tournament_id',$tournament->id)->where('id',$matchId)->first();
+        if ($event) {
+            $event->update(['status' => 'pending', 'score_home' => null, 'score_away' => null, 'winner_team_id' => null, 'completed_at' => null]);
+        }
+
+        return response()->json(['status'=>'success','message'=>'Match reset']);
+    }
+
+    /**
+     * Reset bracket for event (delete matchups) — admin only.
+     * POST /api/tournaments/{id}/bracket/reset
+     */
+    public function resetBracket(Request $request, $tournamentId, $eventId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->whereIn('role',['owner','organizer'])->exists();
+        if (! $isCreator && ! $isOrganizer) return response()->json(['status'=>'error','message'=>'Forbidden'], 403);
+
+        \App\Models\TeamMatchup::where('tournament_id',$tournament->id)->where('event_id',$eventId)->delete();
+
+        return response()->json(['status'=>'success','message'=>'Bracket reset for event']);
     }
 }

@@ -377,6 +377,24 @@ Route::middleware('auth:api')->group(function () {
     Route::put('/tournaments/templates/{templateId}', [TournamentController::class, 'updateTemplate']);
     Route::delete('/tournaments/templates/{templateId}', [TournamentController::class, 'deleteTemplate']);
 
+    // Additional utility routes
+    Route::post('tournaments/{tournamentId}/participants/bulk', [TournamentController::class,'bulkImportParticipants']);
+    Route::post('tournaments/{tournamentId}/invite-link', [TournamentController::class,'createInviteLink']);
+    Route::patch('tournaments/{tournamentId}/lock-participants', [TournamentController::class,'setParticipantLock']);
+    Route::get('tournaments/{tournamentId}/bracket-preview/{eventId}', [TournamentController::class,'generateBracketsPreview']);
+    Route::post('tournaments/{tournamentId}/participants/export', [TournamentController::class,'exportParticipants']);
+    Route::post('tournaments/{tournamentId}/results/export', [TournamentController::class,'exportResults']);
+
+    Route::post('events/{event}/checkin', [TournamentController::class, 'checkinEvent']); // code-based checkin (if present)
+    Route::post('events/checkin/qr', [TournamentController::class, 'checkinQR']);
+    Route::post('events/checkin/code', [TournamentController::class, 'checkinCode']);
+    Route::post('events/checkin/manual', [TournamentController::class, 'checkinManual']);
+    Route::get('events/{event}/checkins', [TournamentController::class, 'viewCheckins']);
+
+
+    Route::post('tournaments/{tournamentId}/matches/{matchId}/reset', [TournamentController::class,'resetMatch']);
+    Route::post('tournaments/{tournamentId}/bracket/reset/{eventId}', [TournamentController::class,'resetBracket']);
+
 
     // Coach Application Routes
     Route::post('/coach/createprofile', [CoachController::class, 'createProfile']);
