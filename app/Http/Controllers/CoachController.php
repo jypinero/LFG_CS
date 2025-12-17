@@ -9,6 +9,8 @@ use App\Models\TrainingSession;
 use App\Models\CoachReview;
 use App\Models\TrainingAnalytics;
 use App\Models\User;
+use App\Models\Notification;
+use App\Models\UserNotification;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -178,6 +180,7 @@ class CoachController extends Controller
         }
 
         $match = CoachMatch::firstOrNew(['student_id' => $studentId, 'coach_id' => $coachId]);
+        $wasMatched = $match->match_status === 'matched';
         $match->student_action = $data['action'];
 
         // decide resulting match_status
@@ -193,6 +196,65 @@ class CoachController extends Controller
         }
 
         $match->save();
+
+        // Get student user for notification
+        $student = User::find($studentId);
+        $coach = User::find($coachId);
+
+        // Notify coach when student likes/swipes (if not a pass)
+        if (in_array($match->student_action, ['like', 'super_like'])) {
+            $notification = Notification::create([
+                'type' => 'coach_liked',
+                'data' => [
+                    'message' => ($student->username ?? 'Someone') . ' liked your coach profile',
+                    'coach_id' => $coachId,
+                    'student_id' => $studentId,
+                    'match_id' => $match->id,
+                    'action' => $match->student_action,
+                ],
+                'created_by' => $studentId,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $coachId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+        }
+
+        // Notify both parties when mutual match occurs
+        if ($match->match_status === 'matched' && !$wasMatched) {
+            $matchNotification = Notification::create([
+                'type' => 'coach_match',
+                'data' => [
+                    'message' => 'You have a new match! ' . ($student->username ?? 'Student') . ' and ' . ($coach->username ?? 'Coach') . ' matched.',
+                    'coach_id' => $coachId,
+                    'student_id' => $studentId,
+                    'match_id' => $match->id,
+                ],
+                'created_by' => $studentId,
+            ]);
+
+            // Notify student
+            UserNotification::create([
+                'notification_id' => $matchNotification->id,
+                'user_id' => $studentId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+
+            // Notify coach
+            UserNotification::create([
+                'notification_id' => $matchNotification->id,
+                'user_id' => $coachId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+        }
 
         return response()->json(['status' => 'success', 'match' => $match]);
     }
@@ -219,6 +281,109 @@ class CoachController extends Controller
             ->get();
 
         return response()->json(['status' => 'success', 'pending' => $matches]);
+    }
+
+    public function respondToMatch(Request $request, $matchId)
+    {
+        $coachId = Auth::id();
+
+        // Find the match - must belong to this coach and be pending
+        $match = CoachMatch::where('id', $matchId)
+            ->where('coach_id', $coachId)
+            ->where('match_status', 'pending')
+            ->first();
+
+        if (!$match) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Match not found or already processed'
+            ], 404);
+        }
+
+        // Validate action
+        $data = $request->validate([
+            'action' => 'required|in:like,pass,super_like',
+        ]);
+
+        // Update coach action
+        $wasMatched = $match->match_status === 'matched';
+        $match->coach_action = $data['action'];
+
+        // Determine match status
+        if (in_array($match->student_action, ['like', 'super_like']) && 
+            in_array($match->coach_action, ['like', 'super_like'])) {
+            // Both liked - it's a match!
+            $match->match_status = 'matched';
+            $match->matched_at = now();
+            $match->expires_at = now()->addDays(30); // 30 day expiration
+        } elseif ($match->coach_action === 'pass') {
+            // Coach passed - reject
+            $match->match_status = 'rejected';
+        }
+
+        $match->save();
+
+        // Get users for notifications
+        $student = User::find($match->student_id);
+        $coach = User::find($coachId);
+
+        // Notify student when coach responds
+        $responseNotification = Notification::create([
+            'type' => 'coach_match_response',
+            'data' => [
+                'message' => ($coach->username ?? 'Coach') . ' ' . ($match->coach_action === 'pass' ? 'passed' : 'liked') . ' your match request',
+                'coach_id' => $coachId,
+                'student_id' => $match->student_id,
+                'match_id' => $match->id,
+                'action' => $match->coach_action,
+            ],
+            'created_by' => $coachId,
+        ]);
+
+        UserNotification::create([
+            'notification_id' => $responseNotification->id,
+            'user_id' => $match->student_id,
+            'pinned' => false,
+            'is_read' => false,
+            'action_state' => 'none',
+        ]);
+
+        // Notify both parties when mutual match occurs
+        if ($match->match_status === 'matched' && !$wasMatched) {
+            $matchNotification = Notification::create([
+                'type' => 'coach_match',
+                'data' => [
+                    'message' => 'You have a new match! ' . ($student->username ?? 'Student') . ' and ' . ($coach->username ?? 'Coach') . ' matched.',
+                    'coach_id' => $coachId,
+                    'student_id' => $match->student_id,
+                    'match_id' => $match->id,
+                ],
+                'created_by' => $coachId,
+            ]);
+
+            // Notify student
+            UserNotification::create([
+                'notification_id' => $matchNotification->id,
+                'user_id' => $match->student_id,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+
+            // Notify coach
+            UserNotification::create([
+                'notification_id' => $matchNotification->id,
+                'user_id' => $coachId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'match' => $match
+        ]);
     }
 
     public function getStudents()

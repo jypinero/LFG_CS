@@ -64,11 +64,21 @@ class ProcessDocumentWithFreeAI implements ShouldQueue
                 throw new \Exception($result['notes'] ?? 'Processing failed');
             }
             
+            // Prepare enhanced extracted data with name matching details
+            $user = $document->user;
+            $expectedName = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
+            $extractedData = array_merge($result['extracted_data'] ?? [], [
+                'name_on_document' => $result['extracted_data']['name'] ?? null,
+                'expected_name' => $expectedName,
+                'name_match_status' => $result['name_matches'] ? 'MATCH' : 'MISMATCH',
+                'name_match_confidence' => $result['name_match_confidence'] ?? 0,
+            ]);
+            
             // Update document with AI results
             $document->update([
                 'ai_processed' => true,
                 'ai_confidence_score' => $result['confidence'],
-                'ai_extracted_data' => $result['extracted_data'],
+                'ai_extracted_data' => $extractedData,
                 'ai_validation_notes' => $result['notes'],
                 'ai_flags' => $result['flags'],
                 'ai_quality_score' => $result['quality_score'],

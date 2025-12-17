@@ -169,4 +169,13 @@ class Event extends Model
     {
         return $this->hasMany(Booking::class);
     }
+
+    /**
+     * Get the group chat thread for this event
+     */
+    public function thread()
+    {
+        return $this->hasOne(\App\Models\MessageThread::class, 'game_id', 'id')
+            ->where('type', 'game_group');
+    }
 }

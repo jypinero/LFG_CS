@@ -16,6 +16,8 @@ use App\Models\UserNotification;
 use App\Models\TeamMember; // ADDED
 use App\Models\Booking;
 use App\Models\VenueUser;
+use App\Models\MessageThread;
+use App\Models\ThreadParticipant;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\SvgWriter;
 
@@ -661,6 +663,9 @@ class EventController extends Controller
             'action_state' => 'none',
         ]);
 
+        // Auto-join participant to event group chat if it exists
+        $this->addParticipantToEventChat($event->id, $userId);
+
         return response()->json([
             'status' => 'success',
             'message' => 'Successfully joined the event.',
@@ -805,6 +810,11 @@ class EventController extends Controller
             'is_read' => false,
             'action_state' => 'none',
         ]);
+
+        // Auto-join all team members to event group chat
+        foreach ($enrolledParticipants as $participant) {
+            $this->addParticipantToEventChat($event->id, $participant->user_id);
+        }
 
         return response()->json([
             'status' => 'success',
@@ -1058,6 +1068,9 @@ class EventController extends Controller
                 }
             }
             
+            // Auto-create group chat for event
+            $this->createEventGroupChat($event);
+            
             return response()->json([
                 'status' => 'success',
                 'message' => 'Team vs team event created successfully',
@@ -1074,6 +1087,9 @@ class EventController extends Controller
                 'user_id' => $user->id,
                 'status' => 'confirmed',
             ]);
+
+            // Auto-create group chat for event
+            $this->createEventGroupChat($event);
 
             return response()->json([
                 'status' => 'success',
@@ -2422,6 +2438,11 @@ class EventController extends Controller
                 'action_state' => 'none',
             ]);
 
+            // Auto-join all team members to event group chat
+            foreach ($enrolledParticipants as $participant) {
+                $this->addParticipantToEventChat($eventId, $participant->user_id);
+            }
+
             return response()->json([
                 'status' => 'success',
                 'message' => 'Team invitation accepted successfully.',
@@ -2584,5 +2605,138 @@ class EventController extends Controller
                 'venue_name' => $event->venue->name,
             ]
         ]);
+    }
+
+    /**
+     * Auto-create group chat for event and notify all participants
+     */
+    private function createEventGroupChat(Event $event)
+    {
+        // Check if thread already exists for this event
+        $existingThread = MessageThread::where('type', 'game_group')
+            ->where('game_id', $event->id)
+            ->first();
+        
+        if ($existingThread) {
+            return $existingThread; // Thread already exists
+        }
+
+        // Get all current participants (including creator)
+        $participantIds = EventParticipant::where('event_id', $event->id)
+            ->pluck('user_id')
+            ->unique()
+            ->all();
+        
+        // Include event creator if not already a participant
+        if (!in_array($event->created_by, $participantIds)) {
+            $participantIds[] = $event->created_by;
+        }
+
+        if (empty($participantIds)) {
+            return null; // No participants yet
+        }
+
+        // Create group chat thread
+        $thread = MessageThread::create([
+            'created_by' => $event->created_by,
+            'is_group' => true,
+            'title' => $event->name,
+            'type' => 'game_group',
+            'game_id' => $event->id,
+        ]);
+
+        // Add all participants to thread
+        $now = now();
+        foreach ($participantIds as $userId) {
+            ThreadParticipant::create([
+                'thread_id' => $thread->id,
+                'user_id' => $userId,
+                'role' => $userId === $event->created_by ? 'owner' : 'member',
+                'joined_at' => $now,
+                'notifications' => true,
+            ]);
+        }
+
+        // Send notification to all participants
+        $notification = Notification::create([
+            'type' => 'event_groupchat_created',
+            'data' => [
+                'message' => "Group chat created for event: {$event->name}",
+                'event_id' => $event->id,
+                'event_name' => $event->name,
+                'thread_id' => $thread->id,
+            ],
+            'created_by' => $event->created_by,
+        ]);
+
+        // Notify all participants
+        foreach ($participantIds as $userId) {
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $userId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+        }
+
+        return $thread;
+    }
+
+    /**
+     * Add participant to event group chat if it exists
+     */
+    private function addParticipantToEventChat($eventId, $userId)
+    {
+        // Find event group chat thread
+        $thread = MessageThread::where('type', 'game_group')
+            ->where('game_id', $eventId)
+            ->first();
+
+        if (!$thread) {
+            return; // No group chat exists yet
+        }
+
+        // Check if user is already a participant
+        $existingParticipant = ThreadParticipant::where('thread_id', $thread->id)
+            ->where('user_id', $userId)
+            ->whereNull('left_at')
+            ->exists();
+
+        if ($existingParticipant) {
+            return; // Already in chat
+        }
+
+        // Add user to thread
+        ThreadParticipant::create([
+            'thread_id' => $thread->id,
+            'user_id' => $userId,
+            'role' => 'member',
+            'joined_at' => now(),
+            'notifications' => true,
+        ]);
+
+        // Notify user they were added to group chat
+        $event = Event::find($eventId);
+        if ($event) {
+            $notification = Notification::create([
+                'type' => 'event_groupchat_joined',
+                'data' => [
+                    'message' => "You've been added to the group chat for: {$event->name}",
+                    'event_id' => $eventId,
+                    'event_name' => $event->name,
+                    'thread_id' => $thread->id,
+                ],
+                'created_by' => $event->created_by,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $userId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+            ]);
+        }
     }
 }

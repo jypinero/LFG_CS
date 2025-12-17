@@ -55,6 +55,9 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 
 
 
+// Session validation route (before auth middleware to avoid loop)
+Route::get('/auth/validate-session', [AuthController::class, 'validateSession'])->middleware('auth:api');
+
 // Protected routes
 Route::middleware('auth:api')->group(function () {
 
@@ -62,8 +65,15 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/auth/change-password', [AuthController::class, 'changePassword']);
+    
+    // Notifications routes - MUST come before /users/{id} to avoid route conflict
+    Route::get('/users/notifications', [NotifController::class, 'userNotifications']);
+    Route::post('/users/notifications/{id}/read', [NotifController::class, 'markAsRead']);
+    Route::post('/users/notifications/{id}/unread', [NotifController::class, 'markAsUnread']);
+    Route::post('/users/notifications/readall', [NotifController::class, 'markAllRead']);
 
     // ✅ Add route for getting user by ID (for venue owners, etc.)
+    // This must come AFTER /users/notifications to avoid wildcard matching
     Route::get('/users/{id}', [AuthController::class, 'showprofile']);
     
     // ❌ Remove or fix this line - showprofile requires an ID parameter
@@ -76,24 +86,25 @@ Route::middleware('auth:api')->group(function () {
     // Messaging
     Route::prefix('messaging')->group(function () {
         Route::get('/threads', [MessagingController::class, 'threads']);
+        Route::get('/threads/{threadId}', [MessagingController::class, 'show']);
         Route::get('/threads/{threadId}/messages', [MessagingController::class, 'threadMessages']);
         Route::post('/threads/create-one', [MessagingController::class, 'createOneToOneByUsername']);
         Route::post('/threads/create-group', [MessagingController::class, 'createGroup']);
         Route::post('/threads/{threadId}/messages', [MessagingController::class, 'sendMessage']);
+        Route::put('/threads/{threadId}/messages/{messageId}', [MessagingController::class, 'editMessage']);
+        Route::delete('/threads/{threadId}/messages/{messageId}', [MessagingController::class, 'deleteMessage']);
         Route::post('/threads/{threadId}/archive', [MessagingController::class, 'archive']);
         Route::post('/threads/{threadId}/unarchive', [MessagingController::class, 'unarchive']);
         Route::post('/threads/{threadId}/leave', [MessagingController::class, 'leave']);
         Route::post('/threads/{threadId}/read', [MessagingController::class, 'markRead']);
+        Route::put('/threads/{threadId}/title', [MessagingController::class, 'updateTitle']);
+        Route::post('/threads/{threadId}/participants', [MessagingController::class, 'addParticipant']);
+        Route::delete('/threads/{threadId}/participants/{participantUserId}', [MessagingController::class, 'removeParticipant']);
         // Auto create helpers
         Route::post('/auto/team/{teamId}', [MessagingController::class, 'createTeamThread']);
         Route::post('/auto/venue/{venueId}', [MessagingController::class, 'createVenueThread']);
         Route::post('/auto/game/{eventId}', [MessagingController::class, 'createGameThread']);
     });
-    // Route::get('/notifications', [NotifController::class, 'index']);
-    Route::get('/users/notifications', [NotifController::class, 'userNotifications']);
-    Route::post('/users/notifications/{id}/read', [NotifController::class, 'markAsRead']);
-    Route::post('/users/notifications/{id}/unread', [NotifController::class, 'markAsUnread']);
-    Route::post('/users/notifications/readall', [NotifController::class, 'markAllRead']);
 
      // User profile routes
     Route::prefix('profile')->group(function () {
@@ -385,6 +396,7 @@ Route::middleware('auth:api')->group(function () {
 
     Route::get('/coach/swipe/card', [CoachController::class, 'getSwipeCard']);
     Route::get('/coach/matches/pending', [CoachController::class, 'getPendingMatches']);
+    Route::post('/coach/matches/{matchId}/respond', [CoachController::class, 'respondToMatch']);
     Route::get('/coach/students', [CoachController::class, 'getStudents']);
     Route::get('/coach/sessions', [CoachController::class, 'getDashboardSessions']);
     Route::get('/coach/analytics', [CoachController::class, 'getAnalytics']);
@@ -447,6 +459,7 @@ Route::middleware(['auth:api', EnsureAdmin::class, LogAdminAction::class, 'throt
     Route::get('/documents/ai/statistics', [\App\Http\Controllers\AIDocumentController::class, 'statistics']);
     Route::get('/documents/{id}/ai-analysis', [\App\Http\Controllers\AIDocumentController::class, 'getAnalysis']);
     Route::post('/documents/{id}/ai-reprocess', [\App\Http\Controllers\AIDocumentController::class, 'reprocess']);
+    Route::post('/documents/ai/bulk-requeue', [\App\Http\Controllers\AIDocumentController::class, 'bulkRequeue']);
     Route::get('/ai/check-service', [\App\Http\Controllers\AIDocumentController::class, 'checkService']);
     // Tickets admin
     Route::get('/tickets', [\App\Http\Controllers\Admin\TicketAdminController::class, 'index']);
