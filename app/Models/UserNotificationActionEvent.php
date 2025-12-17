@@ -5,6 +5,7 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Factories\HasFactory;
+use Illuminate\Support\Str;
 
 class UserNotificationActionEvent extends Model
 {
@@ -12,6 +13,8 @@ class UserNotificationActionEvent extends Model
 
     public $incrementing = false;
     protected $keyType = 'string';
+
+    const UPDATED_AT = null;
 
     protected $fillable = [
         'id',

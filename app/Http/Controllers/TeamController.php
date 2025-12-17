@@ -821,8 +821,9 @@ class TeamController extends Controller
                 'created_at' => now(),
             ]);
 
-            // Update notification state
-            $userNotification->action_state = $request->action;
+            // Update notification state - map request action to enum value
+            $actionState = $request->action === 'accept' ? 'accepted' : 'ignored';
+            $userNotification->action_state = $actionState;
             $userNotification->is_read = false; // Optionally mark unread for requester
             $userNotification->save();
         }
@@ -1017,7 +1018,9 @@ class TeamController extends Controller
                             'created_at' => now(),
                         ]);
 
-                        $userNotification->action_state = $requestData['action'];
+                        // Map request action to enum value
+                        $actionState = $requestData['action'] === 'accept' ? 'accepted' : 'ignored';
+                        $userNotification->action_state = $actionState;
                         $userNotification->save();
                     }
                 }
