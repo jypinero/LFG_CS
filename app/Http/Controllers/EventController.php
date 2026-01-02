@@ -83,7 +83,8 @@ class EventController extends Controller
         // Get regular events (exclude tournament games)
         $events = Event::with(['venue.photos', 'facility', 'teams.team'])
             ->where('is_approved', true)
-            ->where('is_tournament_game', false) // Exclude tournament games
+            ->where('is_tournament_game', false)
+            ->where('game_status', '!=', 'cancelled') // Exclude tournament games
             ->withCount('participants')
             ->get()
             ->map(function($event) {
@@ -633,6 +634,7 @@ class EventController extends Controller
                 $q->where('user_id', $userId);
             })
             ->where('date', $event->date)
+            ->where('game_status', '!=', 'cancelled')
             ->where(function($q) use ($event) {
                 $q->whereBetween('start_time', [$event->start_time, $event->end_time])
                   ->orWhereBetween('end_time', [$event->start_time, $event->end_time])
@@ -1026,12 +1028,15 @@ class EventController extends Controller
         $conflict = Event::where('venue_id', $request->venue_id)
             ->where('facility_id', $request->facility_id)
             ->where('date', $request->date)
+            ->where('game_status', '!=', 'scheduled')
             // overlap check: existing.start < new.end AND existing.end > new.start
             ->where(function($q) use ($request) {
                 $q->where('start_time', '<', $request->end_time)
-                ->where('end_time', '>', $request->start_time);
+                ->where('end_time', '>', $request->start_time)
+                ->where('game_status', '!=', 'cancelled');
             })
             ->exists();
+            // $conflict dont check status if cancel
 
         if ($conflict) {
             return response()->json([
