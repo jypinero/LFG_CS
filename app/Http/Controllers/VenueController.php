@@ -1575,23 +1575,54 @@ class VenueController extends Controller
         $validated = $request->validate([
             'status' => 'required|in:approved,denied'
         ]);
-        
-        // Update booking status
-        $booking->update(['status' => $validated['status']]);
 
-        if ($booking->event) {
-            if ($validated['status'] === 'approved') {
-                $booking->event->update([
-                    'is_approved' => true,
-                    'approved_at' => now(),
-                ]);
-            } elseif ($validated['status'] === 'denied') {
-                $booking->event->update([
-                    'is_approved' => false,
-                    'approved_at' => null,
-                ]);
+        // If approving, ensure no overlapping approved event exists (nested validation)
+        if ($validated['status'] === 'approved' && $booking->event && $booking->event->facility_id) {
+            $facilityId = $booking->event->facility_id;
+            $date = $booking->event->date;
+            $start = $booking->event->start_time;
+            $end = $booking->event->end_time;
+
+            $conflict = Event::where('facility_id', $facilityId)
+                ->whereDate('date', $date)
+                ->where('is_approved', true)
+                ->where('id', '!=', $booking->event->id)
+                ->where(function($q) use ($start, $end) {
+                    $q->whereBetween('start_time', [$start, $end])
+                      ->orWhereBetween('end_time', [$start, $end])
+                      ->orWhere(function($r) use ($start, $end) {
+                          $r->where('start_time', '<=', $start)->where('end_time', '>=', $end);
+                      });
+                })->exists();
+
+            if ($conflict) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Cannot approve booking: overlapping approved booking exists for this facility and time slot'
+                ], 409);
             }
         }
+        
+        // Apply update inside a transaction to avoid race conditions
+        DB::transaction(function() use ($booking, $validated, $user) {
+            $booking->update(['status' => $validated['status']]);
+
+            if ($booking->event) {
+                if ($validated['status'] === 'approved') {
+                    $booking->event->update([
+                        'is_approved' => true,
+                        'approved_at' => now(),
+                        'approved_by' => $user->id,
+                    ]);
+                } elseif ($validated['status'] === 'denied') {
+                    $booking->event->update([
+                        'is_approved' => false,
+                        'approved_at' => null,
+                        'approved_by' => null,
+                    ]);
+                }
+            }
+        });
         
         // Create notification for event creator
         $notification = Notification::create([
@@ -1600,6 +1631,8 @@ class VenueController extends Controller
                 'message' => "Your booking request for {$booking->venue->name} has been {$validated['status']}",
                 'booking_id' => $booking->id,
                 'event_id' => $booking->event_id,
+                'status' => $validated['status'],
+                'approved_by' => $validated['status'] === 'approved' ? $user->id : null,
             ],
             'created_by' => $user->id,
         ]);
@@ -1653,15 +1686,20 @@ class VenueController extends Controller
             'reason' => 'required|string|max:500'
         ]);
         
-        // Update booking and event
-        $booking->update(['status' => 'cancelled']);
-        $booking->event->update([
-            'cancelled_at' => now(),
-            'is_approved' => false,
-            'approved_at' => null,
-        ]);
+        // Update booking and event, record who cancelled
+        DB::transaction(function() use ($booking, $user, $validated) {
+            $booking->update(['status' => 'cancelled', 'cancelled_by' => $user->id]);
+            if ($booking->event) {
+                $booking->event->update([
+                    'cancelled_at' => now(),
+                    'is_approved' => false,
+                    'approved_at' => null,
+                    'cancelled_by' => $user->id,
+                ]);
+            }
+        });
         
-        // Notify event creator
+        // Notify event creator (include who cancelled)
         $notification = Notification::create([
             'type' => 'booking_cancelled',
             'data' => [
@@ -1669,6 +1707,8 @@ class VenueController extends Controller
                 'booking_id' => $booking->id,
                 'event_id' => $booking->event_id,
                 'reason' => $validated['reason'],
+                'cancelled_by_user_id' => $user->id,
+                'cancelled_by_username' => $user->username ?? null,
             ],
             'created_by' => $user->id,
         ]);
@@ -1691,6 +1731,8 @@ class VenueController extends Controller
                         'message' => "Event '{$booking->event->name}' has been cancelled by the venue. Reason: {$validated['reason']}",
                         'event_id' => $booking->event_id,
                         'reason' => $validated['reason'],
+                        'cancelled_by_user_id' => $user->id,
+                        'cancelled_by_username' => $user->username ?? null,
                     ],
                     'created_by' => $user->id,
                 ]);
@@ -1710,7 +1752,7 @@ class VenueController extends Controller
             'message' => 'Event booking cancelled successfully',
             'data' => [
                 'booking' => $booking->fresh(),
-                'event' => $booking->event->fresh()
+                'event' => $booking->event ? $booking->event->fresh() : null
             ]
         ]);
     }
@@ -1757,20 +1799,49 @@ class VenueController extends Controller
             'new_end_time' => 'required|date_format:H:i:s|after:new_start_time',
             'reason' => 'required|string|max:500'
         ]);
+
+        // Overlap check: prevent same-day/time conflicts on the facility
+        if ($booking->event && $booking->event->facility_id) {
+            $facilityId = $booking->event->facility_id;
+            $newDate = $validated['new_date'];
+            $newStart = $validated['new_start_time'];
+            $newEnd = $validated['new_end_time'];
+
+            $conflict = Event::where('facility_id', $facilityId)
+                ->whereDate('date', $newDate)
+                ->where('id', '!=', $booking->event->id)
+                ->where(function($q) use ($newStart, $newEnd) {
+                    $q->whereBetween('start_time', [$newStart, $newEnd])
+                      ->orWhereBetween('end_time', [$newStart, $newEnd])
+                      ->orWhere(function($r) use ($newStart, $newEnd) {
+                          $r->where('start_time', '<=', $newStart)->where('end_time', '>=', $newEnd);
+                      });
+                })->exists();
+
+            if ($conflict) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Time conflict with existing booking on that facility'
+                ], 409);
+            }
+        }
         
-        // Update booking
-        $booking->update([
-            'date' => $validated['new_date'],
-            'start_time' => $validated['new_start_time'],
-            'end_time' => $validated['new_end_time'],
-        ]);
-        
-        // Update event
-        $booking->event->update([
-            'date' => $validated['new_date'],
-            'start_time' => $validated['new_start_time'],
-            'end_time' => $validated['new_end_time'],
-        ]);
+        // Update booking + event inside transaction
+        DB::transaction(function() use ($booking, $validated) {
+            $booking->update([
+                'date' => $validated['new_date'],
+                'start_time' => $validated['new_start_time'],
+                'end_time' => $validated['new_end_time'],
+            ]);
+            
+            if ($booking->event) {
+                $booking->event->update([
+                    'date' => $validated['new_date'],
+                    'start_time' => $validated['new_start_time'],
+                    'end_time' => $validated['new_end_time'],
+                ]);
+            }
+        });
         
         // Create notification for event creator
         $notification = Notification::create([
@@ -1783,6 +1854,7 @@ class VenueController extends Controller
                 'new_start_time' => $validated['new_start_time'],
                 'new_end_time' => $validated['new_end_time'],
                 'reason' => $validated['reason'],
+                'rescheduled_by' => $user->id,
             ],
             'created_by' => $user->id,
         ]);
@@ -1800,7 +1872,7 @@ class VenueController extends Controller
             'message' => 'Event booking rescheduled successfully',
             'data' => [
                 'booking' => $booking->fresh(),
-                'event' => $booking->event->fresh()
+                'event' => $booking->event ? $booking->event->fresh() : null
             ]
         ]);
     }

@@ -13,12 +13,13 @@ class Booking extends Model
         'venue_id',
         'user_id',
         'event_id',
-        'sport',
         'date',
         'start_time',
         'end_time',
-        'purpose',
         'status',
+        'sport',
+        'purpose',
+        'cancelled_by',
     ];
 
     public function venue()
@@ -35,4 +36,4 @@ class Booking extends Model
     {
         return $this->belongsTo(Event::class);
     }
-} 
+}

@@ -378,14 +378,13 @@ class AuthController extends Controller
                 $start = \Carbon\Carbon::parse($eventDate . ' ' . $event->start_time);
                 $end = \Carbon\Carbon::parse($eventDate . ' ' . $event->end_time);
                 $diff = $start->diffInMinutes($end) / 60;
-                // Debug output
                 \Log::info([
-                    'event_id' => $event->id,
+                    'event_id' => $event->id ?? null,
                     'start' => $start,
                     'end' => $end,
                     'diff' => $diff,
-                    'start_time' => $event->start_time,
-                    'end_time' => $event->end_time,
+                    'start_time' => $event->start_time ?? null,
+                    'end_time' => $event->end_time ?? null,
                 ]);
                 if ($diff > 0) {
                     $totalHours += $diff;
@@ -439,6 +438,40 @@ class AuthController extends Controller
                 ];
             });
 
+        // Current and past teams
+        $memberships = \App\Models\TeamMember::with('team')
+            ->where('user_id', $id)
+            ->get();
+
+        $currentTeams = $memberships->filter(function($m) {
+            return ($m->is_active === true) || ($m->roster_status === 'active');
+        })->values()->map(function($m) {
+            return [
+                'team_id' => $m->team_id,
+                'team_photo' => $m->team->team_photo ? \Storage::url($m->team->team_photo) : null,
+                'team_name' => $m->team->name ?? null,
+                'role' => $m->role,
+                'is_active' => (bool) $m->is_active,
+                'roster_status' => $m->roster_status,
+                'joined_at' => $m->joined_at ?? $m->created_at,
+            ];
+        });
+
+        $pastTeams = $memberships->filter(function($m) {
+            return ($m->roster_status === 'left' || $m->roster_status === 'removed')
+                || ($m->is_active === false && $m->roster_status !== 'active');
+        })->values()->map(function($m) {
+            return [
+                'team_id' => $m->team_id,
+                'team_photo' => $m->team->team_photo ? \Storage::url($m->team->team_photo) : null,
+                'team_name' => $m->team->name ?? null,
+                'role' => $m->role,
+                'roster_status' => $m->roster_status,
+                'joined_at' => $m->joined_at ?? $m->created_at,
+                'removed_at' => $m->removed_at ?? $m->updated_at,
+            ];
+        });
+
         return response()->json([
             'status' => 'success',
             'data' => [
@@ -455,6 +488,8 @@ class AuthController extends Controller
                 'total_hours_played' => round($totalHours, 2),
                 'recent_players' => $recentPlayers,
                 'posts' => $posts,
+                'current_teams' => $currentTeams,
+                'past_teams' => $pastTeams,
             ],
         ]);
     }

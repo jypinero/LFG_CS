@@ -33,6 +33,9 @@ class Event extends Model
         'game_number',
         'game_status',
         'is_tournament_game',
+        // add new audit fields:
+        'approved_by',
+        'cancelled_by',
     ];
 
     protected $casts = [

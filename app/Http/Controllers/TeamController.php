@@ -635,9 +635,13 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Owner cannot remove themselves. Transfer ownership first.'], 403);
         }
 
-        $member->delete();
+        // Mark member as left instead of deleting
+        $member->is_active = false;
+        $member->roster_status = 'removed';
+        $member->removed_at = now();
+        $member->save();
 
-        return response()->json(['status'=>'success','message'=>'Member removed'], 200);
+        return response()->json(['status'=>'success','message'=>'Member marked as removed','member'=>$member], 200);
     }
 
     public function members(string $teamId)
@@ -725,6 +729,17 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'You have already requested to join this team'], 409);
         }
 
+        // Validation: prevent new requests when roster is full
+        $activeCount = TeamMember::where('team_id', $team->id)
+            ->where('is_active', true)
+            ->count();
+        if ($team->roster_size_limit && $activeCount >= $team->roster_size_limit) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Cannot request to join: roster is full ({$activeCount}/{$team->roster_size_limit} active)"
+            ], 409);
+        }
+
         $member = TeamMember::create([
             'team_id' => $team->id,
             'user_id' => $user->id,
@@ -794,7 +809,9 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Pending join request not found'], 404);
         }
 
-        // Find the notification for this join request
+        $requesterId = $member->user_id;
+
+        // Find the notification for this join request (owner's inbox)
         $notification = \App\Models\Notification::where('type', 'team_join_request')
             ->where('data->team_id', $team->id)
             ->where('data->user_id', $member->user_id)
@@ -808,7 +825,7 @@ class TeamController extends Controller
                 ->first();
         }
 
-        // Log the action event
+        // Log the action event (owner handled)
         if ($userNotification) {
             \App\Models\UserNotificationActionEvent::create([
                 'user_notification_id' => $userNotification->id,
@@ -821,12 +838,18 @@ class TeamController extends Controller
                 'created_at' => now(),
             ]);
 
-            // Update notification state - map request action to enum value
+            // Update notification state for owner view
             $actionState = $request->action === 'accept' ? 'accepted' : 'ignored';
             $userNotification->action_state = $actionState;
-            $userNotification->is_read = false; // Optionally mark unread for requester
+            $userNotification->is_read = false;
             $userNotification->save();
         }
+
+        // Prepare response notification for requester
+        $responseAction = $request->action === 'accept' ? 'accepted' : 'declined';
+        $responseMessage = $request->action === 'accept'
+            ? ($team->name . ' owner accepted your request to join the team.')
+            : ($team->name . ' owner declined your request to join the team.');
 
         if ($request->action === 'accept') {
             // Check roster size limit
@@ -845,9 +868,56 @@ class TeamController extends Controller
             $member->is_active = true;
             $member->roster_status = 'active';
             $member->save();
+
+            // Notify requester about acceptance
+            $respNotif = \App\Models\Notification::create([
+                'type' => 'team_join_response',
+                'data' => [
+                    'message' => $responseMessage,
+                    'team_id' => $team->id,
+                    'user_id' => $requesterId,
+                    'action' => $responseAction,
+                ],
+                'created_by' => $user->id,
+                'created_at' => now(),
+            ]);
+
+            \App\Models\UserNotification::create([
+                'notification_id' => $respNotif->id,
+                'user_id' => $requesterId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => $responseAction,
+                'created_at' => now(),
+            ]);
+
             return response()->json(['status'=>'success','message'=>'Request accepted','member'=>$member], 200);
         } else {
+            // Remove pending request
             $member->delete();
+
+            // Notify requester about decline
+            $respNotif = \App\Models\Notification::create([
+                'type' => 'team_join_response',
+                'data' => [
+                    'message' => $responseMessage,
+                    'team_id' => $team->id,
+                    'user_id' => $requesterId,
+                    'action' => $responseAction,
+                ],
+                'created_by' => $user->id,
+                'created_at' => now(),
+            ]);
+
+            \App\Models\UserNotification::create([
+                'notification_id' => $respNotif->id,
+                'user_id' => $requesterId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => $responseAction,
+                'created_at' => now(),
+            ]);
+
             return response()->json(['status'=>'success','message'=>'Request declined'], 200);
         }
     }
@@ -1202,6 +1272,7 @@ class TeamController extends Controller
 
         $members = TeamMember::where('team_id', $team->id)
             ->with('user:id,username,email')
+            ->where('roster_status', '!=', 'removed' && 'roster_status', '!=', 'left')
             ->get();
 
         $active = $members->where('is_active', true)->map(function ($member) {
@@ -1680,7 +1751,7 @@ class TeamController extends Controller
                     'name' => $event->venue->name,
                 ] : null,
                 'status' => $event->status ?? 'upcoming',
-            ];
+                ];
         });
 
         return response()->json([
@@ -1713,11 +1784,16 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Owner cannot leave team. Transfer ownership first.'], 403);
         }
 
-        $member->delete();
+        // Mark member as left instead of deleting
+        $member->is_active = false;
+        $member->roster_status = 'left';
+        $member->removed_at = now();
+        $member->save();
 
         return response()->json([
             'status' => 'success',
             'message' => 'Left team successfully',
+            'member' => $member,
         ]);
     }
 
