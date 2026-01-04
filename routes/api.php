@@ -48,6 +48,8 @@ Route::post('/auth/google/complete', [SocialiteController::class, 'completeSocia
 Route::get('/roles', [AuthController::class, 'getRoles']);
 Route::get('/sports', [AuthController::class, 'getSports']);
 
+// Public tournament route (no authentication required)
+Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicTournament']);
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
@@ -292,6 +294,7 @@ Route::middleware('auth:api')->group(function () {
     Route::put('tournaments/update/{id}', [TournamentController::class, 'update']);
     Route::delete('tournaments/delete/{id}', [TournamentController::class, 'destroy']);
     Route::get('/tournaments/my', [TournamentController::class, 'myTournaments']);
+    Route::get('tournaments/{tournamentId}/schedule', [TournamentController::class, 'getSchedule']);
     
     // Games (existing)
     Route::post('tournaments/{tournamentid}/creategames', [TournamentController::class, 'createGame']);
@@ -307,6 +310,7 @@ Route::middleware('auth:api')->group(function () {
     // Participants list and admin actions
     Route::get('tournaments/{tournamentid}/participants', [TournamentController::class, 'getParticipants']);
     Route::post('tournaments/{tournamentid}/participants/{participantid}/approve', [TournamentController::class, 'approveParticipant']);
+    Route::post('tournaments/{tournamentid}/participants/bulk-approve', [TournamentController::class, 'bulkApproveParticipants']);
     Route::post('tournaments/{tournamentid}/participants/{participantid}/reject', [TournamentController::class, 'rejectParticipant']);
     Route::post('tournaments/{tournamentid}/participants/{participantid}/ban', [TournamentController::class, 'banParticipant']);
 
@@ -325,6 +329,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Match Management
     Route::get('tournaments/{tournamentid}/matches', [\App\Http\Controllers\TournamentController::class, 'getMatches']);
+    Route::get('tournaments/{tournamentid}/matches/live', [\App\Http\Controllers\TournamentController::class, 'getLiveMatches']);
     Route::get('tournaments/{tournamentid}/matches/{match}', [\App\Http\Controllers\TournamentController::class, 'getMatchDetails']);
     Route::post('tournaments/{tournamentid}/matches/{match}/start', [\App\Http\Controllers\TournamentController::class, 'startMatch']);
     Route::post('tournaments/{tournamentid}/matches/{match}/end', [\App\Http\Controllers\TournamentController::class, 'endMatch']);
@@ -349,6 +354,15 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/tournaments/{tournamentId}/analytics', [\App\Http\Controllers\AnalyticsController::class, 'getAnalytics']);
     Route::get('/tournaments/{tournamentId}/standings', [\App\Http\Controllers\AnalyticsController::class, 'getStandings']);
     Route::get('/tournaments/{tournamentId}/leaderboard', [\App\Http\Controllers\AnalyticsController::class, 'getLeaderboard']);
+    
+    // Activity log
+    Route::get('/tournaments/{tournamentId}/activity-log', [TournamentController::class, 'getActivityLog']);
+    
+    // Spectator count
+    Route::get('/tournaments/{tournamentId}/spectator-count', [TournamentController::class, 'getSpectatorCount']);
+    
+    // Tournament settings
+    Route::patch('/tournaments/{tournamentId}/settings', [TournamentController::class, 'updateTournamentSettings']);
 
     // Organizer Management
     Route::post('/tournaments/{tournamentId}/organizers', [TournamentController::class, 'addOrganizer']);

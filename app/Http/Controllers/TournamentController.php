@@ -23,6 +23,7 @@ use App\Models\Booking;
 use Illuminate\Validation\Rule;
 use App\Models\EventResult;
 use App\Models\EventPenalty;
+use App\Models\AuditLog;
 use Illuminate\Support\Facades\Storage;
 use App\Services\TournamentBracketGenerator; // added import
 use Illuminate\Support\Str;
@@ -1769,6 +1770,240 @@ class TournamentController extends Controller
         });
 
         return response()->json(['status'=>'success','groups'=>$grouped]);
+    }
+
+    /**
+     * Get tournament schedule - all matches/games ordered by date and time
+     * GET /api/tournaments/{tournamentId}/schedule
+     */
+    public function getSchedule(Request $request, $tournamentId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) {
+            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+        }
+
+        $query = Event::with(['teams', 'participants', 'venue', 'facility'])
+            ->where('tournament_id', $tournament->id)
+            ->where('is_tournament_game', true);
+
+        // Filter by date range if provided
+        if ($request->filled('start_date')) {
+            $query->where('date', '>=', $request->input('start_date'));
+        }
+        if ($request->filled('end_date')) {
+            $query->where('date', '<=', $request->input('end_date'));
+        }
+
+        // Filter by phase if provided
+        if ($request->filled('phase_id')) {
+            $query->whereHas('tournament', function($q) use ($request) {
+                $q->whereHas('phases', function($phaseQ) use ($request) {
+                    $phaseQ->where('id', $request->input('phase_id'));
+                });
+            });
+        }
+
+        // Filter by game_number (round) if provided
+        if ($request->filled('round')) {
+            $query->where('game_number', $request->input('round'));
+        }
+
+        // Order by date and start_time
+        $schedule = $query->orderBy('date')
+            ->orderBy('start_time')
+            ->get()
+            ->map(function($match) {
+                return [
+                    'id' => $match->id,
+                    'name' => $match->name,
+                    'date' => $match->date,
+                    'start_time' => $match->start_time,
+                    'end_time' => $match->end_time,
+                    'game_number' => $match->game_number,
+                    'status' => $match->status,
+                    'sport' => $match->sport,
+                    'venue' => $match->venue ? [
+                        'id' => $match->venue->id,
+                        'name' => $match->venue->name,
+                        'address' => $match->venue->address,
+                        'city' => $match->venue->city,
+                    ] : null,
+                    'facility' => $match->facility ? [
+                        'id' => $match->facility->id,
+                        'type' => $match->facility->type,
+                    ] : null,
+                    'teams' => $match->teams,
+                    'participants_count' => $match->participants->count(),
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'schedule' => $schedule,
+            'count' => $schedule->count()
+        ]);
+    }
+
+    /**
+     * Get live/ongoing matches for a tournament
+     * GET /api/tournaments/{tournamentId}/matches/live
+     */
+    public function getLiveMatches(Request $request, $tournamentId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (! $tournament) {
+            return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
+        }
+
+        // Get matches that are in progress
+        // Check game_status field and also filter by computed status
+        $liveMatches = Event::with(['teams', 'participants', 'venue', 'facility'])
+            ->where('tournament_id', $tournament->id)
+            ->where('is_tournament_game', true)
+            ->where(function($query) {
+                // Matches with game_status 'in_progress'
+                $query->where('game_status', 'in_progress')
+                    // Or matches that are currently ongoing based on date/time
+                    ->orWhere(function($q) {
+                        $q->whereNotNull('date')
+                          ->whereNotNull('start_time')
+                          ->whereNotNull('end_time')
+                          ->where('date', '<=', now()->toDateString())
+                          ->whereRaw("CONCAT(date, ' ', start_time) <= ?", [now()->toDateTimeString()])
+                          ->whereRaw("CONCAT(date, ' ', end_time) >= ?", [now()->toDateTimeString()])
+                          ->where(function($statusQ) {
+                              // Not completed or cancelled
+                              $statusQ->where(function($sq) {
+                                  $sq->whereNull('game_status')
+                                     ->orWhereNotIn('game_status', ['completed', 'cancelled']);
+                              });
+                          });
+                    });
+            })
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get()
+            ->filter(function($match) {
+                // Filter using computed status attribute to ensure match is actually live
+                $computedStatus = $match->status;
+                return in_array($computedStatus, ['ongoing', 'in_progress']) || 
+                       ($computedStatus !== 'completed' && $computedStatus !== 'cancelled' && 
+                        $match->game_status === 'in_progress');
+            })
+            ->map(function($match) {
+                return [
+                    'id' => $match->id,
+                    'name' => $match->name,
+                    'date' => $match->date,
+                    'start_time' => $match->start_time,
+                    'end_time' => $match->end_time,
+                    'game_number' => $match->game_number,
+                    'status' => $match->status,
+                    'game_status' => $match->game_status ?? null,
+                    'sport' => $match->sport,
+                    'venue' => $match->venue ? [
+                        'id' => $match->venue->id,
+                        'name' => $match->venue->name,
+                        'address' => $match->venue->address,
+                    ] : null,
+                    'teams' => $match->teams,
+                    'participants' => $match->participants,
+                ];
+            })
+            ->values(); // Re-index array after filter
+
+        return response()->json([
+            'status' => 'success',
+            'live_matches' => $liveMatches,
+            'count' => $liveMatches->count()
+        ]);
+    }
+
+    /**
+     * Get public tournament details (no authentication required)
+     * GET /api/tournaments/public/{id}
+     */
+    public function getPublicTournament($id)
+    {
+        $tournament = Tournament::with([
+            'events' => function($query) {
+                $query->where('is_approved', true)
+                      ->select('id', 'name', 'date', 'start_time', 'end_time', 'sport', 'game_number', 'is_tournament_game', 'tournament_id');
+            },
+            'organizers.user' => function($query) {
+                $query->select('id', 'username', 'first_name', 'last_name');
+            },
+            'announcements' => function($query) {
+                $query->whereNotNull('published_at')
+                      ->where('published_at', '<=', now())
+                      ->orderBy('created_at', 'desc');
+            }
+        ])->find($id);
+
+        if (! $tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Only show public tournaments (not drafts)
+        if ($tournament->status === 'draft') {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Get public tournament data (sanitized - no sensitive info)
+        $publicData = [
+            'id' => $tournament->id,
+            'name' => $tournament->name,
+            'description' => $tournament->description,
+            'location' => $tournament->location,
+            'type' => $tournament->type,
+            'tournament_type' => $tournament->tournament_type,
+            'start_date' => $tournament->start_date,
+            'end_date' => $tournament->end_date,
+            'registration_deadline' => $tournament->registration_deadline,
+            'status' => $tournament->status,
+            'registration_fee' => $tournament->registration_fee,
+            'rules' => $tournament->rules,
+            'prizes' => $tournament->prizes,
+            'max_teams' => $tournament->max_teams,
+            'min_teams' => $tournament->min_teams,
+            'created_at' => $tournament->created_at,
+            'events' => $tournament->events->map(function($event) {
+                return [
+                    'id' => $event->id,
+                    'name' => $event->name,
+                    'date' => $event->date,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                    'sport' => $event->sport,
+                    'game_number' => $event->game_number,
+                ];
+            }),
+            'organizers' => $tournament->organizers->map(function($organizer) {
+                return [
+                    'id' => $organizer->user->id,
+                    'username' => $organizer->user->username,
+                    'first_name' => $organizer->user->first_name,
+                    'last_name' => $organizer->user->last_name,
+                    'role' => $organizer->role,
+                ];
+            }),
+            'announcements' => $tournament->announcements->map(function($announcement) {
+                return [
+                    'id' => $announcement->id,
+                    'title' => $announcement->title,
+                    'content' => $announcement->content,
+                    'created_at' => $announcement->created_at,
+                ];
+            }),
+            // Public participant count (not individual details)
+            'participants_count' => $tournament->participants()->where('status', 'approved')->count(),
+        ];
+
+        return response()->json([
+            'status' => 'success',
+            'tournament' => $publicData
+        ]);
     }
 
     /**
@@ -4635,5 +4870,314 @@ class TournamentController extends Controller
         \App\Models\TeamMatchup::where('tournament_id',$tournament->id)->where('event_id',$eventId)->delete();
 
         return response()->json(['status'=>'success','message'=>'Bracket reset for event']);
+    }
+
+    /**
+     * Get tournament activity log
+     * GET /api/tournaments/{tournamentId}/activity-log
+     */
+    public function getActivityLog(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        
+        if (! $tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Check if user is organizer or creator
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+        
+        if (! $isCreator && ! $isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        // Get audit logs related to this tournament
+        $query = AuditLog::where(function($q) use ($tournament) {
+            // Direct tournament actions
+            $q->where('entity_type', Tournament::class)
+              ->where('entity_id', $tournament->id)
+              // Tournament events
+              ->orWhere(function($subQ) use ($tournament) {
+                  $subQ->where('entity_type', Event::class)
+                       ->whereIn('entity_id', $tournament->events()->pluck('id'));
+              })
+              // Tournament participants
+              ->orWhere(function($subQ) use ($tournament) {
+                  $subQ->where('entity_type', TournamentParticipant::class)
+                       ->whereIn('entity_id', $tournament->participants()->pluck('id'));
+              })
+              // Tournament documents
+              ->orWhere(function($subQ) use ($tournament) {
+                  $subQ->where('entity_type', TournamentDocument::class)
+                       ->whereIn('entity_id', $tournament->documents()->pluck('id'));
+              });
+        })
+        ->with('actor:id,username,first_name,last_name')
+        ->orderBy('created_at', 'desc');
+
+        // Filter by action if provided
+        if ($request->filled('action')) {
+            $query->where('action', 'like', '%' . $request->input('action') . '%');
+        }
+
+        // Filter by actor if provided
+        if ($request->filled('actor_id')) {
+            $query->where('actor_id', $request->input('actor_id'));
+        }
+
+        // Pagination
+        $perPage = min($request->input('per_page', 50), 100);
+        $logs = $query->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'activity_log' => $logs->items(),
+            'pagination' => [
+                'current_page' => $logs->currentPage(),
+                'last_page' => $logs->lastPage(),
+                'per_page' => $logs->perPage(),
+                'total' => $logs->total(),
+            ],
+        ]);
+    }
+
+    /**
+     * Bulk approve participants
+     * POST /api/tournaments/{tournamentId}/participants/bulk-approve
+     */
+    public function bulkApproveParticipants(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        
+        if (! $tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+        
+        if (! $isCreator && ! $isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $data = $request->validate([
+            'participant_ids' => 'required|array|min:1',
+            'participant_ids.*' => 'required|integer|exists:tournament_participants,id',
+        ]);
+
+        $participantIds = $data['participant_ids'];
+        $participants = TournamentParticipant::where('tournament_id', $tournament->id)
+            ->whereIn('id', $participantIds)
+            ->where('status', '!=', 'approved')
+            ->get();
+
+        if ($participants->isEmpty()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No participants found to approve',
+            ], 422);
+        }
+
+        DB::beginTransaction();
+        try {
+            $approved = [];
+            $skipped = [];
+
+            foreach ($participants as $participant) {
+                if ($participant->status === 'approved') {
+                    $skipped[] = $participant->id;
+                    continue;
+                }
+
+                $participant->update(['status' => 'approved', 'approved_at' => now()]);
+
+                // Update matching EventParticipant(s)
+                $epQuery = EventParticipant::where('tournament_id', $tournament->id);
+                if ($participant->participant_type === 'individual') {
+                    $epQuery->where('user_id', $participant->user_id);
+                } else {
+                    $epQuery->where('team_id', $participant->team_id);
+                }
+                $epQuery->update(['status' => 'confirmed']);
+
+                // Send notification
+                $notifyUserId = $participant->participant_type === 'individual' 
+                    ? $participant->user_id
+                    : Team::find($participant->team_id)?->owner_id;
+
+                if ($notifyUserId) {
+                    $notification = \App\Models\Notification::create([
+                        'type' => 'participant_approved',
+                        'data' => [
+                            'tournament_id' => $tournament->id,
+                            'tournament_name' => $tournament->name,
+                            'participant_id' => $participant->id,
+                            'participant_type' => $participant->participant_type,
+                            'message' => "Your {$participant->participant_type} registration for {$tournament->name} has been approved.",
+                        ],
+                        'created_by' => $user->id,
+                    ]);
+
+                    \App\Models\UserNotification::create([
+                        'notification_id' => $notification->id,
+                        'user_id' => $notifyUserId,
+                        'is_read' => false,
+                    ]);
+                }
+
+                // Update analytics
+                if ($participant->participant_type === 'team') {
+                    $tournament->analytics?->increment('total_teams');
+                } else {
+                    $tournament->analytics?->increment('total_participants');
+                }
+
+                $approved[] = $participant->id;
+            }
+
+            DB::commit();
+            return response()->json([
+                'status' => 'success',
+                'approved_count' => count($approved),
+                'approved_ids' => $approved,
+                'skipped_count' => count($skipped),
+                'skipped_ids' => $skipped,
+                'message' => count($approved) . ' participant(s) approved successfully',
+            ]);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to approve participants',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get spectator count for tournament matches
+     * GET /api/tournaments/{tournamentId}/spectator-count
+     */
+    public function getSpectatorCount(Request $request, $tournamentId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        
+        if (! $tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Get live matches
+        $liveMatches = Event::where('tournament_id', $tournament->id)
+            ->where('is_tournament_game', true)
+            ->where(function($query) {
+                $query->where('game_status', 'in_progress')
+                    ->orWhere(function($q) {
+                        $q->whereNotNull('date')
+                          ->whereNotNull('start_time')
+                          ->whereNotNull('end_time')
+                          ->where('date', '<=', now()->toDateString())
+                          ->whereRaw("CONCAT(date, ' ', start_time) <= ?", [now()->toDateTimeString()])
+                          ->whereRaw("CONCAT(date, ' ', end_time) >= ?", [now()->toDateTimeString()]);
+                    });
+            })
+            ->get();
+
+        // For now, return match IDs with placeholder counts
+        // In a real implementation, you'd track actual viewers (e.g., via WebSocket connections, Redis, etc.)
+        $spectatorData = $liveMatches->map(function($match) {
+            return [
+                'match_id' => $match->id,
+                'match_name' => $match->name,
+                'spectator_count' => 0, // Placeholder - implement actual tracking
+                'viewers' => [], // Placeholder - implement actual viewer list if needed
+            ];
+        });
+
+        $totalSpectators = $spectatorData->sum('spectator_count');
+
+        return response()->json([
+            'status' => 'success',
+            'tournament_id' => $tournament->id,
+            'total_spectators' => $totalSpectators,
+            'live_matches_count' => $liveMatches->count(),
+            'matches' => $spectatorData,
+        ]);
+    }
+
+    /**
+     * Update tournament settings (bulk)
+     * PATCH /api/tournaments/{tournamentId}/settings
+     */
+    public function updateTournamentSettings(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        
+        if (! $tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+        
+        if (! $isCreator && ! $isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        // Only allow settings update in draft or open_registration status
+        if (! in_array($tournament->status, ['draft', 'open_registration'])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Settings can only be updated when tournament is in draft or open_registration status',
+            ], 422);
+        }
+
+        $data = $request->validate([
+            'settings' => 'required|array',
+            // Common settings that can be updated
+            'participants_locked' => 'sometimes|boolean',
+            'auto_advance_bracket' => 'sometimes|boolean',
+            'allow_withdrawal' => 'sometimes|boolean',
+            'require_checkin' => 'sometimes|boolean',
+            'checkin_deadline_minutes' => 'sometimes|integer|min:0',
+            'score_verification_required' => 'sometimes|boolean',
+            'public_brackets' => 'sometimes|boolean',
+            'public_standings' => 'sometimes|boolean',
+        ]);
+
+        $currentSettings = (array) $tournament->settings;
+        
+        // Merge new settings with existing
+        if (isset($data['settings'])) {
+            $currentSettings = array_merge($currentSettings, $data['settings']);
+        } else {
+            // If individual settings provided, merge them
+            unset($data['settings']);
+            foreach ($data as $key => $value) {
+                $currentSettings[$key] = $value;
+            }
+        }
+
+        $tournament->settings = $currentSettings;
+        $tournament->save();
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Tournament settings updated',
+            'tournament_id' => $tournament->id,
+            'settings' => $currentSettings,
+        ]);
     }
 }
