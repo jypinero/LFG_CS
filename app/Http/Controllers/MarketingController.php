@@ -431,6 +431,14 @@ class MarketingController extends Controller
                     ? Storage::url($item->author->profile_photo)
                     : null;
             }
+
+            // attach first venue photo (venue_photos.image_path) if available
+            $item->venue_photo_url = null;
+            if (! empty($item->venue_id)) {
+                $path = DB::table('venue_photos')->where('venue_id', $item->venue_id)->value('image_path');
+                $item->venue_photo_url = $path ? Storage::url($path) : null;
+            }
+
             return $item;
         });
 
