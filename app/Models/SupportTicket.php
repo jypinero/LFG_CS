@@ -10,9 +10,15 @@ class SupportTicket extends Model
     use HasFactory;
 
     protected $fillable = [
-        'submitted_by', 'assigned_to', 'subject', 'description', 'status'
+        // updated to match new schema
+        'subject',
+        'email',
+        'message',
+        'file_path',
+        'status'
     ];
 
+    // optional relations kept or removed depending on your app
     public function submitter()
     {
         return $this->belongsTo(User::class, 'submitted_by');
@@ -22,4 +28,4 @@ class SupportTicket extends Model
     {
         return $this->belongsTo(User::class, 'assigned_to');
     }
-} 
+}

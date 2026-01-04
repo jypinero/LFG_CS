@@ -18,6 +18,8 @@ use App\Http\Controllers\TrainingSessionController;
 use App\Http\Controllers\TrainingAnalyticsController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\LogAdminAction;
+use App\Http\Controllers\SupportController;
+use App\Http\Controllers\MarketingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -29,6 +31,9 @@ use App\Http\Middleware\LogAdminAction;
 | be assigned to the "api" middleware group. Make something great!
 |
 */
+
+// Support contact form route
+Route::post('/support/contact', [SupportController::class, 'submitContact']);
 
 // Public routes
 Route::post('/register', [AuthController::class, 'register']);
@@ -241,6 +246,12 @@ Route::middleware('auth:api')->group(function () {
     Route::put('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'updateClosureDate']);
     Route::delete('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'deleteClosureDate']);
 
+    // Marketing Controller Routes
+    Route::post('/marketing/posts/create', [MarketingController::class, 'createpost']);
+    Route::get('/marketing/posts', [MarketingController::class, 'index']);
+
+
+    // Team Management Routes
     Route::get('/teams', [TeamController::class, 'index']);
     // Discover teams open to new members
     Route::get('/lookingfor/teams', [TeamController::class, 'discoverLookingForTeams']);
