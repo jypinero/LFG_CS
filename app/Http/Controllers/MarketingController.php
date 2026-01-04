@@ -20,6 +20,12 @@ use Carbon\Carbon;
 
 class MarketingController extends Controller
 {
+    public function __construct()
+    {
+        // require authenticated user for index/createpost (adjust middleware driver as used in your app)
+        $this->middleware('auth:sanctum')->only(['index','createpost']);
+    }
+
     private const RATE_LIMIT_COUNT = 5;         // posts per minute
     private const DUPLICATE_WINDOW_MIN = 5;    // minutes
     private const MAX_FUTURE_YEARS = 1;        // how far in future event date allowed
@@ -369,6 +375,11 @@ class MarketingController extends Controller
 
     public function index(Request $request)
     {
+        $user = auth()->user();
+        if (! $user) {
+            return response()->json(['status'=>'error','message'=>'Unauthenticated'], 401);
+        }
+
         $validated = $request->validate([
             'venue_id' => 'nullable|integer|exists:venues,id',
             'author_id' => 'nullable|integer|exists:users,id',
@@ -376,7 +387,18 @@ class MarketingController extends Controller
             'create_event' => 'nullable|boolean',
         ]);
 
-        $query = MarketingPost::with(['post','event','booking','author','venue'])
+        // only return posts the current user is allowed to see:
+        // - global/public posts (venue_id IS NULL)
+        // - posts authored by the user
+        // - posts for venues the user is a member of
+        $userVenueIds = VenueUser::where('user_id', $user->id)->pluck('venue_id')->toArray();
+
+        $query = MarketingPost::with(['post','event','booking','author:id,username','venue:id,name'])
+            ->where(function($q) use ($user, $userVenueIds) {
+                $q->whereNull('venue_id')
+                  ->orWhere('author_id', $user->id)
+                  ->orWhereIn('venue_id', $userVenueIds);
+            })
             ->orderByDesc('created_at');
 
         if (! empty($validated['venue_id'])) {
