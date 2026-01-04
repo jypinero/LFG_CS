@@ -23,7 +23,7 @@ class MarketingController extends Controller
     public function __construct()
     {
         // require authenticated user for index/createpost (adjust middleware driver as used in your app)
-        $this->middleware('auth:sanctum')->only(['index','createpost']);
+        $this->middleware('auth')->only(['index','createpost']);
     }
 
     private const RATE_LIMIT_COUNT = 5;         // posts per minute
@@ -365,6 +365,7 @@ class MarketingController extends Controller
 
         return response()->json([
             'message' => 'Post created successfully',
+            'profile_photo_url' => $user->profile_photo ? Storage::url($user->profile_photo) : null,
             'post' => $post,
             'image_url' => $postImagePath ? Storage::url($postImagePath) : null,
             'booking' => $createdBooking ? $createdBooking->fresh() : null,
@@ -393,7 +394,8 @@ class MarketingController extends Controller
         // - posts for venues the user is a member of
         $userVenueIds = VenueUser::where('user_id', $user->id)->pluck('venue_id')->toArray();
 
-        $query = MarketingPost::with(['post','event','booking','author:id,username','venue:id,name'])
+        // include profile_photo so we can expose a full URL in the response
+        $query = MarketingPost::with(['post','event','booking','author:id,username,profile_photo','venue:id,name'])
             ->where(function($q) use ($user, $userVenueIds) {
                 $q->whereNull('venue_id')
                   ->orWhere('author_id', $user->id)
@@ -423,7 +425,14 @@ class MarketingController extends Controller
             }
         }
 
-        $results = $query->get();
+        $results = $query->get()->map(function ($item) {
+            if ($item->author) {
+                $item->author->profile_photo_url = $item->author->profile_photo
+                    ? Storage::url($item->author->profile_photo)
+                    : null;
+            }
+            return $item;
+        });
 
         return response()->json($results, 200);
     }
