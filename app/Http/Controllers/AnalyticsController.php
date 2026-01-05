@@ -41,7 +41,7 @@ class AnalyticsController extends Controller
      * Get standings for tournament
      * GET /api/tournaments/{tournamentId}/standings
      */
-    public function getStandings($tournamentId)
+    public function getStandings(Request $request, $tournamentId)
     {
         $tournament = Tournament::find($tournamentId);
 
@@ -51,26 +51,101 @@ class AnalyticsController extends Controller
 
         $this->analyticsService->calculateStandings($tournament);
 
-        $standings = Standing::where('tournament_id', $tournament->id)
-            ->orderBy('rank')
-            ->get()
-            ->map(function($standing) {
+        $query = Standing::where('tournament_id', $tournament->id);
+
+        // Sorting
+        $sortBy = $request->input('sort_by', 'rank');
+        $sortOrder = $request->input('sort_order', 'asc');
+
+        $allowedSortFields = ['rank', 'wins', 'losses', 'points', 'win_rate', 'matches_played'];
+        if (in_array($sortBy, $allowedSortFields)) {
+            $query->orderBy($sortBy, $sortOrder);
+        } else {
+            $query->orderBy('rank', 'asc');
+        }
+
+        $standings = $query->get()
+            ->map(function($standing) use ($tournament) {
                 if ($standing->team_id) {
                     $team = $standing->team;
+                    
+                    // Get last 5 matches for form
+                    $matchups = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)
+                        ->where(function($q) use ($standing) {
+                            $q->where('team_a_id', $standing->team_id)
+                              ->orWhere('team_b_id', $standing->team_id);
+                        })
+                        ->where('status', 'completed')
+                        ->orderBy('completed_at', 'desc')
+                        ->limit(5)
+                        ->get();
+
+                    $form = [];
+                    $last5Matches = [];
+                    
+                    foreach ($matchups as $matchup) {
+                        $isTeamA = $matchup->team_a_id === $standing->team_id;
+                        $opponentId = $isTeamA ? $matchup->team_b_id : $matchup->team_a_id;
+                        $opponent = \App\Models\Team::find($opponentId);
+                        
+                        $result = 'D';
+                        if ($matchup->winner_team_id === $standing->team_id) {
+                            $result = 'W';
+                        } elseif ($matchup->winner_team_id === $opponentId) {
+                            $result = 'L';
+                        }
+                        $form[] = $result;
+                        
+                        $teamScore = $isTeamA ? $matchup->team_a_score : $matchup->team_b_score;
+                        $opponentScore = $isTeamA ? $matchup->team_b_score : $matchup->team_a_score;
+                        
+                        $last5Matches[] = [
+                            'match_id' => $matchup->event_id,
+                            'opponent' => $opponent->name ?? null,
+                            'result' => strtolower($result),
+                            'score' => ($teamScore ?? 0) . '-' . ($opponentScore ?? 0),
+                        ];
+                    }
+                    
+                    // Calculate totals
+                    $allMatchups = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)
+                        ->where(function($q) use ($standing) {
+                            $q->where('team_a_id', $standing->team_id)
+                              ->orWhere('team_b_id', $standing->team_id);
+                        })
+                        ->where('status', 'completed')
+                        ->get();
+                    
+                    $totalPointsScored = 0;
+                    $totalPointsAgainst = 0;
+                    foreach ($allMatchups as $matchup) {
+                        $isTeamA = $matchup->team_a_id === $standing->team_id;
+                        $totalPointsScored += $isTeamA ? ($matchup->team_a_score ?? 0) : ($matchup->team_b_score ?? 0);
+                        $totalPointsAgainst += $isTeamA ? ($matchup->team_b_score ?? 0) : ($matchup->team_a_score ?? 0);
+                    }
+
                     return [
                         'rank' => $standing->rank,
-                        'name' => $team?->name ?? 'Unknown',
+                        'team_id' => $standing->team_id,
+                        'team_name' => $team?->name ?? 'Unknown',
+                        'team_logo' => $team?->logo ?? null,
                         'wins' => $standing->wins,
                         'losses' => $standing->losses,
                         'draws' => $standing->draws,
                         'points' => $standing->points,
                         'win_rate' => $standing->win_rate,
                         'matches_played' => $standing->wins + $standing->losses + $standing->draws,
+                        'total_points_scored' => $totalPointsScored,
+                        'total_points_against' => $totalPointsAgainst,
+                        'point_differential' => $totalPointsScored - $totalPointsAgainst,
+                        'form' => array_reverse($form), // Most recent first
+                        'last_5_matches' => array_reverse($last5Matches),
                     ];
                 } else {
                     $user = $standing->user;
                     return [
                         'rank' => $standing->rank,
+                        'user_id' => $standing->user_id,
                         'name' => $user ? $user->first_name . ' ' . $user->last_name : 'Unknown',
                         'wins' => $standing->wins,
                         'losses' => $standing->losses,
@@ -86,6 +161,7 @@ class AnalyticsController extends Controller
             'status' => 'success',
             'standings' => $standings,
             'count' => $standings->count(),
+            'last_updated' => now()->toIso8601String(),
         ]);
     }
 

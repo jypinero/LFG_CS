@@ -53,8 +53,11 @@ Route::post('/auth/google/complete', [SocialiteController::class, 'completeSocia
 Route::get('/roles', [AuthController::class, 'getRoles']);
 Route::get('/sports', [AuthController::class, 'getSports']);
 
-// Public tournament route (no authentication required)
+// Public tournament routes (no authentication required)
 Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicTournament']);
+Route::get('/tournaments/public/{tournamentId}/standings', [TournamentController::class, 'getPublicStandings']);
+Route::get('/tournaments/public/{tournamentId}/schedule', [TournamentController::class, 'getPublicSchedule']);
+Route::get('/tournaments/public/{tournamentId}/matches/{matchId}', [TournamentController::class, 'getPublicMatchDetail']);
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
@@ -302,6 +305,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/tournaments', [TournamentController::class, 'index']);
     Route::post('tournaments/create', [TournamentController::class, 'create']);
     Route::get('tournaments/show/{id}', [TournamentController::class, 'show']);
+    Route::get('tournaments/{id}/flow', [TournamentController::class, 'getFlowState']);
     Route::put('tournaments/update/{id}', [TournamentController::class, 'update']);
     Route::delete('tournaments/delete/{id}', [TournamentController::class, 'destroy']);
     Route::get('/tournaments/my', [TournamentController::class, 'myTournaments']);
@@ -350,6 +354,13 @@ Route::middleware('auth:api')->group(function () {
     Route::post('tournaments/{tournamentid}/matches/{match}/results', [\App\Http\Controllers\TournamentController::class, 'uploadResult']);
     Route::post('tournaments/{tournamentId}/matches/{match}/dispute', [\App\Http\Controllers\TournamentController::class, 'disputeResult']);
     Route::post('tournaments/{tournamentId}/matches/{match}/resolve-dispute', [\App\Http\Controllers\TournamentController::class, 'resolveDispute']);
+    
+    // Match Notes/Commentary
+    Route::post('tournaments/{tournamentId}/matches/{matchId}/notes', [\App\Http\Controllers\TournamentController::class, 'addMatchNote']);
+    Route::get('tournaments/{tournamentId}/matches/{matchId}/notes', [\App\Http\Controllers\TournamentController::class, 'getMatchNotes']);
+    
+    // Team/Player Profiles in Tournament Context
+    Route::get('tournaments/{tournamentId}/teams/{teamId}', [\App\Http\Controllers\TournamentController::class, 'getTournamentTeamProfile']);
 
     // Bracket Generation
     Route::post('tournaments/{tournament}/events/{event}/generate-brackets', [TournamentController::class, 'generateBrackets']);

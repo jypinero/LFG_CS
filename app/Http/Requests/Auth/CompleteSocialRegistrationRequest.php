@@ -4,6 +4,7 @@ namespace App\Http\Requests\Auth;
 
 use Illuminate\Foundation\Http\FormRequest;
 use Illuminate\Support\Facades\Auth;
+use App\Models\Role;
 
 class CompleteSocialRegistrationRequest extends FormRequest
 {
@@ -21,6 +22,11 @@ class CompleteSocialRegistrationRequest extends FormRequest
         }
         
         $missingFields = $this->getMissingFields($user);
+        
+        // Check if role requires sports
+        $role = $user->role_id ? Role::find($user->role_id) : null;
+        $rolesRequiringSports = ['athletes', 'trainer'];
+        $requiresSports = $role && in_array(strtolower($role->name), $rolesRequiringSports);
         
         $rules = [];
         
@@ -49,10 +55,16 @@ class CompleteSocialRegistrationRequest extends FormRequest
         if (in_array('role_id', $missingFields)) {
             $rules['role_id'] = 'required|exists:roles,id';
         }
-        if (in_array('sports', $missingFields)) {
+        // Only require sports if role requires them AND sports are missing
+        if (in_array('sports', $missingFields) && $requiresSports) {
             $rules['sports'] = 'required|array|min:1';
             $rules['sports.*.id'] = 'required|exists:sports,id';
             $rules['sports.*.level'] = 'required|in:beginner,competitive,professional';
+        } elseif (in_array('sports', $missingFields) && !$requiresSports) {
+            // For roles that don't require sports, make it optional
+            $rules['sports'] = 'nullable|array';
+            $rules['sports.*.id'] = 'nullable|exists:sports,id';
+            $rules['sports.*.level'] = 'nullable|in:beginner,competitive,professional';
         }
         
         return $rules;
@@ -89,7 +101,13 @@ class CompleteSocialRegistrationRequest extends FormRequest
         if (!$user->role_id) {
             $missingFields[] = 'role_id';
         }
-        if (!$user->userProfile || !$user->userProfile->main_sport_id) {
+        
+        // Only require sports for roles that need them (athletes, trainer)
+        $role = $user->role_id ? Role::find($user->role_id) : null;
+        $rolesRequiringSports = ['athletes', 'trainer'];
+        $requiresSports = $role && in_array(strtolower($role->name), $rolesRequiringSports);
+        
+        if ($requiresSports && (!$user->userProfile || !$user->userProfile->main_sport_id)) {
             $missingFields[] = 'sports';
         }
 
