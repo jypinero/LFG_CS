@@ -11,8 +11,10 @@ class TournamentParticipant extends Model
 
     protected $fillable = [
         'tournament_id',
+        'event_id',
         'team_id',
         'user_id',
+        'registered_at',
         'type',
         'status',
         'rejection_reason',
@@ -26,9 +28,14 @@ class TournamentParticipant extends Model
         'withdrawn_at' => 'datetime',
     ];
 
-    public function tournament()
+     public function tournament()
     {
         return $this->belongsTo(Tournament::class);
+    }
+
+    public function event()
+    {
+        return $this->belongsTo(Event::class);
     }
 
     public function team()
@@ -40,7 +47,7 @@ class TournamentParticipant extends Model
     {
         return $this->belongsTo(User::class);
     }
-
+    
     public function approver()
     {
         return $this->belongsTo(User::class, 'approved_by');

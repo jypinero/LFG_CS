@@ -10,6 +10,7 @@ use App\Http\Controllers\NotifController;
 use App\Http\Controllers\TeamController;
 use App\Http\Controllers\MessagingController;
 use App\Http\Controllers\TournamentController;
+use App\Http\Controllers\NewTournamentController;
 use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\Auth\SocialiteController;
 use App\Http\Controllers\Admin\AuditLogController;
@@ -20,6 +21,7 @@ use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\LogAdminAction;
 use App\Http\Controllers\SupportController;
 use App\Http\Controllers\MarketingController;
+use App\Http\Controllers\AdditionalTournamentController;
 
 /*
 |--------------------------------------------------------------------------
@@ -299,127 +301,173 @@ Route::middleware('auth:api')->group(function () {
 
     // Tournament Management Routes
     // Tournament CRUD
-    Route::get('/tournaments', [TournamentController::class, 'index']);
-    Route::post('tournaments/create', [TournamentController::class, 'create']);
-    Route::get('tournaments/show/{id}', [TournamentController::class, 'show']);
-    Route::put('tournaments/update/{id}', [TournamentController::class, 'update']);
-    Route::delete('tournaments/delete/{id}', [TournamentController::class, 'destroy']);
-    Route::get('/tournaments/my', [TournamentController::class, 'myTournaments']);
-    Route::get('tournaments/{tournamentId}/schedule', [TournamentController::class, 'getSchedule']);
+    Route::get('/tournaments', [NewTournamentController::class, 'index']);
+    Route::post('/tournaments/create', [NewTournamentController::class, 'create']);
     
-    // Games (existing)
-    Route::post('tournaments/{tournamentid}/creategames', [TournamentController::class, 'createGame']);
-    Route::get('tournaments/{tournamentid}/getgames', [TournamentController::class, 'getGames']);
-    Route::put('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
-    Route::patch('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
-    Route::delete('tournaments/{tournamentid}/deletegames/{gameid}', [TournamentController::class, 'deleteGame']);
-
-    // Registration & participant management routes (added)
-    // Single registration endpoint (handles individual OR team registration)
-    Route::post('tournaments/{tournamentid}/register/{eventid}', [TournamentController::class, 'register']);
-
-    // Participants list and admin actions
-    Route::get('tournaments/{tournamentid}/participants', [TournamentController::class, 'getParticipants']);
-    Route::post('tournaments/{tournamentid}/participants/{participantid}/approve', [TournamentController::class, 'approveParticipant']);
-    Route::post('tournaments/{tournamentid}/participants/bulk-approve', [TournamentController::class, 'bulkApproveParticipants']);
-    Route::post('tournaments/{tournamentid}/participants/{participantid}/reject', [TournamentController::class, 'rejectParticipant']);
-    Route::post('tournaments/{tournamentid}/participants/{participantid}/ban', [TournamentController::class, 'banParticipant']);
-
-     // Document Management
-    Route::post('tournaments/{tournamentid}/documents/upload', [TournamentController::class, 'uploadDocument']);
-    Route::get('tournaments/{tournamentid}/documents', [TournamentController::class, 'getDocuments']);
-    Route::get('tournaments/{tournamentid}/participants/{participantId}/documents', [TournamentController::class, 'getParticipantDocuments']);
-    Route::post('tournaments/{tournamentid}/documents/{documentId}/verify', [TournamentController::class, 'verifyDocument']);
-    Route::delete('tournaments/{tournamentid}/documents/{documentId}/delete', [TournamentController::class, 'deleteDocument']);
-
-    // Team Management within Tournaments (organizers)
-    Route::post('tournaments/{tournamentid}/events/{eventid}/assign-teams', [TournamentController::class, 'assignTeams']);
-    Route::post('tournaments/{tournamentid}/events/{eventid}/auto-balance', [TournamentController::class, 'autoBalanceTeams']);
-    Route::post('tournaments/{tournamentid}/teams/{teamid}/replace-player', [TournamentController::class, 'replacePlayer']);
-    Route::post('tournaments/{tournamentid}/participants/{participantid}/no-show', [TournamentController::class, 'markNoShow']);
-
-    // Match Management
-    Route::get('tournaments/{tournamentid}/matches', [\App\Http\Controllers\TournamentController::class, 'getMatches']);
-    Route::get('tournaments/{tournamentid}/matches/live', [\App\Http\Controllers\TournamentController::class, 'getLiveMatches']);
-    Route::get('tournaments/{tournamentid}/matches/{match}', [\App\Http\Controllers\TournamentController::class, 'getMatchDetails']);
-    Route::post('tournaments/{tournamentid}/matches/{match}/start', [\App\Http\Controllers\TournamentController::class, 'startMatch']);
-    Route::post('tournaments/{tournamentid}/matches/{match}/end', [\App\Http\Controllers\TournamentController::class, 'endMatch']);
-    Route::post('tournaments/{tournamentid}/matches/{match}/score', [\App\Http\Controllers\TournamentController::class, 'updateScore']);
-    Route::post('tournaments/{tournamentid}/matches/{match}/penalty', [\App\Http\Controllers\TournamentController::class, 'issuePenalty']);
-    Route::post('tournaments/{tournamentid}/matches/{match}/forfeit', [\App\Http\Controllers\TournamentController::class, 'markForfeit']);
-    Route::post('tournaments/{tournamentid}/matches/{match}/results', [\App\Http\Controllers\TournamentController::class, 'uploadResult']);
-    Route::post('tournaments/{tournamentId}/matches/{match}/dispute', [\App\Http\Controllers\TournamentController::class, 'disputeResult']);
-    Route::post('tournaments/{tournamentId}/matches/{match}/resolve-dispute', [\App\Http\Controllers\TournamentController::class, 'resolveDispute']);
-
-    // Bracket Generation
-    Route::post('tournaments/{tournament}/events/{event}/generate-brackets', [TournamentController::class, 'generateBrackets']);
-    Route::post('tournaments/{tournamentId}/matches/{matchId}/advance', [TournamentController::class, 'advanceBracket']);
-
-    // Tournament Announcements
-    Route::post('/tournaments/{tournamentId}/announcements/create', [\App\Http\Controllers\TournamentAnnouncementController::class, 'createAnnouncement']);
-    Route::get('/tournaments/{tournamentId}/announcements/get', [\App\Http\Controllers\TournamentAnnouncementController::class, 'getAnnouncements']);
-    Route::put('/tournaments/{tournamentId}/announcements/{announcementId}/put', [\App\Http\Controllers\TournamentAnnouncementController::class, 'updateAnnouncement']);
-    Route::delete('/tournaments/{tournamentId}/announcements/{announcementId}/delete', [\App\Http\Controllers\TournamentAnnouncementController::class, 'deleteAnnouncement']);
-
-    // Analytics routes
-    Route::get('/tournaments/{tournamentId}/analytics', [\App\Http\Controllers\AnalyticsController::class, 'getAnalytics']);
-    Route::get('/tournaments/{tournamentId}/standings', [\App\Http\Controllers\AnalyticsController::class, 'getStandings']);
-    Route::get('/tournaments/{tournamentId}/leaderboard', [\App\Http\Controllers\AnalyticsController::class, 'getLeaderboard']);
+    Route::post('/tournaments/{tournamentId}/register', [NewTournamentController::class, 'registerParticipant']);
+    Route::post('/tournaments/participants/{participantId}/approve', [NewTournamentController::class, 'approveParticipant']);
     
-    // Activity log
-    Route::get('/tournaments/{tournamentId}/activity-log', [TournamentController::class, 'getActivityLog']);
+    // List participants by status per tournament
+    Route::get('tournaments/{tournamentId}/participants', [NewTournamentController::class, 'listParticipants']);
+
+    // List rejected participants (organizers only)
+    Route::get('tournaments/{tournamentId}/participants/rejected', [NewTournamentController::class, 'listRejectedParticipants']);
+
+    // Register participant already exists in your controller (assumed route)
+
+    // Withdraw registration by participant
+    Route::post('tournaments/participants/{participantId}/withdraw', [NewTournamentController::class, 'withdrawRegistration']);
+
+    // Upload participant document
+    Route::post('tournaments/participants/{participantId}/documents', [NewTournamentController::class, 'uploadDocument']);
+
+    Route::post('/tournaments/{tournamentId}/events', [NewTournamentController::class, 'createEvent']);
+
+    Route::get('/tournaments/{tournamentId}/events', [NewTournamentController::class, 'listEvents']);
+    Route::put('/tournaments/events/{eventId}', [NewTournamentController::class, 'updateEvent']);
+    Route::post('/tournaments/events/{eventId}/cancel', [NewTournamentController::class, 'cancelEvent']);
+
+    Route::post('tournaments/events/{eventId}/register', [NewTournamentController::class, 'registerForEvent']);
+    Route::post('tournaments/participants/{participantId}/event-approve', [NewTournamentController::class, 'approveEventParticipant']);
+    Route::get('tournaments/events/{eventId}/participants', [NewTournamentController::class, 'listEventParticipants']);
+
+    Route::post('/tournaments/events/{eventId}/generate-schedule', [NewTournamentController::class, 'generateSchedule']);
+    Route::post('/tournaments/event-game/{gameId}/submit-score', [NewTournamentController::class, 'submitScore']);
+
+
+    // Route::get('/tournaments', [TournamentController::class, 'index']);
+    // Route::post('tournaments/create', [TournamentController::class, 'create']);
+    // Route::get('tournaments/show/{id}', [TournamentController::class, 'show']);
+    // Route::put('tournaments/update/{id}', [TournamentController::class, 'update']);
+    // Route::delete('tournaments/delete/{id}', [TournamentController::class, 'destroy']);
+    // Route::get('/tournaments/my', [TournamentController::class, 'myTournaments']);
+    // Route::get('tournaments/{tournamentId}/schedule', [TournamentController::class, 'getSchedule']);
     
-    // Spectator count
-    Route::get('/tournaments/{tournamentId}/spectator-count', [TournamentController::class, 'getSpectatorCount']);
+    // // Games (existing)
+    // Route::post('tournaments/{tournamentid}/creategames', [TournamentController::class, 'createGame']);
+    // Route::get('tournaments/{tournamentid}/getgames', [TournamentController::class, 'getGames']);
+    // Route::put('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
+    // Route::patch('tournaments/{tournamentid}/updategames/{gameid}', [TournamentController::class, 'updateGame']);
+    // Route::delete('tournaments/{tournamentid}/deletegames/{gameid}', [TournamentController::class, 'deleteGame']);
+
+    // // Registration & participant management routes (added)
+    // // Single registration endpoint (handles individual OR team registration)
+    // Route::post('tournaments/{tournamentid}/register/{eventid}', [TournamentController::class, 'register']);
+
+    // // Participants list and admin actions
+    // Route::get('tournaments/{tournamentid}/participants', [TournamentController::class, 'getParticipants']);
+    // Route::post('tournaments/{tournamentid}/participants/{participantid}/approve', [TournamentController::class, 'approveParticipant']);
+    // Route::post('tournaments/{tournamentid}/participants/bulk-approve', [TournamentController::class, 'bulkApproveParticipants']);
+    // Route::post('tournaments/{tournamentid}/participants/{participantid}/reject', [TournamentController::class, 'rejectParticipant']);
+    // Route::post('tournaments/{tournamentid}/participants/{participantid}/ban', [TournamentController::class, 'banParticipant']);
+
+    //  // Document Management
+    // Route::post('tournaments/{tournamentid}/documents/upload', [TournamentController::class, 'uploadDocument']);
+    // Route::get('tournaments/{tournamentid}/documents', [TournamentController::class, 'getDocuments']);
+    // Route::get('tournaments/{tournamentid}/participants/{participantId}/documents', [TournamentController::class, 'getParticipantDocuments']);
+    // Route::post('tournaments/{tournamentid}/documents/{documentId}/verify', [TournamentController::class, 'verifyDocument']);
+    // Route::delete('tournaments/{tournamentid}/documents/{documentId}/delete', [TournamentController::class, 'deleteDocument']);
+
+    // // Team Management within Tournaments (organizers)
+    // Route::post('tournaments/{tournamentid}/events/{eventid}/assign-teams', [TournamentController::class, 'assignTeams']);
+    // Route::post('tournaments/{tournamentid}/events/{eventid}/auto-balance', [TournamentController::class, 'autoBalanceTeams']);
+    // Route::post('tournaments/{tournamentid}/teams/{teamid}/replace-player', [TournamentController::class, 'replacePlayer']);
+    // Route::post('tournaments/{tournamentid}/participants/{participantid}/no-show', [TournamentController::class, 'markNoShow']);
+
+    // // Match Management
+    // Route::get('tournaments/{tournamentid}/matches', [\App\Http\Controllers\TournamentController::class, 'getMatches']);
+    // Route::get('tournaments/{tournamentid}/matches/live', [\App\Http\Controllers\TournamentController::class, 'getLiveMatches']);
+    // Route::get('tournaments/{tournamentid}/matches/{match}', [\App\Http\Controllers\TournamentController::class, 'getMatchDetails']);
+    // Route::post('tournaments/{tournamentid}/matches/{match}/start', [\App\Http\Controllers\TournamentController::class, 'startMatch']);
+    // Route::post('tournaments/{tournamentid}/matches/{match}/end', [\App\Http\Controllers\TournamentController::class, 'endMatch']);
+    // Route::post('tournaments/{tournamentid}/matches/{match}/score', [\App\Http\Controllers\TournamentController::class, 'updateScore']);
+    // Route::post('tournaments/{tournamentid}/matches/{match}/penalty', [\App\Http\Controllers\TournamentController::class, 'issuePenalty']);
+    // Route::post('tournaments/{tournamentid}/matches/{match}/forfeit', [\App\Http\Controllers\TournamentController::class, 'markForfeit']);
+    // Route::post('tournaments/{tournamentid}/matches/{match}/results', [\App\Http\Controllers\TournamentController::class, 'uploadResult']);
+    // Route::post('tournaments/{tournamentId}/matches/{match}/dispute', [\App\Http\Controllers\TournamentController::class, 'disputeResult']);
+    // Route::post('tournaments/{tournamentId}/matches/{match}/resolve-dispute', [\App\Http\Controllers\TournamentController::class, 'resolveDispute']);
+
+    // // Bracket Generation
+    // Route::post('tournaments/{tournament}/events/{event}/generate-brackets', [TournamentController::class, 'generateBrackets']);
+    // Route::post('tournaments/{tournamentId}/matches/{matchId}/advance', [TournamentController::class, 'advanceBracket']);
+
+    // // Tournament Announcements
+    // Route::post('/tournaments/{tournamentId}/announcements/create', [\App\Http\Controllers\TournamentAnnouncementController::class, 'createAnnouncement']);
+    // Route::get('/tournaments/{tournamentId}/announcements/get', [\App\Http\Controllers\TournamentAnnouncementController::class, 'getAnnouncements']);
+    // Route::put('/tournaments/{tournamentId}/announcements/{announcementId}/put', [\App\Http\Controllers\TournamentAnnouncementController::class, 'updateAnnouncement']);
+    // Route::delete('/tournaments/{tournamentId}/announcements/{announcementId}/delete', [\App\Http\Controllers\TournamentAnnouncementController::class, 'deleteAnnouncement']);
+
+    // // Analytics routes
+    // Route::get('/tournaments/{tournamentId}/analytics', [\App\Http\Controllers\AnalyticsController::class, 'getAnalytics']);
+    // Route::get('/tournaments/{tournamentId}/standings', [\App\Http\Controllers\AnalyticsController::class, 'getStandings']);
+    // Route::get('/tournaments/{tournamentId}/leaderboard', [\App\Http\Controllers\AnalyticsController::class, 'getLeaderboard']);
     
-    // Tournament settings
-    Route::patch('/tournaments/{tournamentId}/settings', [TournamentController::class, 'updateTournamentSettings']);
-
-    // Organizer Management
-    Route::post('/tournaments/{tournamentId}/organizers', [TournamentController::class, 'addOrganizer']);
-    Route::delete('/tournaments/{tournamentId}/organizers/{userId}', [TournamentController::class, 'removeOrganizer']);
-    Route::get('/tournaments/{tournamentId}/organizers', [TournamentController::class, 'listOrganizers']);
-    Route::put('/tournaments/{tournamentId}/organizers/{userId}/role', [TournamentController::class, 'updateOrganizerRole']);
-
-    // Registration Withdrawal
-    Route::delete('/tournaments/{tournamentId}/withdraw', [TournamentController::class, 'withdraw']);
-
-    // Waitlist Management
-    Route::post('/tournaments/{tournamentId}/waitlist', [TournamentController::class, 'joinWaitlist']);
-    Route::delete('/tournaments/{tournamentId}/waitlist', [TournamentController::class, 'removeFromWaitlist']);
-    Route::get('/tournaments/{tournamentId}/waitlist', [TournamentController::class, 'getWaitlist']);
-    Route::post('/tournaments/{tournamentId}/waitlist/promote', [TournamentController::class, 'promoteFromWaitlist']);
-
-    // Tournament Phases Management
-    Route::post('/tournaments/{tournamentId}/phases', [TournamentController::class, 'createPhase']);
-    Route::get('/tournaments/{tournamentId}/phases', [TournamentController::class, 'listPhases']);
-    Route::put('/tournaments/{tournamentId}/phases/{phaseId}', [TournamentController::class, 'updatePhase']);
-    Route::delete('/tournaments/{tournamentId}/phases/{phaseId}', [TournamentController::class, 'deletePhase']);
-    Route::post('/tournaments/{tournamentId}/phases/reorder', [TournamentController::class, 'reorderPhases']);
-
-    // Tournament Status Management
-    Route::post('/tournaments/{tournamentId}/open-registration', [TournamentController::class, 'openRegistration']);
-    Route::post('/tournaments/{tournamentId}/close-registration', [TournamentController::class, 'closeRegistration']);
-    Route::post('/tournaments/{tournamentId}/start', [TournamentController::class, 'startTournament']);
-    Route::post('/tournaments/{tournamentId}/complete', [TournamentController::class, 'completeTournament']);
+    // // Activity log
+    // Route::get('/tournaments/{tournamentId}/activity-log', [TournamentController::class, 'getActivityLog']);
     
-    // Tournament Cancellation
-    Route::post('/tournaments/{tournamentId}/cancel', [TournamentController::class, 'cancelTournament']);
+    // // Spectator count
+    // Route::get('/tournaments/{tournamentId}/spectator-count', [TournamentController::class, 'getSpectatorCount']);
+    
+    // // Tournament settings
+    // Route::patch('/tournaments/{tournamentId}/settings', [TournamentController::class, 'updateTournamentSettings']);
 
-    // Tournament Templates
-    Route::post('/tournaments/templates', [TournamentController::class, 'createTemplate']);
-    Route::get('/tournaments/templates', [TournamentController::class, 'listTemplates']);
-    Route::post('/tournaments/create-from-template/{templateId}', [TournamentController::class, 'createFromTemplate']);
-    Route::put('/tournaments/templates/{templateId}', [TournamentController::class, 'updateTemplate']);
-    Route::delete('/tournaments/templates/{templateId}', [TournamentController::class, 'deleteTemplate']);
+    // // Organizer Management
+    // Route::post('/tournaments/{tournamentId}/organizers', [TournamentController::class, 'addOrganizer']);
+    // Route::delete('/tournaments/{tournamentId}/organizers/{userId}', [TournamentController::class, 'removeOrganizer']);
+    // Route::get('/tournaments/{tournamentId}/organizers', [TournamentController::class, 'listOrganizers']);
+    // Route::put('/tournaments/{tournamentId}/organizers/{userId}/role', [TournamentController::class, 'updateOrganizerRole']);
 
-    // Additional utility routes
-    Route::post('tournaments/{tournamentId}/participants/bulk', [TournamentController::class,'bulkImportParticipants']);
-    Route::post('tournaments/{tournamentId}/invite-link', [TournamentController::class,'createInviteLink']);
-    Route::patch('tournaments/{tournamentId}/lock-participants', [TournamentController::class,'setParticipantLock']);
-    Route::get('tournaments/{tournamentId}/bracket-preview/{eventId}', [TournamentController::class,'generateBracketsPreview']);
-    Route::post('tournaments/{tournamentId}/participants/export', [TournamentController::class,'exportParticipants']);
-    Route::post('tournaments/{tournamentId}/results/export', [TournamentController::class,'exportResults']);
+    // // Registration Withdrawal
+    // Route::delete('/tournaments/{tournamentId}/withdraw', [TournamentController::class, 'withdraw']);
+
+    // // Waitlist Management
+    // Route::post('/tournaments/{tournamentId}/waitlist', [TournamentController::class, 'joinWaitlist']);
+    // Route::delete('/tournaments/{tournamentId}/waitlist', [TournamentController::class, 'removeFromWaitlist']);
+    // Route::get('/tournaments/{tournamentId}/waitlist', [TournamentController::class, 'getWaitlist']);
+    // Route::post('/tournaments/{tournamentId}/waitlist/promote', [TournamentController::class, 'promoteFromWaitlist']);
+
+    // // Tournament Phases Management
+    // Route::post('/tournaments/{tournamentId}/phases', [TournamentController::class, 'createPhase']);
+    // Route::get('/tournaments/{tournamentId}/phases', [TournamentController::class, 'listPhases']);
+    // Route::put('/tournaments/{tournamentId}/phases/{phaseId}', [TournamentController::class, 'updatePhase']);
+    // Route::delete('/tournaments/{tournamentId}/phases/{phaseId}', [TournamentController::class, 'deletePhase']);
+    // Route::post('/tournaments/{tournamentId}/phases/reorder', [TournamentController::class, 'reorderPhases']);
+
+    // // Tournament Status Management
+    // Route::post('/tournaments/{tournamentId}/open-registration', [TournamentController::class, 'openRegistration']);
+    // Route::post('/tournaments/{tournamentId}/close-registration', [TournamentController::class, 'closeRegistration']);
+    // Route::post('/tournaments/{tournamentId}/start', [TournamentController::class, 'startTournament']);
+    // Route::post('/tournaments/{tournamentId}/complete', [TournamentController::class, 'completeTournament']);
+    
+    // // Tournament Cancellation
+    // Route::post('/tournaments/{tournamentId}/cancel', [TournamentController::class, 'cancelTournament']);
+
+    // // Tournament Templates
+    // Route::post('/tournaments/templates', [TournamentController::class, 'createTemplate']);
+    // Route::get('/tournaments/templates', [TournamentController::class, 'listTemplates']);
+    // Route::post('/tournaments/create-from-template/{templateId}', [TournamentController::class, 'createFromTemplate']);
+    // Route::put('/tournaments/templates/{templateId}', [TournamentController::class, 'updateTemplate']);
+    // Route::delete('/tournaments/templates/{templateId}', [TournamentController::class, 'deleteTemplate']);
+
+    // // Additional utility routes
+    // Route::post('tournaments/{tournamentId}/participants/bulk', [TournamentController::class,'bulkImportParticipants']);
+    // Route::post('tournaments/{tournamentId}/invite-link', [TournamentController::class,'createInviteLink']);
+    // Route::patch('tournaments/{tournamentId}/lock-participants', [TournamentController::class,'setParticipantLock']);
+    // Route::get('tournaments/{tournamentId}/bracket-preview/{eventId}', [TournamentController::class,'generateBracketsPreview']);
+    // Route::post('tournaments/{tournamentId}/participants/export', [TournamentController::class,'exportParticipants']);
+    // Route::post('tournaments/{tournamentId}/results/export', [TournamentController::class,'exportResults']);
+
+    // // Additional Tournament Event Routes
+    // // Start tournament (generate bracket)
+    // Route::post('tournaments/{tournamentId}/start', [AdditionalTournamentController::class, 'startTournament']);
+
+    // // End a match (set score/winner, optionally auto-advance)
+    // Route::post('tournaments/{tournamentId}/matches/{match}/end', [AdditionalTournamentController::class, 'endMatch']);
+
+    // // Manually declare champion
+    // Route::post('tournaments/{tournamentId}/declare-champion', [AdditionalTournamentController::class, 'declareChampion']);
+
+    // Event check-in routes within tournaments
 
     Route::post('events/{event}/checkin', [TournamentController::class, 'checkinEvent']); // code-based checkin (if present)
     Route::post('events/checkin/qr', [TournamentController::class, 'checkinQR']);
