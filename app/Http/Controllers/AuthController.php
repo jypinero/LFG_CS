@@ -46,6 +46,14 @@ class AuthController extends Controller
      */
     public function register(Request $request)
     {
+        // Get role to determine if sports are required
+        $roleId = $request->input('role_id');
+        $role = Role::find($roleId);
+        
+        // Define roles that require sports
+        $rolesRequiringSports = ['athletes', 'trainer'];
+        $requiresSports = $role && in_array(strtolower($role->name), $rolesRequiringSports);
+        
         $validator = Validator::make($request->all(), [
             'first_name' => 'required|string|max:255',
             'middle_name' => 'nullable|string|max:255',
@@ -62,9 +70,10 @@ class AuthController extends Controller
             'zip_code' => 'required|string|max:255',
             'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'role_id' => 'required|exists:roles,id',
-            'sports' => 'required|array|min:1',
-            'sports.*.id' => 'required|exists:sports,id',
-            'sports.*.level' => 'required|in:beginner,competitive,professional',
+            // Make sports conditional based on role
+            'sports' => $requiresSports ? 'required|array|min:1' : 'nullable|array',
+            'sports.*.id' => $requiresSports ? 'required|exists:sports,id' : 'nullable|exists:sports,id',
+            'sports.*.level' => $requiresSports ? 'required|in:beginner,competitive,professional' : 'nullable|in:beginner,competitive,professional',
         ]);
 
         if ($validator->fails()) {
@@ -102,27 +111,36 @@ class AuthController extends Controller
                 'profile_photo' => $profilePhotoPath,
             ]);
 
-            $sports = $request->sports;
-            $mainSport = $sports[0];
+            // Only process sports if provided
+            $sports = $request->sports ?? [];
+            if (!empty($sports) && count($sports) > 0) {
+                $mainSport = $sports[0];
 
-            // Create user profile with main sport
-            $userProfile = UserProfile::create([
-                'user_id' => $user->id,
-                'main_sport_id' => $mainSport['id'],
-                'main_sport_level' => $mainSport['level'],
-                // Add other profile fields if needed
-            ]);
+                // Create user profile with main sport
+                $userProfile = UserProfile::create([
+                    'user_id' => $user->id,
+                    'main_sport_id' => $mainSport['id'],
+                    'main_sport_level' => $mainSport['level'],
+                    // Add other profile fields if needed
+                ]);
 
-            // Save additional sports (if any)
-            if (count($sports) > 1) {
-                $additionalSports = array_slice($sports, 1);
-                foreach ($additionalSports as $sport) {
-                    UserAdditionalSport::create([
-                        'user_id' => $user->id,
-                        'sport_id' => $sport['id'],
-                        'level' => $sport['level'],
-                    ]);
+                // Save additional sports (if any)
+                if (count($sports) > 1) {
+                    $additionalSports = array_slice($sports, 1);
+                    foreach ($additionalSports as $sport) {
+                        UserAdditionalSport::create([
+                            'user_id' => $user->id,
+                            'sport_id' => $sport['id'],
+                            'level' => $sport['level'],
+                        ]);
+                    }
                 }
+            } else {
+                // Create user profile without sports for roles that don't require them
+                UserProfile::create([
+                    'user_id' => $user->id,
+                    // main_sport_id and main_sport_level will be null
+                ]);
             }
 
             $token = Auth::guard('api')->login($user);
@@ -280,13 +298,56 @@ class AuthController extends Controller
                 ], 404);
             }
             
+            // Get team memberships with team details
+            $memberships = TeamMember::with('team')
+                ->where('user_id', $user->id)
+                ->get();
+
+            // Current teams (active memberships)
+            $currentTeams = $memberships->filter(function($m) {
+                return ($m->is_active === true) || ($m->roster_status === 'active');
+            })->values()->map(function($m) {
+                return [
+                    'team_id' => $m->team_id,
+                    'team_photo' => $m->team && $m->team->team_photo ? Storage::url($m->team->team_photo) : null,
+                    'team_name' => $m->team->name ?? null,
+                    'role' => $m->role,
+                    'position' => $m->position,
+                    'is_active' => (bool) $m->is_active,
+                    'roster_status' => $m->roster_status,
+                    'joined_at' => $m->joined_at ?? $m->created_at,
+                ];
+            })->filter(function($team) {
+                // Only include teams that actually exist (team relationship loaded)
+                return $team['team_name'] !== null;
+            });
+
+            // Past teams (left, removed, or inactive)
+            $pastTeams = $memberships->filter(function($m) {
+                return ($m->roster_status === 'left' || $m->roster_status === 'removed')
+                    || ($m->is_active === false && $m->roster_status !== 'active');
+            })->values()->map(function($m) {
+                return [
+                    'team_id' => $m->team_id,
+                    'team_photo' => $m->team && $m->team->team_photo ? Storage::url($m->team->team_photo) : null,
+                    'team_name' => $m->team->name ?? null,
+                    'role' => $m->role,
+                    'position' => $m->position,
+                    'roster_status' => $m->roster_status,
+                    'joined_at' => $m->joined_at ?? $m->created_at,
+                    'removed_at' => $m->removed_at ?? $m->updated_at,
+                ];
+            })->filter(function($team) {
+                // Only include teams that actually exist (team relationship loaded)
+                return $team['team_name'] !== null;
+            });
+
             return response()->json([
                 'status' => 'success',
-                'user' => $user->load('role', 'userProfile', 'userCertifications', 'userDocuments', 'userAdditionalSports.sport'),
+                'user' => $user->load('role', 'userProfile.mainSport', 'userCertifications', 'userDocuments', 'userAdditionalSports.sport'),
                 'has_team' => TeamMember::where('user_id', $user->id)->exists(),
-                'teams' => Team::whereIn('id', TeamMember::where('user_id', $user->id)->pluck('team_id'))
-                    ->get(['id', 'name'])
-                    ->map(function ($t) { return ['id' => $t->id, 'name' => $t->name]; })
+                'current_teams' => $currentTeams,
+                'past_teams' => $pastTeams,
             ]);
         } catch (\Tymon\JWTAuth\Exceptions\UserNotDefinedException $e) {
             return response()->json([
@@ -612,6 +673,12 @@ class AuthController extends Controller
             'province' => 'nullable|string|max:255',
             'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
             'bio' => 'nullable|string|max:1000',
+            'occupation' => 'nullable|string|max:255',
+            'main_sport_id' => 'nullable|exists:sports,id',
+            'main_sport_level' => 'nullable|in:beginner,competitive,professional',
+            'additional_sports' => 'nullable|array',
+            'additional_sports.*.id' => 'required_with:additional_sports|exists:sports,id',
+            'additional_sports.*.level' => 'required_with:additional_sports|in:beginner,competitive,professional',
         ]);
 
         if ($validator->fails()) {
@@ -643,15 +710,54 @@ class AuthController extends Controller
 
             $user->save();
 
-            // ✅ Update or create UserProfile for bio
+            // ✅ Get or create UserProfile
+            $userProfile = $user->userProfile ?: new \App\Models\UserProfile(['user_id' => $user->id]);
+            
+            // Update bio
             if ($request->filled('bio')) {
-                $userProfile = $user->userProfile ?: new \App\Models\UserProfile(['user_id' => $user->id]);
                 $userProfile->bio = $request->bio;
-                $userProfile->save();
+            }
+            
+            // Update occupation
+            if ($request->filled('occupation')) {
+                $userProfile->occupation = $request->occupation;
+            }
+            
+            // Update main sport
+            if ($request->filled('main_sport_id')) {
+                $userProfile->main_sport_id = $request->main_sport_id;
+                $userProfile->main_sport_level = $request->input('main_sport_level', 'beginner');
+            }
+            
+            $userProfile->save();
+
+            // ✅ Handle additional sports
+            if ($request->has('additional_sports')) {
+                // Delete existing additional sports
+                \App\Models\UserAdditionalSport::where('user_id', $user->id)->delete();
+                
+                // Add new additional sports (exclude main sport if it's in the list)
+                $additionalSports = $request->additional_sports;
+                $mainSportId = $userProfile->main_sport_id;
+                
+                foreach ($additionalSports as $sport) {
+                    // Don't add if it's the same as main sport
+                    if ($sport['id'] != $mainSportId) {
+                        \App\Models\UserAdditionalSport::create([
+                            'user_id' => $user->id,
+                            'sport_id' => $sport['id'],
+                            'level' => $sport['level'],
+                        ]);
+                    }
+                }
             }
 
-            // ✅ Include profile photo full URL for frontend
-            $userData = $user->load('userProfile')->toArray();
+            // ✅ Include profile photo full URL and load relationships for frontend
+            $userData = $user->load([
+                'userProfile.mainSport',
+                'userAdditionalSports.sport'
+            ])->toArray();
+            
             $userData['profile_photo_url'] = $user->profile_photo
                 ? asset('storage/' . $user->profile_photo)
                 : null;

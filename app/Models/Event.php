@@ -152,6 +152,11 @@ class Event extends Model
         return $this->hasMany(EventCheckin::class);
     }
 
+    public function matchNotes()
+    {
+        return $this->hasMany(\App\Models\MatchNote::class, 'event_id');
+    }
+
     /**
      * Event belongs to a Tournament
      */

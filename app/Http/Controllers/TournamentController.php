@@ -24,6 +24,9 @@ use Illuminate\Validation\Rule;
 use App\Models\EventResult;
 use App\Models\EventPenalty;
 use App\Models\AuditLog;
+use App\Models\MatchNote;
+use App\Models\EventScore;
+use App\Services\AnalyticsService;
 use Illuminate\Support\Facades\Storage;
 use App\Services\TournamentBracketGenerator; // added import
 use Illuminate\Support\Str;
@@ -341,6 +344,192 @@ class TournamentController extends Controller
         }
 
         return response()->json(['status' => 'success', 'tournament' => $tournament]);
+    }
+
+    /**
+     * Get tournament flow state - simplified state machine for UI
+     * Returns current step, available actions, and summary data
+     * GET /api/tournaments/{id}/flow
+     */
+    public function getFlowState(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::with(['events', 'participants.team', 'organizers.user'])
+            ->find($tournamentId);
+
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+        $isAuthorized = $isCreator || $isOrganizer;
+
+        // Get participants count
+        $participantsCount = $tournament->participants()->where('status', 'approved')->count();
+        $pendingCount = $tournament->participants()->where('status', 'pending')->count();
+
+        // Get matches count
+        $matches = Event::where('tournament_id', $tournament->id)
+            ->where('is_tournament_game', true)
+            ->get();
+        $matchesCount = $matches->count();
+        $completedMatches = $matches->filter(function($m) {
+            return $m->status === 'completed';
+        })->count();
+
+        // Get events/games
+        $events = $tournament->events()->where('is_tournament_game', true)->get();
+        $hasBrackets = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)->exists();
+
+        // Determine current step/phase
+        $currentStep = 'setup';
+        $availableActions = [];
+
+        if ($tournament->status === 'draft') {
+            $currentStep = 'draft';
+            if ($isAuthorized) {
+                $availableActions[] = [
+                    'action' => 'open_registration',
+                    'label' => 'Open Registration',
+                    'method' => 'POST',
+                    'endpoint' => "/api/tournaments/{$tournament->id}/open-registration",
+                    'description' => 'Allow participants to register',
+                ];
+                $availableActions[] = [
+                    'action' => 'edit',
+                    'label' => 'Edit Tournament',
+                    'method' => 'PUT',
+                    'endpoint' => "/api/tournaments/update/{$tournament->id}",
+                    'description' => 'Update tournament details',
+                ];
+            }
+        } elseif ($tournament->status === 'open_registration') {
+            $currentStep = 'registration';
+            if ($isAuthorized) {
+                $availableActions[] = [
+                    'action' => 'approve_participants',
+                    'label' => 'Approve Participants',
+                    'method' => 'GET',
+                    'endpoint' => "/api/tournaments/{$tournament->id}/participants",
+                    'description' => "Review and approve {$pendingCount} pending participant(s)",
+                ];
+                $availableActions[] = [
+                    'action' => 'close_registration',
+                    'label' => 'Close Registration',
+                    'method' => 'POST',
+                    'endpoint' => "/api/tournaments/{$tournament->id}/close-registration",
+                    'description' => 'Close registration and prepare brackets',
+                ];
+            }
+        } elseif ($tournament->status === 'registration_closed') {
+            $currentStep = 'setup_brackets';
+            if ($isAuthorized) {
+                if (!$hasBrackets && $events->count() > 0) {
+                    $firstEvent = $events->first();
+                    $availableActions[] = [
+                        'action' => 'generate_brackets',
+                        'label' => 'Generate Brackets',
+                        'method' => 'POST',
+                        'endpoint' => "/api/tournaments/{$tournament->id}/events/{$firstEvent->id}/generate-brackets",
+                        'description' => 'Generate tournament brackets',
+                        'payload' => [
+                            'bracket_type' => 'single_elimination',
+                            'seed_by' => 'random',
+                        ],
+                    ];
+                }
+                $availableActions[] = [
+                    'action' => 'start_tournament',
+                    'label' => 'Start Tournament',
+                    'method' => 'POST',
+                    'endpoint' => "/api/tournaments/{$tournament->id}/start",
+                    'description' => 'Begin the tournament',
+                ];
+            }
+        } elseif ($tournament->status === 'ongoing') {
+            $currentStep = 'running';
+            if ($isAuthorized) {
+                $liveMatches = Event::where('tournament_id', $tournament->id)
+                    ->where('is_tournament_game', true)
+                    ->whereIn('status', ['in_progress', 'ongoing'])
+                    ->count();
+
+                $availableActions[] = [
+                    'action' => 'manage_matches',
+                    'label' => 'Manage Matches',
+                    'method' => 'GET',
+                    'endpoint' => "/api/tournaments/{$tournament->id}/matches",
+                    'description' => "View and manage {$matchesCount} match(es)",
+                ];
+                $availableActions[] = [
+                    'action' => 'view_live',
+                    'label' => 'Live Matches',
+                    'method' => 'GET',
+                    'endpoint' => "/api/tournaments/{$tournament->id}/matches/live",
+                    'description' => "{$liveMatches} match(es) in progress",
+                ];
+                $availableActions[] = [
+                    'action' => 'view_standings',
+                    'label' => 'View Standings',
+                    'method' => 'GET',
+                    'endpoint' => "/api/tournaments/{$tournament->id}/standings",
+                    'description' => 'Current tournament standings',
+                ];
+                
+                if ($completedMatches === $matchesCount && $matchesCount > 0) {
+                    $availableActions[] = [
+                        'action' => 'complete_tournament',
+                        'label' => 'Complete Tournament',
+                        'method' => 'POST',
+                        'endpoint' => "/api/tournaments/{$tournament->id}/complete",
+                        'description' => 'Mark tournament as completed',
+                    ];
+                }
+            }
+        } elseif ($tournament->status === 'completed') {
+            $currentStep = 'completed';
+            $availableActions[] = [
+                'action' => 'view_standings',
+                'label' => 'Final Standings',
+                'method' => 'GET',
+                'endpoint' => "/api/tournaments/{$tournament->id}/standings",
+                'description' => 'View final tournament results',
+            ];
+        }
+
+        // Build summary
+        $summary = [
+            'status' => $tournament->status,
+            'participants_approved' => $participantsCount,
+            'participants_pending' => $pendingCount,
+            'matches_total' => $matchesCount,
+            'matches_completed' => $completedMatches,
+            'matches_remaining' => $matchesCount - $completedMatches,
+            'has_brackets' => $hasBrackets,
+            'events_count' => $events->count(),
+        ];
+
+        return response()->json([
+            'status' => 'success',
+            'tournament_id' => $tournament->id,
+            'tournament_name' => $tournament->name,
+            'current_step' => $currentStep,
+            'tournament_status' => $tournament->status,
+            'is_authorized' => $isAuthorized,
+            'summary' => $summary,
+            'available_actions' => $availableActions,
+            'progress' => [
+                'step' => $currentStep,
+                'status' => $tournament->status,
+                'completion_percentage' => $matchesCount > 0 
+                    ? round(($completedMatches / $matchesCount) * 100) 
+                    : 0,
+            ],
+        ]);
     }
 
     /**
@@ -1809,39 +1998,148 @@ class TournamentController extends Controller
             $query->where('game_number', $request->input('round'));
         }
 
-        // Order by date and start_time
-        $schedule = $query->orderBy('date')
-            ->orderBy('start_time')
-            ->get()
-            ->map(function($match) {
-                return [
-                    'id' => $match->id,
-                    'name' => $match->name,
-                    'date' => $match->date,
-                    'start_time' => $match->start_time,
-                    'end_time' => $match->end_time,
-                    'game_number' => $match->game_number,
-                    'status' => $match->status,
-                    'sport' => $match->sport,
-                    'venue' => $match->venue ? [
-                        'id' => $match->venue->id,
-                        'name' => $match->venue->name,
-                        'address' => $match->venue->address,
-                        'city' => $match->venue->city,
-                    ] : null,
-                    'facility' => $match->facility ? [
-                        'id' => $match->facility->id,
-                        'type' => $match->facility->type,
-                    ] : null,
-                    'teams' => $match->teams,
-                    'participants_count' => $match->participants->count(),
-                ];
+        // Additional filters
+        if ($request->filled('team_id')) {
+            $query->whereHas('teams', function($q) use ($request) {
+                $q->where('team_id', $request->input('team_id'));
             });
+        }
+
+        if ($request->filled('type')) {
+            $type = $request->input('type');
+            $now = now();
+            if ($type === 'upcoming') {
+                $query->where(function($q) use ($now) {
+                    $q->where('date', '>', $now->toDateString())
+                      ->orWhere(function($q2) use ($now) {
+                          $q2->whereDate('date', $now->toDateString())
+                             ->where('start_time', '>', $now->toTimeString());
+                      });
+                })->where('status', '!=', 'completed');
+            } elseif ($type === 'past') {
+                $query->where(function($q) use ($now) {
+                    $q->where('date', '<', $now->toDateString())
+                      ->orWhere(function($q2) use ($now) {
+                          $q2->whereDate('date', $now->toDateString())
+                             ->where('start_time', '<', $now->toTimeString());
+                      })
+                      ->orWhere('status', 'completed');
+                });
+            }
+        }
+
+        $daysAhead = $request->input('days_ahead', 7);
+        $cutoffDate = now()->addDays($daysAhead);
+
+        // Order by date and start_time
+        $matches = $query->orderBy('date')
+            ->orderBy('start_time')
+            ->get();
+
+        $now = now();
+        
+        // Separate into upcoming, past, and live
+        $upcoming = $matches->filter(function($match) use ($now, $cutoffDate) {
+            $matchDateTime = \Carbon\Carbon::parse($match->date . ' ' . $match->start_time);
+            return $matchDateTime->isFuture() && 
+                   $matchDateTime->lte($cutoffDate) && 
+                   $match->status !== 'completed';
+        })->map(function($match) {
+            return [
+                'id' => $match->id,
+                'name' => $match->name,
+                'date' => $match->date,
+                'start_time' => $match->start_time,
+                'end_time' => $match->end_time,
+                'game_number' => $match->game_number,
+                'status' => $match->status,
+                'sport' => $match->sport,
+                'venue' => $match->venue ? [
+                    'id' => $match->venue->id,
+                    'name' => $match->venue->name,
+                    'address' => $match->venue->address,
+                    'city' => $match->venue->city,
+                ] : null,
+                'facility' => $match->facility ? [
+                    'id' => $match->facility->id,
+                    'type' => $match->facility->type,
+                ] : null,
+                'teams' => $match->teams->map(function($et) {
+                    return [
+                        'id' => $et->team->id ?? null,
+                        'name' => $et->team->name ?? null,
+                        'logo' => $et->team->logo ?? null,
+                    ];
+                }),
+                'estimated_duration' => $match->end_time && $match->start_time 
+                    ? \Carbon\Carbon::parse($match->end_time)->diffInMinutes(\Carbon\Carbon::parse($match->start_time))
+                    : 120,
+            ];
+        })->values();
+
+        $past = $matches->filter(function($match) use ($now) {
+            $matchDateTime = \Carbon\Carbon::parse($match->date . ' ' . $match->start_time);
+            return $matchDateTime->isPast() || $match->status === 'completed';
+        })->map(function($match) {
+            $teamMatchup = \App\Models\TeamMatchup::where('event_id', $match->id)->first();
+            return [
+                'id' => $match->id,
+                'name' => $match->name,
+                'date' => $match->date,
+                'start_time' => $match->start_time,
+                'end_time' => $match->end_time,
+                'game_number' => $match->game_number,
+                'status' => $match->status,
+                'sport' => $match->sport,
+                'venue' => $match->venue ? [
+                    'id' => $match->venue->id,
+                    'name' => $match->venue->name,
+                ] : null,
+                'teams' => $match->teams->map(function($et) {
+                    return [
+                        'id' => $et->team->id ?? null,
+                        'name' => $et->team->name ?? null,
+                        'score' => null,
+                    ];
+                }),
+                'score_home' => $match->score_home ?? ($teamMatchup ? $teamMatchup->team_a_score : null),
+                'score_away' => $match->score_away ?? ($teamMatchup ? $teamMatchup->team_b_score : null),
+                'winner_team_id' => $match->winner_team_id ?? ($teamMatchup ? $teamMatchup->winner_team_id : null),
+                'completed_at' => $match->completed_at ?? ($teamMatchup ? $teamMatchup->completed_at : null),
+            ];
+        })->values();
+
+        $live = $matches->filter(function($match) use ($now) {
+            $matchDateTime = \Carbon\Carbon::parse($match->date . ' ' . $match->start_time);
+            $endDateTime = $match->end_time 
+                ? \Carbon\Carbon::parse($match->date . ' ' . $match->end_time)
+                : $matchDateTime->copy()->addHours(2);
+            return $matchDateTime->isPast() && 
+                   $endDateTime->isFuture() && 
+                   in_array($match->status, ['in_progress', 'ongoing']) &&
+                   $match->status !== 'completed';
+        })->map(function($match) {
+            $teamMatchup = \App\Models\TeamMatchup::where('event_id', $match->id)->first();
+            return [
+                'id' => $match->id,
+                'name' => $match->name,
+                'status' => $match->status,
+                'score_home' => $match->score_home ?? ($teamMatchup ? $teamMatchup->team_a_score : null),
+                'score_away' => $match->score_away ?? ($teamMatchup ? $teamMatchup->team_b_score : null),
+                'current_round' => isset($teamMatchup->meta['round_scores']) 
+                    ? count($teamMatchup->meta['round_scores']) + 1 
+                    : null,
+            ];
+        })->values();
 
         return response()->json([
             'status' => 'success',
-            'schedule' => $schedule,
-            'count' => $schedule->count()
+            'upcoming_matches' => $upcoming,
+            'past_matches' => $past,
+            'live_matches' => $live,
+            'upcoming_count' => $upcoming->count(),
+            'past_count' => $past->count(),
+            'live_count' => $live->count(),
         ]);
     }
 
@@ -2014,13 +2312,88 @@ class TournamentController extends Controller
         $tournament = Tournament::find($tournamentId);
         if (! $tournament) return response()->json(['status'=>'error','message'=>'Tournament not found'], 404);
 
-        $match = Event::with(['teams','participants'])->where('tournament_id', $tournament->id)->where('id', $matchId)->first();
+        $match = Event::with(['teams.team','participants','venue','facility'])->where('tournament_id', $tournament->id)->where('id', $matchId)->first();
         if (! $match) return response()->json(['status'=>'error','message'=>'Match not found'], 404);
+
+        $teamMatchup = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)
+            ->where('event_id', $match->id)
+            ->first();
 
         $penalties = EventPenalty::where('event_id', $match->id)->orderBy('created_at')->get();
         $results = EventResult::where('event_id', $match->id)->orderBy('created_at')->get();
+        
+        // Get match notes
+        $notes = MatchNote::with('creator')
+            ->where('event_id', $match->id)
+            ->where('tournament_id', $tournament->id)
+            ->orderBy('timestamp', 'asc')
+            ->orderBy('created_at', 'asc')
+            ->get();
 
-        return response()->json(['status'=>'success','match'=>$match,'penalties'=>$penalties,'results'=>$results]);
+        // Get score history from EventScore
+        $scoreHistory = EventScore::with('recorder')
+            ->where('event_id', $match->id)
+            ->orderBy('timestamp', 'desc')
+            ->get()
+            ->map(function($score) {
+                return [
+                    'id' => $score->id,
+                    'team_id' => $score->team_id,
+                    'points' => $score->points,
+                    'updated_at' => $score->timestamp,
+                    'updated_by' => $score->recorder ? [
+                        'id' => $score->recorder->id,
+                        'username' => $score->recorder->username,
+                    ] : null,
+                ];
+            });
+
+        // Get round scores from TeamMatchup meta
+        $roundScores = [];
+        if ($teamMatchup && isset($teamMatchup->meta['round_scores'])) {
+            $roundScores = $teamMatchup->meta['round_scores'];
+        }
+
+        // Get disputes
+        $disputes = [];
+        if ($teamMatchup && $teamMatchup->is_disputed) {
+            $disputes[] = [
+                'id' => $teamMatchup->id,
+                'status' => 'pending',
+                'reason' => $teamMatchup->dispute_reason ?? null,
+                'disputed_at' => $teamMatchup->disputed_at ?? null,
+            ];
+        }
+
+        // Build enhanced match response
+        $matchData = $match->toArray();
+        $matchData['score_home'] = $match->score_home ?? ($teamMatchup ? $teamMatchup->team_a_score : null);
+        $matchData['score_away'] = $match->score_away ?? ($teamMatchup ? $teamMatchup->team_b_score : null);
+        $matchData['round_scores'] = $roundScores;
+        $matchData['spectator_count'] = 0; // Placeholder - would need implementation
+        $matchData['referee'] = null; // Placeholder - would need implementation
+
+        return response()->json([
+            'status' => 'success',
+            'match' => $matchData,
+            'penalties' => $penalties,
+            'results' => $results,
+            'notes' => $notes->map(function($note) {
+                return [
+                    'id' => $note->id,
+                    'content' => $note->content,
+                    'type' => $note->type,
+                    'timestamp' => $note->timestamp,
+                    'created_by' => [
+                        'id' => $note->creator->id ?? null,
+                        'username' => $note->creator->username ?? null,
+                    ],
+                    'created_at' => $note->created_at,
+                ];
+            }),
+            'score_history' => $scoreHistory,
+            'disputes' => $disputes,
+        ]);
     }
 
     /**
@@ -2144,6 +2517,12 @@ class TournamentController extends Controller
                 'score_away' => 'required|integer|min:0',
                 'winner_team_id' => 'sometimes|nullable|integer|exists:teams,id',
                 'force_update' => 'sometimes|boolean',
+                'round_scores' => 'sometimes|array',
+                'round_scores.*.round' => 'required|integer|min:1',
+                'round_scores.*.home' => 'required|integer|min:0',
+                'round_scores.*.away' => 'required|integer|min:0',
+                'round_scores.*.duration' => 'sometimes|nullable|integer|min:0',
+                'notes' => 'sometimes|nullable|string|max:2000',
             ]);
 
             // Validate match result
@@ -2184,7 +2563,47 @@ class TournamentController extends Controller
                 if ($match->winner_team_id) {
                     $teamMatchup->winner_team_id = $match->winner_team_id;
                 }
+                
+                // Store round_scores in meta
+                if (isset($data['round_scores'])) {
+                    $meta = $teamMatchup->meta ?? [];
+                    $meta['round_scores'] = $data['round_scores'];
+                    $teamMatchup->meta = $meta;
+                }
+                
                 $teamMatchup->save();
+            }
+
+            // Save score history to EventScore
+            $eventTeams = EventTeam::where('event_id', $match->id)->orderBy('id')->get();
+            if ($eventTeams->count() >= 2) {
+                EventScore::create([
+                    'event_id' => $match->id,
+                    'team_id' => $eventTeams[0]->team_id,
+                    'points' => $data['score_home'],
+                    'recorded_by' => $user->id,
+                    'timestamp' => now(),
+                ]);
+                
+                EventScore::create([
+                    'event_id' => $match->id,
+                    'team_id' => $eventTeams[1]->team_id,
+                    'points' => $data['score_away'],
+                    'recorded_by' => $user->id,
+                    'timestamp' => now(),
+                ]);
+            }
+
+            // Add note if provided
+            if (!empty($data['notes'])) {
+                MatchNote::create([
+                    'event_id' => $match->id,
+                    'tournament_id' => $tournament->id,
+                    'created_by' => $user->id,
+                    'content' => $data['notes'],
+                    'type' => 'update',
+                    'timestamp' => now(),
+                ]);
             }
 
         } else {
@@ -3560,6 +3979,8 @@ class TournamentController extends Controller
 
         $data = $request->validate([
             'reason' => 'required|string|max:1000',
+            'details' => 'sometimes|nullable|string|max:2000',
+            'team_id' => 'sometimes|nullable|integer|exists:teams,id',
         ]);
 
         // Find TeamMatchup
@@ -3573,11 +3994,24 @@ class TournamentController extends Controller
 
         // Check if user is participant in this match
         $isParticipant = false;
+        $disputingTeamId = $data['team_id'] ?? null;
+        
         if ($tournament->tournament_type === 'team vs team') {
             $userTeams = TeamMember::where('user_id', $user->id)
                 ->whereIn('team_id', [$teamMatchup->team_a_id, $teamMatchup->team_b_id])
-                ->exists();
-            $isParticipant = $userTeams;
+                ->pluck('team_id')
+                ->toArray();
+            $isParticipant = !empty($userTeams);
+            
+            // If team_id provided, verify user is member of that team
+            if ($disputingTeamId && !in_array($disputingTeamId, $userTeams)) {
+                return response()->json(['status' => 'error', 'message' => 'You are not a member of the specified team'], 403);
+            }
+            
+            // If no team_id provided but user is in multiple teams, use first team
+            if (!$disputingTeamId && !empty($userTeams)) {
+                $disputingTeamId = $userTeams[0];
+            }
         } else {
             $meta = $teamMatchup->meta ?? [];
             $isParticipant = ($meta['user_a_id'] ?? null) == $user->id || ($meta['user_b_id'] ?? null) == $user->id;
@@ -3587,10 +4021,27 @@ class TournamentController extends Controller
             return response()->json(['status' => 'error', 'message' => 'You are not a participant in this match'], 403);
         }
 
+        // Build dispute reason with details
+        $disputeReason = $data['reason'];
+        if (!empty($data['details'])) {
+            $disputeReason .= "\n\nDetails: " . $data['details'];
+        }
+
+        // Store dispute info in meta
+        $meta = $teamMatchup->meta ?? [];
+        $meta['dispute'] = [
+            'team_id' => $disputingTeamId,
+            'user_id' => $user->id,
+            'reason' => $data['reason'],
+            'details' => $data['details'] ?? null,
+            'disputed_at' => now()->toIso8601String(),
+        ];
+        
         $teamMatchup->update([
             'is_disputed' => true,
-            'dispute_reason' => $data['reason'],
+            'dispute_reason' => $disputeReason,
             'disputed_at' => now(),
+            'meta' => $meta,
         ]);
 
         // Notify organizers
@@ -3646,7 +4097,11 @@ class TournamentController extends Controller
         }
 
         $data = $request->validate([
+            'dispute_id' => 'sometimes|nullable|integer',
             'resolution' => 'required|string|max:1000',
+            'final_score_home' => 'sometimes|nullable|integer|min:0',
+            'final_score_away' => 'sometimes|nullable|integer|min:0',
+            'notes' => 'sometimes|nullable|string|max:2000',
             'keep_result' => 'sometimes|boolean', // true = keep current result, false = needs update
         ]);
 
@@ -3662,22 +4117,86 @@ class TournamentController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Match is not disputed'], 422);
         }
 
+        $match = Event::find($matchId);
+        
+        // Update scores if provided
+        if (isset($data['final_score_home']) && isset($data['final_score_away'])) {
+            $teamMatchup->team_a_score = $data['final_score_home'];
+            $teamMatchup->team_b_score = $data['final_score_away'];
+            
+            if ($match) {
+                $match->score_home = $data['final_score_home'];
+                $match->score_away = $data['final_score_away'];
+                
+                // Determine winner
+                if ($data['final_score_home'] > $data['final_score_away']) {
+                    $teams = EventTeam::where('event_id', $match->id)->orderBy('id')->pluck('team_id')->toArray();
+                    $match->winner_team_id = $teams[0] ?? null;
+                    $teamMatchup->winner_team_id = $match->winner_team_id;
+                } elseif ($data['final_score_away'] > $data['final_score_home']) {
+                    $teams = EventTeam::where('event_id', $match->id)->orderBy('id')->pluck('team_id')->toArray();
+                    $match->winner_team_id = $teams[1] ?? null;
+                    $teamMatchup->winner_team_id = $match->winner_team_id;
+                } else {
+                    $match->winner_team_id = null;
+                    $teamMatchup->winner_team_id = null;
+                }
+                
+                $match->save();
+            }
+        }
+
+        // Update dispute status
+        $resolutionText = $data['resolution'];
+        if (!empty($data['notes'])) {
+            $resolutionText .= "\n\nNotes: " . $data['notes'];
+        }
+        
         $teamMatchup->update([
             'is_disputed' => false,
-            'dispute_reason' => $teamMatchup->dispute_reason . "\n[RESOLVED] " . $data['resolution'],
+            'dispute_reason' => $teamMatchup->dispute_reason . "\n\n[RESOLVED] " . $resolutionText,
             'disputed_at' => null,
         ]);
 
-        // Add resolution note
-        $notes = $teamMatchup->notes ?? '';
-        $teamMatchup->notes = $notes . "\n[DISPUTE RESOLUTION] " . $data['resolution'];
+        // Add resolution note to match notes
+        if (!empty($data['notes'])) {
+            $notes = $teamMatchup->notes ?? '';
+            $teamMatchup->notes = $notes . "\n[DISPUTE RESOLUTION] " . $data['notes'];
+        }
+        
+        // Update meta with resolution
+        $meta = $teamMatchup->meta ?? [];
+        if (isset($meta['dispute'])) {
+            $meta['dispute']['resolved'] = true;
+            $meta['dispute']['resolved_by'] = $user->id;
+            $meta['dispute']['resolution'] = $data['resolution'];
+            $meta['dispute']['resolved_at'] = now()->toIso8601String();
+            $teamMatchup->meta = $meta;
+        }
+        
         $teamMatchup->save();
 
-            return response()->json([
-                'status' => 'success',
-                'message' => 'Dispute resolved',
-                'match' => $teamMatchup
-            ]);
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Dispute resolved',
+            'dispute' => [
+                'id' => $teamMatchup->id,
+                'status' => 'resolved',
+                'resolution' => $data['resolution'],
+                'resolved_at' => now()->toIso8601String(),
+                'resolved_by' => [
+                    'id' => $user->id,
+                    'username' => $user->username,
+                ],
+            ],
+            'match' => [
+                'id' => $match ? $match->id : null,
+                'score_home' => $teamMatchup->team_a_score,
+                'score_away' => $teamMatchup->team_b_score,
+                'winner_team_id' => $teamMatchup->winner_team_id,
+            ],
+            'standings_updated' => true,
+        ]);
         }
 
     /**
@@ -5178,6 +5697,502 @@ class TournamentController extends Controller
             'message' => 'Tournament settings updated',
             'tournament_id' => $tournament->id,
             'settings' => $currentSettings,
+        ]);
+    }
+
+    /**
+     * Get public tournament standings (no auth required)
+     * GET /api/tournaments/public/{tournamentId}/standings
+     */
+    public function getPublicStandings($tournamentId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Only show public tournaments (not drafts)
+        if ($tournament->status === 'draft') {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $analyticsService = app(AnalyticsService::class);
+        $analyticsService->calculateStandings($tournament);
+
+        $standings = \App\Models\Standing::where('tournament_id', $tournament->id)
+            ->orderBy('rank')
+            ->get()
+            ->map(function($standing) {
+                if ($standing->team_id) {
+                    $team = $standing->team;
+                    return [
+                        'rank' => $standing->rank,
+                        'team_id' => $standing->team_id,
+                        'team_name' => $team?->name ?? 'Unknown',
+                        'team_logo' => $team?->logo ?? null,
+                        'wins' => $standing->wins,
+                        'losses' => $standing->losses,
+                        'draws' => $standing->draws,
+                        'points' => $standing->points,
+                        'win_rate' => $standing->win_rate,
+                        'matches_played' => $standing->wins + $standing->losses + $standing->draws,
+                    ];
+                } else {
+                    $user = $standing->user;
+                    return [
+                        'rank' => $standing->rank,
+                        'user_id' => $standing->user_id,
+                        'name' => $user ? ($user->first_name . ' ' . $user->last_name) : 'Unknown',
+                        'wins' => $standing->wins,
+                        'losses' => $standing->losses,
+                        'draws' => $standing->draws,
+                        'points' => $standing->points,
+                        'win_rate' => $standing->win_rate,
+                        'matches_played' => $standing->wins + $standing->losses + $standing->draws,
+                    ];
+                }
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'standings' => $standings,
+            'count' => $standings->count(),
+            'last_updated' => now()->toIso8601String(),
+        ]);
+    }
+
+    /**
+     * Get public tournament schedule (no auth required)
+     * GET /api/tournaments/public/{tournamentId}/schedule
+     */
+    public function getPublicSchedule(Request $request, $tournamentId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Only show public tournaments (not drafts)
+        if ($tournament->status === 'draft') {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $now = now();
+        $daysAhead = $request->input('days_ahead', 7);
+        $cutoffDate = $now->copy()->addDays($daysAhead);
+
+        $query = Event::with(['teams', 'venue', 'facility'])
+            ->where('tournament_id', $tournament->id)
+            ->where('is_tournament_game', true);
+
+        // Apply filters
+        if ($request->filled('round')) {
+            $query->where('game_number', $request->input('round'));
+        }
+        if ($request->filled('team_id')) {
+            $query->whereHas('teams', function($q) use ($request) {
+                $q->where('team_id', $request->input('team_id'));
+            });
+        }
+        if ($request->filled('start_date')) {
+            $query->where('date', '>=', $request->input('start_date'));
+        }
+        if ($request->filled('end_date')) {
+            $query->where('date', '<=', $request->input('end_date'));
+        }
+
+        $matches = $query->orderBy('date')->orderBy('start_time')->get();
+
+        $upcoming = $matches->filter(function($match) use ($now) {
+            $matchDateTime = \Carbon\Carbon::parse($match->date . ' ' . $match->start_time);
+            return $matchDateTime->isFuture() && $match->status !== 'completed';
+        })->map(function($match) {
+            return [
+                'id' => $match->id,
+                'name' => $match->name,
+                'date' => $match->date,
+                'start_time' => $match->start_time,
+                'end_time' => $match->end_time,
+                'game_number' => $match->game_number,
+                'status' => $match->status,
+                'sport' => $match->sport,
+                'venue' => $match->venue ? [
+                    'id' => $match->venue->id,
+                    'name' => $match->venue->name,
+                    'address' => $match->venue->address,
+                ] : null,
+                'teams' => $match->teams->map(function($et) {
+                    return [
+                        'id' => $et->team->id ?? null,
+                        'name' => $et->team->name ?? null,
+                        'logo' => $et->team->logo ?? null,
+                    ];
+                }),
+            ];
+        })->values();
+
+        $past = $matches->filter(function($match) use ($now) {
+            $matchDateTime = \Carbon\Carbon::parse($match->date . ' ' . $match->start_time);
+            return $matchDateTime->isPast() || $match->status === 'completed';
+        })->map(function($match) {
+            return [
+                'id' => $match->id,
+                'name' => $match->name,
+                'date' => $match->date,
+                'start_time' => $match->start_time,
+                'end_time' => $match->end_time,
+                'game_number' => $match->game_number,
+                'status' => $match->status,
+                'sport' => $match->sport,
+                'venue' => $match->venue ? [
+                    'id' => $match->venue->id,
+                    'name' => $match->venue->name,
+                ] : null,
+                'teams' => $match->teams->map(function($et) {
+                    return [
+                        'id' => $et->team->id ?? null,
+                        'name' => $et->team->name ?? null,
+                        'score' => null, // Would need to get from EventScore or match
+                    ];
+                }),
+                'score_home' => $match->score_home ?? null,
+                'score_away' => $match->score_away ?? null,
+                'winner_team_id' => $match->winner_team_id ?? null,
+            ];
+        })->values();
+
+        return response()->json([
+            'status' => 'success',
+            'upcoming_matches' => $upcoming,
+            'past_matches' => $past,
+            'upcoming_count' => $upcoming->count(),
+            'past_count' => $past->count(),
+        ]);
+    }
+
+    /**
+     * Get public match details (no auth required, limited info)
+     * GET /api/tournaments/public/{tournamentId}/matches/{matchId}
+     */
+    public function getPublicMatchDetail($tournamentId, $matchId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Only show public tournaments (not drafts)
+        if ($tournament->status === 'draft') {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $match = Event::with(['teams.team', 'venue'])
+            ->where('tournament_id', $tournament->id)
+            ->where('id', $matchId)
+            ->where('is_tournament_game', true)
+            ->first();
+
+        if (!$match) {
+            return response()->json(['status' => 'error', 'message' => 'Match not found'], 404);
+        }
+
+        $teamMatchup = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)
+            ->where('event_id', $match->id)
+            ->first();
+
+        return response()->json([
+            'status' => 'success',
+            'match' => [
+                'id' => $match->id,
+                'name' => $match->name,
+                'date' => $match->date,
+                'start_time' => $match->start_time,
+                'end_time' => $match->end_time,
+                'status' => $match->status,
+                'sport' => $match->sport,
+                'venue' => $match->venue ? [
+                    'id' => $match->venue->id,
+                    'name' => $match->venue->name,
+                ] : null,
+                'teams' => $match->teams->map(function($et) {
+                    $team = $et->team;
+                    return [
+                        'id' => $team->id ?? null,
+                        'name' => $team->name ?? null,
+                        'logo' => $team->logo ?? null,
+                    ];
+                }),
+                'score_home' => $match->score_home ?? ($teamMatchup ? $teamMatchup->team_a_score : null),
+                'score_away' => $match->score_away ?? ($teamMatchup ? $teamMatchup->team_b_score : null),
+                'winner_team_id' => $match->winner_team_id ?? ($teamMatchup ? $teamMatchup->winner_team_id : null),
+                'completed_at' => $match->completed_at ?? ($teamMatchup ? $teamMatchup->completed_at : null),
+            ],
+        ]);
+    }
+
+    /**
+     * Add match note/commentary
+     * POST /api/tournaments/{tournamentId}/matches/{matchId}/notes
+     */
+    public function addMatchNote(Request $request, $tournamentId, $matchId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $match = Event::where('tournament_id', $tournament->id)
+            ->where('id', $matchId)
+            ->first();
+
+        if (!$match) {
+            return response()->json(['status' => 'error', 'message' => 'Match not found'], 404);
+        }
+
+        $data = $request->validate([
+            'content' => 'required|string|max:2000',
+            'type' => 'nullable|in:commentary,note,update',
+            'timestamp' => 'nullable|date',
+        ]);
+
+        $note = MatchNote::create([
+            'event_id' => $match->id,
+            'tournament_id' => $tournament->id,
+            'created_by' => $user->id,
+            'content' => $data['content'],
+            'type' => $data['type'] ?? 'commentary',
+            'timestamp' => $data['timestamp'] ?? now(),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'note' => [
+                'id' => $note->id,
+                'match_id' => $note->event_id,
+                'content' => $note->content,
+                'type' => $note->type,
+                'timestamp' => $note->timestamp,
+                'created_by' => [
+                    'id' => $user->id,
+                    'username' => $user->username,
+                ],
+                'created_at' => $note->created_at,
+            ],
+        ], 201);
+    }
+
+    /**
+     * Get match notes/commentary
+     * GET /api/tournaments/{tournamentId}/matches/{matchId}/notes
+     */
+    public function getMatchNotes(Request $request, $tournamentId, $matchId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $match = Event::where('tournament_id', $tournament->id)
+            ->where('id', $matchId)
+            ->first();
+
+        if (!$match) {
+            return response()->json(['status' => 'error', 'message' => 'Match not found'], 404);
+        }
+
+        $notes = MatchNote::with('creator')
+            ->where('event_id', $match->id)
+            ->where('tournament_id', $tournament->id)
+            ->orderBy('timestamp', 'asc')
+            ->orderBy('created_at', 'asc')
+            ->get()
+            ->map(function($note) {
+                return [
+                    'id' => $note->id,
+                    'match_id' => $note->event_id,
+                    'content' => $note->content,
+                    'type' => $note->type,
+                    'timestamp' => $note->timestamp,
+                    'created_by' => [
+                        'id' => $note->creator->id ?? null,
+                        'username' => $note->creator->username ?? null,
+                    ],
+                    'created_at' => $note->created_at,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'notes' => $notes,
+            'count' => $notes->count(),
+        ]);
+    }
+
+    /**
+     * Get team profile within tournament context
+     * GET /api/tournaments/{tournamentId}/teams/{teamId}
+     */
+    public function getTournamentTeamProfile(Request $request, $tournamentId, $teamId)
+    {
+        $tournament = Tournament::find($tournamentId);
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $team = Team::with('members.user')->find($teamId);
+        if (!$team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Check if team is a participant
+        $participant = TournamentParticipant::where('tournament_id', $tournament->id)
+            ->where('team_id', $teamId)
+            ->where('status', 'approved')
+            ->first();
+
+        if (!$participant) {
+            return response()->json(['status' => 'error', 'message' => 'Team is not a participant in this tournament'], 404);
+        }
+
+        // Get standings
+        $standing = \App\Models\Standing::where('tournament_id', $tournament->id)
+            ->where('team_id', $teamId)
+            ->first();
+
+        // Get matchups for this team
+        $matchups = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)
+            ->where(function($q) use ($teamId) {
+                $q->where('team_a_id', $teamId)->orWhere('team_b_id', $teamId);
+            })
+            ->where('status', 'completed')
+            ->orderBy('completed_at', 'desc')
+            ->get();
+
+        $wins = 0;
+        $losses = 0;
+        $draws = 0;
+        $pastResults = [];
+        $totalPointsScored = 0;
+        $totalPointsAgainst = 0;
+
+        foreach ($matchups as $matchup) {
+            $isTeamA = $matchup->team_a_id === $teamId;
+            $opponentId = $isTeamA ? $matchup->team_b_id : $matchup->team_a_id;
+            $opponent = Team::find($opponentId);
+            
+            $teamScore = $isTeamA ? $matchup->team_a_score : $matchup->team_b_score;
+            $opponentScore = $isTeamA ? $matchup->team_b_score : $matchup->team_a_score;
+            
+            $totalPointsScored += $teamScore ?? 0;
+            $totalPointsAgainst += $opponentScore ?? 0;
+
+            $result = 'draw';
+            if ($matchup->winner_team_id === $teamId) {
+                $wins++;
+                $result = 'win';
+            } elseif ($matchup->winner_team_id === $opponentId) {
+                $losses++;
+                $result = 'loss';
+            } else {
+                $draws++;
+            }
+
+            $pastResults[] = [
+                'match_id' => $matchup->event_id,
+                'date' => $matchup->completed_at?->toDateString(),
+                'opponent' => [
+                    'id' => $opponent->id ?? null,
+                    'name' => $opponent->name ?? null,
+                    'logo' => $opponent->logo ?? null,
+                ],
+                'result' => $result,
+                'score' => ($teamScore ?? 0) . '-' . ($opponentScore ?? 0),
+                'team_score' => $teamScore ?? 0,
+                'opponent_score' => $opponentScore ?? 0,
+            ];
+        }
+
+        // Get upcoming matches
+        $upcomingMatchups = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)
+            ->where(function($q) use ($teamId) {
+                $q->where('team_a_id', $teamId)->orWhere('team_b_id', $teamId);
+            })
+            ->whereIn('status', ['scheduled', 'in_progress'])
+            ->orderBy('scheduled_at', 'asc')
+            ->get();
+
+        $upcomingMatches = [];
+        foreach ($upcomingMatchups as $matchup) {
+            $isTeamA = $matchup->team_a_id === $teamId;
+            $opponentId = $isTeamA ? $matchup->team_b_id : $matchup->team_a_id;
+            $opponent = Team::find($opponentId);
+            $event = Event::find($matchup->event_id);
+
+            $upcomingMatches[] = [
+                'match_id' => $matchup->event_id,
+                'name' => $event->name ?? null,
+                'date' => $event->date ?? null,
+                'start_time' => $event->start_time ?? null,
+                'opponent' => [
+                    'id' => $opponent->id ?? null,
+                    'name' => $opponent->name ?? null,
+                    'logo' => $opponent->logo ?? null,
+                ],
+            ];
+        }
+
+        // Calculate form (last 5 matches)
+        $form = array_slice(array_map(function($r) {
+            return strtoupper(substr($r['result'], 0, 1));
+        }, $pastResults), 0, 5);
+
+        $matchesPlayed = $wins + $losses + $draws;
+        $winRate = $matchesPlayed > 0 ? ($wins / $matchesPlayed) * 100 : 0;
+
+        return response()->json([
+            'status' => 'success',
+            'team' => [
+                'id' => $team->id,
+                'name' => $team->name,
+                'logo' => $team->logo,
+                'members' => $team->members->map(function($member) {
+                    return [
+                        'id' => $member->id,
+                        'user_id' => $member->user_id,
+                        'username' => $member->user->username ?? null,
+                        'first_name' => $member->user->first_name ?? null,
+                        'last_name' => $member->user->last_name ?? null,
+                        'role' => $member->role,
+                    ];
+                }),
+                'tournament_record' => [
+                    'wins' => $wins,
+                    'losses' => $losses,
+                    'draws' => $draws,
+                    'win_rate' => $winRate,
+                    'points' => $standing->points ?? 0,
+                    'rank' => $standing->rank ?? null,
+                    'matches_played' => $matchesPlayed,
+                ],
+                'seeding' => $participant->seed ?? null,
+                'total_points_scored' => $totalPointsScored,
+                'total_points_against' => $totalPointsAgainst,
+                'point_differential' => $totalPointsScored - $totalPointsAgainst,
+                'upcoming_matches' => $upcomingMatches,
+                'past_results' => array_slice($pastResults, 0, 10), // Last 10 matches
+                'form' => $form,
+            ],
         ]);
     }
 }

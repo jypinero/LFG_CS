@@ -395,7 +395,8 @@ class MarketingController extends Controller
         $userVenueIds = VenueUser::where('user_id', $user->id)->pluck('venue_id')->toArray();
 
         // include profile_photo so we can expose a full URL in the response
-        $query = MarketingPost::with(['post','event','booking','author:id,username,profile_photo','venue:id,name'])
+        // include venue coordinates for location-based rendering
+        $query = MarketingPost::with(['post','event','booking','author:id,username,profile_photo','venue:id,name,latitude,longitude,address'])
             ->where(function($q) use ($user, $userVenueIds) {
                 $q->whereNull('venue_id')
                   ->orWhere('author_id', $user->id)
@@ -437,6 +438,17 @@ class MarketingController extends Controller
             if (! empty($item->venue_id)) {
                 $path = DB::table('venue_photos')->where('venue_id', $item->venue_id)->value('image_path');
                 $item->venue_photo_url = $path ? Storage::url($path) : null;
+            }
+
+            // Add venue coordinates for location-based rendering
+            if ($item->venue) {
+                $item->latitude = $item->venue->latitude;
+                $item->longitude = $item->venue->longitude;
+                $item->venue_address = $item->venue->address;
+            } else {
+                $item->latitude = null;
+                $item->longitude = null;
+                $item->venue_address = null;
             }
 
             return $item;

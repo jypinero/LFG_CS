@@ -364,16 +364,17 @@ class SocialiteController extends Controller
                 $user->update($updateData);
             }
 
+            // Ensure user profile exists
+            $userProfile = $user->userProfile ?: new UserProfile(['user_id' => $user->id]);
+            
             // Handle sports (only if provided)
             if ($request->has('sports') && is_array($request->sports) && count($request->sports) > 0) {
                 $sports = $request->sports;
                 $mainSport = $sports[0];
 
-                // Create or update user profile with main sport
-                $userProfile = $user->userProfile ?: new UserProfile(['user_id' => $user->id]);
+                // Update user profile with main sport
                 $userProfile->main_sport_id = $mainSport['id'];
                 $userProfile->main_sport_level = $mainSport['level'];
-                $userProfile->save();
 
                 // Delete existing additional sports and create new ones
                 UserAdditionalSport::where('user_id', $user->id)->delete();
@@ -390,6 +391,9 @@ class SocialiteController extends Controller
                     }
                 }
             }
+            
+            // Save user profile (with or without sports)
+            $userProfile->save();
 
             // Generate new JWT token
             $token = JWTAuth::fromUser($user);

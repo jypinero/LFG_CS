@@ -78,14 +78,54 @@ class EventController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        // Get regular events (exclude tournament games)
-        $events = Event::with(['venue.photos', 'facility', 'teams.team'])
+        // Build base query for regular events (exclude tournament games)
+        $query = Event::with(['venue.photos', 'facility', 'teams.team'])
             ->where('is_approved', true)
             ->where('is_tournament_game', false)
-            ->where('game_status', '!=', 'cancelled') // Exclude tournament games
-            ->withCount('participants')
+            ->whereNull('cancelled_at')
+            ->withCount('participants');
+
+        // Filter by event_type (for friendlygames/tune-ups)
+        if ($request->filled('event_type')) {
+            $query->where('event_type', $request->input('event_type'));
+        }
+
+        // Filter by custom date range
+        if ($request->filled('start_date')) {
+            $query->where('date', '>=', $request->input('start_date'));
+        }
+        if ($request->filled('end_date')) {
+            $query->where('date', '<=', $request->input('end_date'));
+        }
+
+        // Filter by day of week (0=Sunday, 6=Saturday)
+        // MySQL DAYOFWEEK returns 1=Sunday, 2=Monday, ..., 7=Saturday
+        if ($request->filled('day')) {
+            $dayOfWeek = (int) $request->input('day');
+            if ($dayOfWeek >= 0 && $dayOfWeek <= 6) {
+                $mysqlDay = $dayOfWeek + 1; // Convert 0-6 to 1-7 for MySQL
+                $query->whereRaw('DAYOFWEEK(date) = ?', [$mysqlDay]);
+            }
+        }
+
+        // Filter by time range
+        if ($request->filled('time_from')) {
+            $query->where('start_time', '>=', $request->input('time_from'));
+        }
+        if ($request->filled('time_to')) {
+            $query->where('start_time', '<=', $request->input('time_to'));
+        }
+
+        // Filter by sport
+        if ($request->filled('sport')) {
+            $query->where('sport', $request->input('sport'));
+        }
+
+        // Order by date and time
+        $events = $query->orderBy('date')
+            ->orderBy('start_time')
             ->get()
             ->map(function($event) {
                 // Calculate hours
