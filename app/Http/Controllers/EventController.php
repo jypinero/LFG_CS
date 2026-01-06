@@ -586,7 +586,103 @@ class EventController extends Controller
         ]);
     }
 
-    
+    public function myGames()
+    {
+        $user = auth()->user();
+        $today = now()->format('Y-m-d');
+        $now = now()->format('Y-m-d H:i:s');
+
+        // Get all events where user is a participant or creator
+        $events = Event::with(['venue', 'facility', 'participants', 'checkins'])
+            ->where(function($q) use ($user) {
+                $q->where('created_by', $user->id)
+                  ->orWhere(function($inner) use ($user) {
+                      $inner->where('is_approved', true)
+                            ->whereHas('participants', function($q2) use ($user) {
+                                $q2->where('user_id', $user->id);
+                            });
+                  });
+            })
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get()
+            ->map(function($event) use ($user, $today, $now) {
+                // Get current user's check-in status if they're a participant
+                $userCheckin = $event->checkins->where('user_id', $user->id)->first();
+                
+                // Determine if game is past/completed
+                $eventDateTime = $event->date . ' ' . $event->end_time;
+                $isPast = strtotime($eventDateTime) < strtotime($now);
+                $isToday = $event->date === $today;
+                $isUpcoming = !$isPast && !$isToday;
+                
+                // Priority: today = 1, upcoming = 2, past = 3
+                $priority = $isToday ? 1 : ($isUpcoming ? 2 : 3);
+                
+                return [
+                    'id' => $event->id,
+                    'name' => $event->name,
+                    'description' => $event->description,
+                    'event_type' => $event->event_type,
+                    'date' => $event->date,
+                    'sport' => $event->sport,
+                    'host' => User::find($event->created_by)->username ?? null,
+                    'venue' => $event->venue->name ?? null,
+                    'longitude' => $event->venue->longitude ?? null,
+                    'latitude' => $event->venue->latitude ?? null,
+                    'facility' => $event->facility->type ?? null,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                    'slots' => $event->slots,
+                    'participants_count' => $event->participants->count(),
+                    'is_approved' => (bool) $event->is_approved,
+                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                    'approved_at' => $event->approved_at,
+                    'cancelled_at' => $event->cancelled_at,
+                    // Check-in related fields
+                    'checkin_code' => $event->checkin_code,
+                    'can_checkin' => $event->is_approved && !$event->cancelled_at && !$isPast,
+                    'user_checked_in' => $userCheckin ? true : false,
+                    'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
+                    // Indicate if user is the creator
+                    'is_creator' => $event->created_by === $user->id,
+                    // Status fields
+                    'is_past' => $isPast,
+                    'is_today' => $isToday,
+                    'is_upcoming' => $isUpcoming,
+                    'status' => $isPast ? 'completed' : ($isToday ? 'today' : 'upcoming'),
+                    'priority' => $priority,
+                ];
+            })
+            ->sortBy(function($event) {
+                // Sort by priority first, then by date and time
+                return [
+                    $event['priority'],
+                    $event['date'],
+                    $event['start_time']
+                ];
+            })
+            ->values();
+
+        // Separate games into categories
+        $todayGames = $events->where('is_today', true)->values();
+        $upcomingGames = $events->where('is_upcoming', true)->values();
+        $pastGames = $events->where('is_past', true)->values();
+
+        return response()->json([
+            'status' => 'success',
+            'games' => $events,
+            'today' => $todayGames,
+            'upcoming' => $upcomingGames,
+            'past' => $pastGames,
+            'summary' => [
+                'total' => $events->count(),
+                'today_count' => $todayGames->count(),
+                'upcoming_count' => $upcomingGames->count(),
+                'past_count' => $pastGames->count(),
+            ]
+        ]);
+    }
 
     public function joinEvent(Request $request)
     {

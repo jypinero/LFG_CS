@@ -142,6 +142,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/schedules', [EventController::class, 'allschedule']);
     Route::get('/schedules/user-created', [EventController::class, 'allusercreated']);
     Route::get('/schedules/{date}', [EventController::class, 'userschedule']);
+    Route::get('/my-games', [EventController::class, 'myGames']);
 
 
     Route::post('/venues/games-played', [EventController::class, 'eventsByVenue']);
