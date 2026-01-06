@@ -57,6 +57,21 @@ class MessageThread extends Model
     {
         return $this->hasMany(ThreadParticipant::class, 'thread_id');
     }
+
+    public function venue()
+    {
+        return $this->belongsTo(Venue::class, 'venue_id');
+    }
+
+    public function team()
+    {
+        return $this->belongsTo(Team::class, 'team_id');
+    }
+
+    public function game()
+    {
+        return $this->belongsTo(Event::class, 'game_id');
+    }
 }
 
 

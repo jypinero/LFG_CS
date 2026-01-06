@@ -390,6 +390,40 @@ class AuthController extends Controller
         return $this->showprofile($user->id);
     }
 
+    /**
+     * Search user by exact username (for messaging)
+     * GET /api/users/search?username=exact_username
+     */
+    public function searchUsers(Request $request)
+    {
+        $request->validate([
+            'username' => 'required|string|min:1|max:100',
+        ]);
+
+        $username = $request->input('username');
+        $currentUser = auth()->user();
+
+        // Exact username match only
+        $user = User::where('username', $username)
+            ->where('id', '!=', $currentUser->id) // Exclude current user
+            ->select('id', 'username', 'first_name', 'last_name', 'profile_photo', 'role_id')
+            ->with('role:id,name')
+            ->first();
+
+        if (!$user) {
+            return response()->json([
+                'status' => 'success',
+                'user' => null,
+                'message' => 'User not found'
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'user' => $user
+        ]);
+    }
+
     public function showprofile($id)
     {
         $currentUser = auth()->user();

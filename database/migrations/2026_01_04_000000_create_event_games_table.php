@@ -43,3 +43,4 @@ class CreateEventGamesTable extends Migration
         Schema::dropIfExists('event_games');
     }
 }
+

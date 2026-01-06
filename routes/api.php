@@ -81,8 +81,11 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/users/notifications/{id}/unread', [NotifController::class, 'markAsUnread']);
     Route::post('/users/notifications/readall', [NotifController::class, 'markAllRead']);
 
+    // User search for messaging (exact username match)
+    Route::get('/users/search', [AuthController::class, 'searchUsers']);
+
     // ✅ Add route for getting user by ID (for venue owners, etc.)
-    // This must come AFTER /users/notifications to avoid wildcard matching
+    // This must come AFTER /users/notifications and /users/search to avoid wildcard matching
     Route::get('/users/{id}', [AuthController::class, 'showprofile']);
     
     // ❌ Remove or fix this line - showprofile requires an ID parameter
@@ -333,6 +336,32 @@ Route::middleware('auth:api')->group(function () {
 
     Route::post('/tournaments/events/{eventId}/generate-schedule', [NewTournamentController::class, 'generateSchedule']);
     Route::post('/tournaments/event-game/{gameId}/submit-score', [NewTournamentController::class, 'submitScore']);
+
+    // Tournament CRUD - Additional routes
+    Route::get('/tournaments/{tournamentId}', [NewTournamentController::class, 'show']);
+    Route::put('/tournaments/{tournamentId}', [NewTournamentController::class, 'update']);
+    Route::patch('/tournaments/{tournamentId}', [NewTournamentController::class, 'update']);
+    Route::delete('/tournaments/{tournamentId}', [NewTournamentController::class, 'destroy']);
+    Route::get('/tournaments/my', [NewTournamentController::class, 'myTournaments']);
+
+    // Games/Matches
+    Route::get('/tournaments/events/{eventId}/games', [NewTournamentController::class, 'listEventGames']);
+    Route::get('/tournaments/events/{eventId}/bracket', [NewTournamentController::class, 'getBracket']);
+    Route::get('/tournaments/event-game/{gameId}', [NewTournamentController::class, 'getGame']);
+    Route::get('/tournaments/{tournamentId}/schedule', [NewTournamentController::class, 'getTournamentSchedule']);
+
+    // Results
+    Route::get('/tournaments/events/{eventId}/champion', [NewTournamentController::class, 'getEventChampion']);
+    Route::get('/tournaments/{tournamentId}/results', [NewTournamentController::class, 'getTournamentResults']);
+
+    // Public
+    Route::get('/tournaments/public/{tournamentId}', [NewTournamentController::class, 'getPublicTournament']);
+
+    // Announcements
+    Route::post('/tournaments/{tournamentId}/announcements', [NewTournamentController::class, 'createAnnouncement']);
+    Route::get('/tournaments/{tournamentId}/announcements', [NewTournamentController::class, 'getAnnouncements']);
+    Route::put('/tournaments/{tournamentId}/announcements/{announcementId}', [NewTournamentController::class, 'updateAnnouncement']);
+    Route::delete('/tournaments/{tournamentId}/announcements/{announcementId}', [NewTournamentController::class, 'deleteAnnouncement']);
 
 
     // Route::get('/tournaments', [TournamentController::class, 'index']);

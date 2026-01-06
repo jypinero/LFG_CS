@@ -24,9 +24,8 @@ class MessagingController extends Controller
             ->whereNull('left_at')
             ->pluck('thread_id');
 
-        // Get threads with latest message timestamp using subquery
-        // Order by the latest message sent_at (regardless of who sent it)
-        $threads = MessageThread::query()
+        // Base query
+        $query = MessageThread::query()
             ->whereIn('id', $threadIds)
             ->select('message_threads.*')
             ->selectSub(function ($query) {
@@ -34,16 +33,142 @@ class MessagingController extends Controller
                     ->from('messages')
                     ->whereColumn('messages.thread_id', 'message_threads.id')
                     ->whereNull('deleted_at');
-            }, 'latest_message_at')
-            ->with(['participants.user:id,username,first_name,last_name,profile_photo', 'messages' => function ($q) {
+            }, 'latest_message_at');
+
+        // ========== FILTERS ==========
+
+        // 1. Filter by Venue
+        if ($request->filled('venue_id')) {
+            $query->where('venue_id', $request->venue_id);
+        }
+
+        // 2. Filter by Team
+        if ($request->filled('team_id')) {
+            $query->where('team_id', $request->team_id);
+        }
+
+        // 3. Filter by Thread Type
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+            // Valid types: 'one_to_one', 'team', 'venue', 'game_group', 'coach', 'group'
+        }
+
+        // 4. Filter by User Role/Level (via participants)
+        if ($request->filled('participant_role_id')) {
+            $query->whereHas('participants.user', function($q) use ($request) {
+                $q->where('role_id', $request->participant_role_id);
+            });
+        }
+
+        // 5. Filter by Specific User (1-on-1 conversations with specific user)
+        if ($request->filled('with_user_id')) {
+            $query->whereHas('participants', function($q) use ($request) {
+                $q->where('user_id', $request->with_user_id)
+                  ->whereNull('left_at');
+            });
+        }
+
+        // 6. Filter by Group/Individual
+        if ($request->filled('is_group')) {
+            $query->where('is_group', filter_var($request->is_group, FILTER_VALIDATE_BOOLEAN));
+        }
+
+        // 7. Filter by Archived Status
+        if ($request->filled('archived')) {
+            $archived = filter_var($request->archived, FILTER_VALIDATE_BOOLEAN);
+            if ($archived) {
+                $query->whereHas('participants', function($q) use ($userId) {
+                    $q->where('user_id', $userId)
+                      ->where('archived', true);
+                });
+            } else {
+                $query->whereHas('participants', function($q) use ($userId) {
+                    $q->where('user_id', $userId)
+                      ->where(function($subQ) {
+                          $subQ->where('archived', false)
+                               ->orWhereNull('archived');
+                      });
+                });
+            }
+        }
+
+        // 8. Filter by Unread Messages
+        if ($request->filled('unread_only')) {
+            if (filter_var($request->unread_only, FILTER_VALIDATE_BOOLEAN)) {
+                // Get threads where user has unread messages
+                // A thread is unread if last_read_message_id is null or doesn't match latest message
+                $query->whereHas('participants', function($q) use ($userId) {
+                    $q->where('user_id', $userId)
+                      ->where(function($subQ) {
+                          $subQ->whereNull('last_read_message_id')
+                               ->orWhereRaw('(SELECT MAX(id) FROM messages WHERE thread_id = thread_participants.thread_id AND deleted_at IS NULL) != last_read_message_id');
+                      });
+                });
+            }
+        }
+
+        // 9. Filter by Date Range (based on latest message)
+        if ($request->filled('date_from')) {
+            $query->whereHas('messages', function($q) use ($request) {
+                $q->where('sent_at', '>=', $request->date_from)
+                  ->whereNull('deleted_at');
+            });
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereHas('messages', function($q) use ($request) {
+                $q->where('sent_at', '<=', $request->date_to)
+                  ->whereNull('deleted_at');
+            });
+        }
+
+        // 10. Filter by Closed Status
+        if ($request->filled('is_closed')) {
+            $query->where('is_closed', filter_var($request->is_closed, FILTER_VALIDATE_BOOLEAN));
+        }
+
+        // 11. Search by Thread Title or Participant Name
+        if ($request->filled('search')) {
+            $searchTerm = $request->search;
+            $query->where(function($q) use ($searchTerm) {
+                $q->where('title', 'like', "%{$searchTerm}%")
+                  ->orWhereHas('participants.user', function($userQ) use ($searchTerm) {
+                      $userQ->where('username', 'like', "%{$searchTerm}%")
+                            ->orWhere('first_name', 'like', "%{$searchTerm}%")
+                            ->orWhere('last_name', 'like', "%{$searchTerm}%");
+                  });
+            });
+        }
+
+        // Eager load relationships
+        $query->with([
+            'participants.user:id,username,first_name,last_name,profile_photo,role_id',
+            'participants.user.role:id,name',
+            'venue:id,name',
+            'team:id,name',
+            'messages' => function ($q) {
                 $q->whereNull('deleted_at')
                   ->orderBy('sent_at', 'desc')
                   ->limit(1);
-            }])
-            ->orderByRaw('COALESCE(latest_message_at, message_threads.updated_at) DESC')
-            ->get();
+            }
+        ]);
 
-        return response()->json(['threads' => $threads]);
+        // Order by latest message
+        $query->orderByRaw('COALESCE(latest_message_at, message_threads.updated_at) DESC');
+
+        // Pagination
+        $perPage = min($request->input('per_page', 50), 100);
+        $threads = $query->paginate($perPage);
+
+        return response()->json([
+            'threads' => $threads->items(),
+            'pagination' => [
+                'current_page' => $threads->currentPage(),
+                'last_page' => $threads->lastPage(),
+                'per_page' => $threads->perPage(),
+                'total' => $threads->total(),
+            ],
+        ]);
     }
 
     public function threadMessages(Request $request, string $threadId)

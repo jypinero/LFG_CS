@@ -14,6 +14,7 @@ class EventGame extends Model
         'tournament_id',
         'round_number',
         'match_number',
+        'match_stage',
         'team_a_id',
         'team_b_id',
         'user_a_id',
@@ -36,5 +37,25 @@ class EventGame extends Model
     public function tournament()
     {
         return $this->belongsTo(Tournament::class);
+    }
+
+    public function team_a()
+    {
+        return $this->belongsTo(Team::class, 'team_a_id');
+    }
+
+    public function team_b()
+    {
+        return $this->belongsTo(Team::class, 'team_b_id');
+    }
+
+    public function user_a()
+    {
+        return $this->belongsTo(User::class, 'user_a_id');
+    }
+
+    public function user_b()
+    {
+        return $this->belongsTo(User::class, 'user_b_id');
     }
 }

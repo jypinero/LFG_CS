@@ -6,9 +6,14 @@ use App\Models\Tournament;
 use App\Models\TournamentParticipant;
 use App\Models\TournamentOrganizer;
 use App\Models\TournamentDocument;
+use App\Models\TournamentAnnouncement;
 use App\Models\Event;
 use App\Models\EventParticipant;
 use App\Models\EventGame;
+use App\Models\Team;
+use App\Models\User;
+use App\Models\Notification;
+use App\Models\UserNotification;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
@@ -963,6 +968,848 @@ class NewTournamentController extends Controller
         $event->update([
             'game_status' => 'completed',
             'champion_team_id' => $teamId,
+        ]);
+    }
+
+    /**
+     * Get tournament details
+     * GET /api/tournaments/{tournamentId}
+     */
+    public function show($tournamentId)
+    {
+        $user = auth()->user();
+        
+        $tournament = Tournament::with([
+            'events' => function($query) {
+                $query->orderBy('date', 'asc');
+            },
+            'participants.user',
+            'participants.team',
+            'organizers.user',
+            'documents',
+            'announcements' => function($query) {
+                $query->orderBy('is_pinned', 'desc')
+                      ->orderBy('published_at', 'desc');
+            }
+        ])->findOrFail($tournamentId);
+
+        // Check if user is organizer (for draft visibility)
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->exists();
+
+        // Hide draft tournaments from non-organizers
+        if ($tournament->status === 'draft' && !$isOrganizer && $tournament->created_by !== $user->id) {
+            return response()->json(['message' => 'Tournament not found'], 404);
+        }
+
+        // Add participant counts
+        $tournament->participants_count = $tournament->participants()->where('status', 'approved')->count();
+        $tournament->pending_participants_count = $tournament->participants()->where('status', 'pending')->count();
+        $tournament->is_organizer = $isOrganizer || $tournament->created_by === $user->id;
+
+        return response()->json([
+            'message' => 'Tournament retrieved successfully',
+            'tournament' => $tournament,
+        ]);
+    }
+
+    /**
+     * Update tournament
+     * PUT /api/tournaments/{tournamentId}
+     */
+    public function update(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        
+        $tournament = Tournament::findOrFail($tournamentId);
+
+        // Check if user is organizer
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->exists();
+
+        if (!$isOrganizer && $tournament->created_by !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $data = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'type' => ['sometimes', Rule::in(['single_sport', 'multisport'])],
+            'tournament_type' => ['sometimes', Rule::in(['free for all', 'team vs team'])],
+            'start_date' => 'sometimes|date',
+            'end_date' => 'sometimes|date|after_or_equal:start_date',
+            'registration_deadline' => 'nullable|date|before_or_equal:start_date',
+            'status' => ['sometimes', Rule::in(['draft', 'open_registration', 'registration_closed', 'ongoing', 'completed', 'cancelled'])],
+            'location' => 'nullable|string|max:255',
+            'rules' => 'nullable|string',
+            'max_teams' => 'nullable|integer|min:2',
+            'min_teams' => 'nullable|integer|min:2',
+            'photo' => 'sometimes|file|image|max:5120|mimes:jpg,jpeg,png',
+        ]);
+
+        if ($request->hasFile('photo')) {
+            $file = $request->file('photo');
+            $path = $file->store("public/tournaments/{$tournament->id}/photo");
+            $data['photo'] = str_replace('public/', '', $path);
+        }
+
+        $tournament->update($data);
+
+        return response()->json([
+            'message' => 'Tournament updated successfully',
+            'tournament' => $tournament->fresh(),
+        ]);
+    }
+
+    /**
+     * Delete tournament
+     * DELETE /api/tournaments/{tournamentId}
+     */
+    public function destroy($tournamentId)
+    {
+        $user = auth()->user();
+        
+        $tournament = Tournament::findOrFail($tournamentId);
+
+        // Only creator can delete
+        if ($tournament->created_by !== $user->id) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        // Prevent deletion if tournament has started
+        if (in_array($tournament->status, ['ongoing', 'completed'])) {
+            return response()->json([
+                'message' => 'Cannot delete tournament that has started or completed. Cancel it instead.'
+            ], 422);
+        }
+
+        $tournament->delete();
+
+        return response()->json([
+            'message' => 'Tournament deleted successfully'
+        ]);
+    }
+
+    /**
+     * Get user's tournaments (organizer dashboard)
+     * GET /api/tournaments/my
+     */
+    public function myTournaments(Request $request)
+    {
+        $user = auth()->user();
+        
+        $query = Tournament::with([
+            'events' => function($query) {
+                $query->where('is_approved', true);
+            },
+            'participants',
+            'organizers.user',
+        ])->where(function($q) use ($user) {
+            $q->where('created_by', $user->id)
+              ->orWhereHas('organizers', function($orgQ) use ($user) {
+                  $orgQ->where('user_id', $user->id);
+              });
+        });
+
+        // Apply filters
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+
+        if ($request->filled('tournament_type')) {
+            $query->where('tournament_type', $request->tournament_type);
+        }
+
+        // Sorting
+        $sortBy = $request->input('sort_by', 'created_at');
+        $sortOrder = $request->input('sort_order', 'desc');
+        
+        $allowedSorts = ['created_at', 'start_date', 'name', 'status'];
+        if (in_array($sortBy, $allowedSorts)) {
+            $query->orderBy($sortBy, $sortOrder);
+        } else {
+            $query->orderBy('created_at', 'desc');
+        }
+
+        // Pagination
+        $perPage = min($request->input('per_page', 15), 100);
+        $tournaments = $query->paginate($perPage);
+        
+        return response()->json([
+            'status' => 'success',
+            'data' => $tournaments->items(),
+            'pagination' => [
+                'current_page' => $tournaments->currentPage(),
+                'last_page' => $tournaments->lastPage(),
+                'per_page' => $tournaments->perPage(),
+                'total' => $tournaments->total(),
+            ],
+        ]);
+    }
+
+    /**
+     * List event games/matches
+     * GET /api/tournaments/events/{eventId}/games
+     */
+    public function listEventGames(Request $request, $eventId)
+    {
+        $event = Event::findOrFail($eventId);
+        
+        $query = EventGame::where('event_id', $eventId)
+            ->with(['team_a', 'team_b', 'event', 'tournament']);
+
+        // Filters
+        if ($request->filled('match_stage')) {
+            $query->where('match_stage', $request->match_stage);
+        }
+
+        if ($request->filled('round_number')) {
+            $query->where('round_number', $request->round_number);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        $games = $query->orderBy('match_stage')
+            ->orderBy('round_number', 'asc')
+            ->orderBy('match_number', 'asc')
+            ->get();
+
+        // Calculate bracket summary
+        $bracketSummary = [
+            'winners_bracket' => [
+                'rounds' => EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'winners')
+                    ->max('round_number') ?? 0,
+                'total_matches' => EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'winners')
+                    ->count(),
+            ],
+            'losers_bracket' => [
+                'rounds' => EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'losers')
+                    ->max('round_number') ?? 0,
+                'total_matches' => EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'losers')
+                    ->count(),
+            ],
+            'grand_final' => [
+                'rounds' => EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'grand_final')
+                    ->max('round_number') ?? 0,
+                'total_matches' => EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'grand_final')
+                    ->count(),
+            ],
+        ];
+
+        return response()->json([
+            'event_id' => $event->id,
+            'event_name' => $event->name,
+            'games' => $games,
+            'bracket_summary' => $bracketSummary,
+        ]);
+    }
+
+    /**
+     * Get bracket view
+     * GET /api/tournaments/events/{eventId}/bracket
+     */
+    public function getBracket($eventId)
+    {
+        $event = Event::findOrFail($eventId);
+        
+        $games = EventGame::where('event_id', $eventId)
+            ->with(['team_a', 'team_b', 'user_a', 'user_b'])
+            ->orderByRaw("FIELD(match_stage, 'winners', 'losers', 'grand_final')")
+            ->orderBy('round_number', 'asc')
+            ->orderBy('match_number', 'asc')
+            ->get();
+
+        // Group by match_stage and round_number
+        $bracket = [
+            'winners' => [],
+            'losers' => [],
+            'grand_final' => [],
+        ];
+
+        foreach ($games as $game) {
+            $stage = $game->match_stage;
+            $round = $game->round_number;
+            
+            if (!isset($bracket[$stage][$round])) {
+                $bracket[$stage][$round] = [];
+            }
+            
+            $bracket[$stage][$round][] = $game;
+        }
+
+        // Get champion if event is completed
+        $champion = null;
+        if ($event->game_status === 'completed' && $event->champion_team_id) {
+            $championTeam = Team::find($event->champion_team_id);
+            $champion = [
+                'team_id' => $event->champion_team_id,
+                'team' => $championTeam,
+            ];
+        }
+
+        return response()->json([
+            'event_id' => $event->id,
+            'event_name' => $event->name,
+            'bracket' => $bracket,
+            'champion' => $champion,
+        ]);
+    }
+
+    /**
+     * Get single game details
+     * GET /api/tournaments/event-game/{gameId}
+     */
+    public function getGame($gameId)
+    {
+        $game = EventGame::with([
+            'event',
+            'tournament',
+            'team_a',
+            'team_b',
+            'user_a',
+            'user_b',
+        ])->findOrFail($gameId);
+
+        return response()->json([
+            'game' => $game,
+        ]);
+    }
+
+    /**
+     * Get tournament schedule
+     * GET /api/tournaments/{tournamentId}/schedule
+     */
+    public function getTournamentSchedule(Request $request, $tournamentId)
+    {
+        $tournament = Tournament::findOrFail($tournamentId);
+        
+        $query = EventGame::where('tournament_id', $tournamentId)
+            ->with(['event', 'team_a', 'team_b', 'user_a', 'user_b']);
+
+        // Filters
+        if ($request->filled('event_id')) {
+            $query->where('event_id', $request->event_id);
+        }
+
+        if ($request->filled('match_stage')) {
+            $query->where('match_stage', $request->match_stage);
+        }
+
+        if ($request->filled('round_number')) {
+            $query->where('round_number', $request->round_number);
+        }
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        if ($request->filled('date_from')) {
+            $query->whereHas('event', function($q) use ($request) {
+                $q->where('date', '>=', $request->date_from);
+            });
+        }
+
+        if ($request->filled('date_to')) {
+            $query->whereHas('event', function($q) use ($request) {
+                $q->where('date', '<=', $request->date_to);
+            });
+        }
+
+        $games = $query->orderBy('event_id')
+            ->orderBy('match_stage')
+            ->orderBy('round_number', 'asc')
+            ->orderBy('match_number', 'asc')
+            ->get();
+
+        // Group by event
+        $schedule = [];
+        foreach ($games as $game) {
+            $eventId = $game->event_id;
+            if (!isset($schedule[$eventId])) {
+                $schedule[$eventId] = [
+                    'event_id' => $game->event->id,
+                    'event_name' => $game->event->name,
+                    'games' => [],
+                ];
+            }
+            $schedule[$eventId]['games'][] = $game;
+        }
+
+        // Summary
+        $summary = [
+            'total_events' => count($schedule),
+            'total_matches' => $games->count(),
+            'completed_matches' => $games->where('status', 'completed')->count(),
+            'upcoming_matches' => $games->where('status', 'scheduled')->count(),
+        ];
+
+        return response()->json([
+            'tournament_id' => $tournament->id,
+            'tournament_name' => $tournament->name,
+            'schedule' => array_values($schedule),
+            'summary' => $summary,
+        ]);
+    }
+
+    /**
+     * Get event champion
+     * GET /api/tournaments/events/{eventId}/champion
+     */
+    public function getEventChampion($eventId)
+    {
+        $event = Event::findOrFail($eventId);
+        
+        $isCompleted = $event->game_status === 'completed';
+        $champion = null;
+        $finalMatch = null;
+
+        if ($isCompleted) {
+            // Try to get champion from event champion_team_id
+            if ($event->champion_team_id) {
+                $championTeam = Team::find($event->champion_team_id);
+                $champion = [
+                    'team_id' => $event->champion_team_id,
+                    'team' => $championTeam,
+                ];
+            } else {
+                // Fallback: get from last grand final match
+                $grandFinal = EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'grand_final')
+                    ->where('status', 'completed')
+                    ->orderBy('round_number', 'desc')
+                    ->orderBy('match_number', 'desc')
+                    ->first();
+                
+                if ($grandFinal && $grandFinal->winner_team_id) {
+                    $championTeam = Team::find($grandFinal->winner_team_id);
+                    $champion = [
+                        'team_id' => $grandFinal->winner_team_id,
+                        'team' => $championTeam,
+                    ];
+                    $finalMatch = $grandFinal;
+                }
+            }
+
+            // Get final match if not already set
+            if (!$finalMatch) {
+                $finalMatch = EventGame::where('event_id', $eventId)
+                    ->where('match_stage', 'grand_final')
+                    ->where('status', 'completed')
+                    ->orderBy('round_number', 'desc')
+                    ->orderBy('match_number', 'desc')
+                    ->first();
+            }
+        }
+
+        return response()->json([
+            'event_id' => $event->id,
+            'event_name' => $event->name,
+            'is_completed' => $isCompleted,
+            'champion' => $champion,
+            'final_match' => $finalMatch,
+        ]);
+    }
+
+    /**
+     * Get tournament results
+     * GET /api/tournaments/{tournamentId}/results
+     */
+    public function getTournamentResults($tournamentId)
+    {
+        $tournament = Tournament::findOrFail($tournamentId);
+        
+        if ($tournament->status !== 'completed') {
+            return response()->json([
+                'message' => 'Tournament is not completed yet'
+            ], 422);
+        }
+
+        $events = Event::where('tournament_id', $tournamentId)
+            ->where('game_status', 'completed')
+            ->with(['venue', 'facility'])
+            ->get();
+
+        $eventsResults = [];
+        foreach ($events as $event) {
+            // Get champion
+            $champion = null;
+            if ($event->champion_team_id) {
+                $championTeam = Team::find($event->champion_team_id);
+                $champion = [
+                    'team_id' => $event->champion_team_id,
+                    'team' => $championTeam,
+                ];
+            }
+
+            // Calculate standings from completed games
+            $standings = $this->calculateEventStandings($event);
+
+            $eventsResults[] = [
+                'event_id' => $event->id,
+                'event_name' => $event->name,
+                'champion' => $champion,
+                'final_standings' => $standings,
+            ];
+        }
+
+        // Overall champion (for single-sport tournaments)
+        $overallChampion = null;
+        if ($tournament->type === 'single_sport' && count($eventsResults) === 1) {
+            $overallChampion = $eventsResults[0]['champion'] ?? null;
+        }
+
+        return response()->json([
+            'tournament_id' => $tournament->id,
+            'tournament_name' => $tournament->name,
+            'status' => $tournament->status,
+            'events' => $eventsResults,
+            'overall_champion' => $overallChampion,
+        ]);
+    }
+
+    /**
+     * Calculate event standings
+     */
+    private function calculateEventStandings($event)
+    {
+        $games = EventGame::where('event_id', $event->id)
+            ->where('status', 'completed')
+            ->get();
+
+        $standings = [];
+        
+        foreach ($games as $game) {
+            // Process team_a
+            if ($game->team_a_id) {
+                if (!isset($standings[$game->team_a_id])) {
+                    $standings[$game->team_a_id] = [
+                        'team_id' => $game->team_a_id,
+                        'wins' => 0,
+                        'losses' => 0,
+                        'points_for' => 0,
+                        'points_against' => 0,
+                    ];
+                }
+                
+                $standings[$game->team_a_id]['points_for'] += $game->score_a ?? 0;
+                $standings[$game->team_a_id]['points_against'] += $game->score_b ?? 0;
+                
+                if ($game->winner_team_id === $game->team_a_id) {
+                    $standings[$game->team_a_id]['wins']++;
+                } else {
+                    $standings[$game->team_a_id]['losses']++;
+                }
+            }
+
+            // Process team_b
+            if ($game->team_b_id) {
+                if (!isset($standings[$game->team_b_id])) {
+                    $standings[$game->team_b_id] = [
+                        'team_id' => $game->team_b_id,
+                        'wins' => 0,
+                        'losses' => 0,
+                        'points_for' => 0,
+                        'points_against' => 0,
+                    ];
+                }
+                
+                $standings[$game->team_b_id]['points_for'] += $game->score_b ?? 0;
+                $standings[$game->team_b_id]['points_against'] += $game->score_a ?? 0;
+                
+                if ($game->winner_team_id === $game->team_b_id) {
+                    $standings[$game->team_b_id]['wins']++;
+                } else {
+                    $standings[$game->team_b_id]['losses']++;
+                }
+            }
+        }
+
+        // Sort by wins, then by point difference
+        usort($standings, function($a, $b) {
+            if ($a['wins'] === $b['wins']) {
+                $diffA = $a['points_for'] - $a['points_against'];
+                $diffB = $b['points_for'] - $b['points_against'];
+                return $diffB <=> $diffA;
+            }
+            return $b['wins'] <=> $a['wins'];
+        });
+
+        // Add rank and team info
+        $rank = 1;
+        foreach ($standings as &$standing) {
+            $standing['rank'] = $rank++;
+            $standing['team'] = Team::find($standing['team_id']);
+            $standing['point_difference'] = $standing['points_for'] - $standing['points_against'];
+        }
+
+        return $standings;
+    }
+
+    /**
+     * Get public tournament view
+     * GET /api/tournaments/public/{tournamentId}
+     */
+    public function getPublicTournament($tournamentId)
+    {
+        $tournament = Tournament::findOrFail($tournamentId);
+        
+        // Hide draft tournaments
+        if ($tournament->status === 'draft') {
+            return response()->json(['message' => 'Tournament not found'], 404);
+        }
+
+        // Load only public data
+        $tournament->load([
+            'events' => function($query) {
+                $query->where('is_approved', true)
+                      ->orderBy('date', 'asc');
+            },
+            'announcements' => function($query) {
+                $query->whereNotNull('published_at')
+                      ->where('published_at', '<=', now())
+                      ->orderBy('is_pinned', 'desc')
+                      ->orderBy('published_at', 'desc');
+            }
+        ]);
+
+        // Only include participant count, not details
+        $tournament->participants_count = $tournament->participants()
+            ->where('status', 'approved')
+            ->count();
+
+        // Remove sensitive data
+        unset($tournament->participants);
+        unset($tournament->organizers);
+        unset($tournament->documents);
+
+        return response()->json([
+            'tournament' => $tournament,
+        ]);
+    }
+
+    /**
+     * Create announcement
+     * POST /api/tournaments/{tournamentId}/announcements
+     */
+    public function createAnnouncement(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::findOrFail($tournamentId);
+        
+        // Check organizer/creator permission
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $data = $request->validate([
+            'title' => 'required|string|max:255',
+            'content' => 'required|string',
+            'priority' => ['sometimes', Rule::in(['low', 'medium', 'high'])],
+            'is_pinned' => 'sometimes|boolean',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            $announcement = TournamentAnnouncement::create([
+                'tournament_id' => $tournament->id,
+                'title' => $data['title'],
+                'content' => $data['content'],
+                'created_by' => $user->id,
+                'priority' => $data['priority'] ?? 'medium',
+                'is_pinned' => $data['is_pinned'] ?? false,
+                'published_at' => now(),
+            ]);
+
+            // Get all tournament participants (teams + individuals)
+            $participantUserIds = TournamentParticipant::where('tournament_id', $tournament->id)
+                ->whereIn('status', ['approved', 'confirmed', 'pending'])
+                ->get()
+                ->map(function($p) {
+                    if ($p->type === 'individual') {
+                        return $p->user_id;
+                    } else {
+                        // get team owner
+                        return Team::find($p->team_id)?->owner_id;
+                    }
+                })
+                ->filter()
+                ->unique()
+                ->values()
+                ->toArray();
+
+            // Send notifications to all participants
+            if (!empty($participantUserIds)) {
+                $notification = Notification::create([
+                    'type' => 'tournament_announcement',
+                    'data' => [
+                        'tournament_id' => $tournament->id,
+                        'tournament_name' => $tournament->name,
+                        'announcement_id' => $announcement->id,
+                        'title' => $announcement->title,
+                        'content' => $announcement->content,
+                        'priority' => $announcement->priority,
+                    ],
+                    'created_by' => $user->id,
+                ]);
+
+                foreach ($participantUserIds as $userId) {
+                    UserNotification::create([
+                        'notification_id' => $notification->id,
+                        'user_id' => $userId,
+                        'is_read' => false,
+                    ]);
+                }
+            }
+
+            DB::commit();
+            return response()->json([
+                'message' => 'Announcement created and notifications sent',
+                'announcement' => $announcement,
+            ], 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json([
+                'message' => 'Failed to create announcement',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get announcements
+     * GET /api/tournaments/{tournamentId}/announcements
+     */
+    public function getAnnouncements($tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::findOrFail($tournamentId);
+        
+        // Check if user is organizer (to see unpublished announcements)
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->exists();
+        $isCreator = $tournament->created_by === $user->id;
+
+        $query = TournamentAnnouncement::where('tournament_id', $tournament->id)
+            ->with(['creator']);
+
+        // Non-organizers only see published announcements
+        if (!$isOrganizer && !$isCreator) {
+            $query->whereNotNull('published_at')
+                  ->where('published_at', '<=', now());
+        }
+
+        $announcements = $query->orderByDesc('is_pinned')
+            ->orderByDesc('published_at')
+            ->get()
+            ->map(function($a) {
+                return [
+                    'id' => $a->id,
+                    'tournament_id' => $a->tournament_id,
+                    'title' => $a->title,
+                    'content' => $a->content,
+                    'priority' => $a->priority,
+                    'is_pinned' => $a->is_pinned,
+                    'created_by' => $a->created_by,
+                    'creator_name' => $a->creator ? $a->creator->first_name . ' ' . $a->creator->last_name : 'Unknown',
+                    'published_at' => $a->published_at,
+                    'created_at' => $a->created_at,
+                    'updated_at' => $a->updated_at,
+                ];
+            });
+
+        return response()->json([
+            'announcements' => $announcements,
+            'count' => $announcements->count(),
+        ]);
+    }
+
+    /**
+     * Update announcement
+     * PUT /api/tournaments/{tournamentId}/announcements/{announcementId}
+     */
+    public function updateAnnouncement(Request $request, $tournamentId, $announcementId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::findOrFail($tournamentId);
+        
+        // Check permission
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $announcement = TournamentAnnouncement::where('id', $announcementId)
+            ->where('tournament_id', $tournament->id)
+            ->firstOrFail();
+
+        $data = $request->validate([
+            'title' => 'sometimes|string|max:255',
+            'content' => 'sometimes|string',
+            'priority' => ['sometimes', Rule::in(['low', 'medium', 'high'])],
+            'is_pinned' => 'sometimes|boolean',
+        ]);
+
+        $announcement->update($data);
+
+        return response()->json([
+            'message' => 'Announcement updated',
+            'announcement' => $announcement,
+        ]);
+    }
+
+    /**
+     * Delete announcement
+     * DELETE /api/tournaments/{tournamentId}/announcements/{announcementId}
+     */
+    public function deleteAnnouncement($tournamentId, $announcementId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::findOrFail($tournamentId);
+        
+        // Check permission
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['message' => 'Unauthorized'], 403);
+        }
+
+        $announcement = TournamentAnnouncement::where('id', $announcementId)
+            ->where('tournament_id', $tournament->id)
+            ->firstOrFail();
+
+        $announcement->delete();
+
+        return response()->json([
+            'message' => 'Announcement deleted',
         ]);
     }
 }
