@@ -253,6 +253,15 @@ class AuthController extends Controller
         // Generate token using JWT with api guard
         $token = Auth::guard('api')->login($user);
 
+        // Send welcome notification (async, won't block login)
+        try {
+            $welcomeService = app(\App\Services\WelcomeNotificationService::class);
+            $welcomeService->sendWelcomeNotification($user->id);
+        } catch (\Exception $e) {
+            // Log but don't fail login
+            \Log::error('Failed to send welcome notification on login', ['error' => $e->getMessage()]);
+        }
+
         return response()->json([
             'status' => 'success',
             'message' => 'Login successful',

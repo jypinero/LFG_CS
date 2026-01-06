@@ -7,7 +7,9 @@ use App\Models\User;
 use App\Models\Venue;
 use App\Models\Event;
 use App\Models\SupportTicket;
+use App\Models\UserNotification;
 use App\Services\AuditLogger;
+use App\Observers\UserNotificationObserver;
 
 class AppServiceProvider extends ServiceProvider
 {
@@ -54,5 +56,8 @@ class AppServiceProvider extends ServiceProvider
 		SupportTicket::updated(function (SupportTicket $t) use ($logger) {
 			$logger->logAction(auth()->id(), auth()->check() ? 'admin' : 'system', 'ticket.updated', $t);
 		});
+
+		// Register UserNotification observer for push notifications
+		UserNotification::observe(UserNotificationObserver::class);
     }
 }

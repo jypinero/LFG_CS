@@ -21,6 +21,37 @@ class NotifController extends Controller
         return response()->json(['notifications' => $notifications], 200);
     }
 
+    /**
+     * Send welcome notification when user visits /home
+     * GET /api/home
+     */
+    public function sendHomeWelcome()
+    {
+        try {
+            $user = auth()->user();
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+
+            $welcomeService = app(\App\Services\WelcomeNotificationService::class);
+            $welcomeService->sendWelcomeNotification($user->id);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Welcome notification sent'
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to send welcome notification',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function userNotifications()
     {
         try {

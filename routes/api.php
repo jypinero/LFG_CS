@@ -22,6 +22,7 @@ use App\Http\Middleware\LogAdminAction;
 use App\Http\Controllers\SupportController;
 use App\Http\Controllers\MarketingController;
 use App\Http\Controllers\AdditionalTournamentController;
+use App\Http\Controllers\PushNotificationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -80,6 +81,15 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/users/notifications/{id}/read', [NotifController::class, 'markAsRead']);
     Route::post('/users/notifications/{id}/unread', [NotifController::class, 'markAsUnread']);
     Route::post('/users/notifications/readall', [NotifController::class, 'markAllRead']);
+
+    // Home route - sends welcome notification
+    Route::get('/home', [NotifController::class, 'sendHomeWelcome']);
+
+    // Push notification routes
+    Route::get('/push/vapid', [PushNotificationController::class, 'getVapidKey']);
+    Route::post('/push/subscribe', [PushNotificationController::class, 'subscribe']);
+    Route::post('/push/unsubscribe', [PushNotificationController::class, 'unsubscribe']);
+    Route::post('/push/test-welcome', [PushNotificationController::class, 'sendTestWelcome']);
 
     // User search for messaging (exact username match)
     Route::get('/users/search', [AuthController::class, 'searchUsers']);

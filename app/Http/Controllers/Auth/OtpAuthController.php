@@ -78,6 +78,15 @@ class OtpAuthController extends Controller
 		// Load user relations (same as AuthController login)
 		$user->load('role', 'userProfile', 'userAdditionalSports.sport');
 
+		// Send welcome notification (async, won't block login)
+		try {
+			$welcomeService = app(\App\Services\WelcomeNotificationService::class);
+			$welcomeService->sendWelcomeNotification($user->id);
+		} catch (\Exception $e) {
+			// Log but don't fail login
+			\Log::error('Failed to send welcome notification on OTP login', ['error' => $e->getMessage()]);
+		}
+
 		return response()->json([
 			'status' => 'success',
 			'message' => 'Login successful',
