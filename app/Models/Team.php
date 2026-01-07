@@ -28,6 +28,14 @@ class Team extends Model
         'certification_status', // NEW
         'certification_ai_confidence', // NEW
         'certification_ai_notes', // NEW
+        'verified_by_ai',
+    ];
+    
+    protected $casts = [
+        'certification_verified_at' => 'datetime',
+        'certified' => 'boolean',
+        'verified_by_ai' => 'boolean',
+        'certification_ai_confidence' => 'decimal:2',
     ];
 
     public function creator()
@@ -73,5 +81,24 @@ class Team extends Model
     public function certificationVerifier()
     {
         return $this->belongsTo(User::class, 'certification_verified_by');
+    }
+
+    public function entityDocuments()
+    {
+        return $this->morphMany(EntityDocument::class, 'documentable');
+    }
+
+    public function scopeVerifiedByAI($query)
+    {
+        return $query->where('verified_by_ai', true);
+    }
+
+    public function isVerified()
+    {
+        return $this->certification_status === 'verified' || 
+               $this->entityDocuments()
+                    ->where('document_category', 'team_registration')
+                    ->where('verification_status', 'verified')
+                    ->exists();
     }
 } 

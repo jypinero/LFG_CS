@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\UserDocument;
+use App\Models\EntityDocument;
 use Illuminate\Support\Facades\Log;
 
 class FreeAIDocumentService
@@ -157,6 +158,117 @@ class FreeAIDocumentService
     public function shouldAutoVerify($result)
     {
         return $result['recommendation'] === 'AUTO_APPROVE';
+    }
+    
+    /**
+     * Process entity document with OCR and AI (polymorphic)
+     */
+    public function processEntityDocument(EntityDocument $document)
+    {
+        try {
+            Log::info("Starting AI processing for entity document ID: {$document->id}");
+            
+            // Step 1: OCR with Tesseract (fast, free text extraction)
+            $ocrResult = $this->ocrService->extractText($document->file_path);
+            $structuredData = $this->ocrService->extractStructuredData(
+                $document->file_path,
+                $document->document_type
+            );
+            
+            Log::info("OCR completed. Confidence: " . ($ocrResult['confidence'] ?? 0));
+            
+            // Step 2: AI validation with Ollama (slower, more accurate)
+            // Get entity for name matching
+            $entity = $document->documentable;
+            $expectedName = null;
+            $entityForAI = null;
+            
+            if ($entity instanceof \App\Models\User) {
+                $expectedName = trim(($entity->first_name ?? '') . ' ' . ($entity->last_name ?? ''));
+                $entityForAI = $entity; // User already has first_name, last_name
+            } elseif ($entity instanceof \App\Models\Venue) {
+                $expectedName = $entity->name;
+                // Create simple object for AI service
+                $nameParts = explode(' ', $expectedName, 2);
+                $entityForAI = (object) [
+                    'first_name' => $nameParts[0] ?? '',
+                    'last_name' => $nameParts[1] ?? '',
+                    'email' => $entity->email ?? '',
+                ];
+            } elseif ($entity instanceof \App\Models\Team) {
+                $expectedName = $entity->name;
+                // Create simple object for AI service
+                $nameParts = explode(' ', $expectedName, 2);
+                $entityForAI = (object) [
+                    'first_name' => $nameParts[0] ?? '',
+                    'last_name' => $nameParts[1] ?? '',
+                    'email' => '',
+                ];
+            } elseif ($entity instanceof \App\Models\CoachProfile) {
+                $user = $entity->user;
+                $expectedName = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
+                $entityForAI = $user; // Use the user object
+            } else {
+                // Fallback
+                $entityForAI = (object) ['first_name' => '', 'last_name' => '', 'email' => ''];
+            }
+            
+            $aiResult = $this->aiService->validateDocument(
+                $document->file_path,
+                $document->document_type === 'other' ? $document->custom_type : $document->document_type,
+                $entityForAI,
+                $ocrResult['text'] ?? ''
+            );
+            
+            Log::info("AI analysis completed. Confidence: " . ($aiResult['confidence'] ?? 0));
+            
+            // Step 3: Combine results
+            $finalConfidence = $this->calculateFinalConfidence($ocrResult, $aiResult);
+            
+            // Merge extracted data from both OCR and AI
+            $extractedData = array_merge($structuredData, $aiResult['extracted_data']);
+            
+            // Get final recommendation
+            $recommendation = $this->getRecommendation(
+                $finalConfidence,
+                $aiResult['flags'],
+                $aiResult['name_matches'],
+                $aiResult['name_match_confidence'] ?? 0
+            );
+            
+            return [
+                'success' => true,
+                'confidence' => $finalConfidence,
+                'ocr_text' => $ocrResult['text'] ?? '',
+                'ocr_confidence' => $ocrResult['confidence'] ?? 0,
+                'ai_confidence' => $aiResult['confidence'] ?? 0,
+                'extracted_data' => $extractedData,
+                'flags' => $aiResult['flags'] ?? [],
+                'quality_score' => $aiResult['quality_score'] ?? 0,
+                'name_matches' => $aiResult['name_matches'] ?? false,
+                'name_match_confidence' => $aiResult['name_match_confidence'] ?? 0,
+                'is_expired' => $aiResult['is_expired'] ?? false,
+                'recommendation' => $recommendation,
+                'notes' => $aiResult['notes'] ?? ''
+            ];
+            
+        } catch (\Exception $e) {
+            Log::error('Free AI Document Service Error for entity document: ' . $e->getMessage());
+            
+            return [
+                'success' => false,
+                'confidence' => 0,
+                'ocr_text' => '',
+                'extracted_data' => [],
+                'flags' => ['Processing error: ' . $e->getMessage()],
+                'quality_score' => 0,
+                'name_matches' => false,
+                'name_match_confidence' => 0,
+                'is_expired' => false,
+                'recommendation' => 'MANUAL_REVIEW',
+                'notes' => 'Error during processing - manual review required'
+            ];
+        }
     }
     
     /**

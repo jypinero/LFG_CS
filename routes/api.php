@@ -147,6 +147,12 @@ Route::middleware('auth:api')->group(function () {
         Route::delete('/{id}', [\App\Http\Controllers\UserDocumentController::class, 'destroy']);
         Route::get('/{id}/download', [\App\Http\Controllers\UserDocumentController::class, 'download']);
     });
+    
+    // Entity Documents (for venues, teams, coaches, pro athletes)
+    Route::prefix('entity-documents')->group(function () {
+        Route::post('/', [\App\Http\Controllers\EntityDocumentController::class, 'store']);
+        Route::get('/', [\App\Http\Controllers\EntityDocumentController::class, 'index']);
+    });
 
     // Wildcard username route - MUST be after all specific /profile/* routes
     Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);
@@ -351,11 +357,13 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/tournaments/event-game/{gameId}/submit-score', [NewTournamentController::class, 'submitScore']);
 
     // Tournament CRUD - Additional routes
+    // Specific routes must come before parameterized routes
+    Route::get('/tournaments/my', [NewTournamentController::class, 'myTournaments']);
+    
     Route::get('/tournaments/{tournamentId}', [NewTournamentController::class, 'show']);
     Route::put('/tournaments/{tournamentId}', [NewTournamentController::class, 'update']);
     Route::patch('/tournaments/{tournamentId}', [NewTournamentController::class, 'update']);
     Route::delete('/tournaments/{tournamentId}', [NewTournamentController::class, 'destroy']);
-    Route::get('/tournaments/my', [NewTournamentController::class, 'myTournaments']);
 
     // Games/Matches
     Route::get('/tournaments/events/{eventId}/games', [NewTournamentController::class, 'listEventGames']);
@@ -485,29 +493,11 @@ Route::middleware('auth:api')->group(function () {
     // Route::post('/tournaments/{tournamentId}/cancel', [TournamentController::class, 'cancelTournament']);
 
     // // Tournament Templates
-    // Route::post('/tournaments/templates', [TournamentController::class, 'createTemplate']);
-    // Route::get('/tournaments/templates', [TournamentController::class, 'listTemplates']);
-    // Route::post('/tournaments/create-from-template/{templateId}', [TournamentController::class, 'createFromTemplate']);
-    // Route::put('/tournaments/templates/{templateId}', [TournamentController::class, 'updateTemplate']);
-    // Route::delete('/tournaments/templates/{templateId}', [TournamentController::class, 'deleteTemplate']);
-
-    // // Additional utility routes
-    // Route::post('tournaments/{tournamentId}/participants/bulk', [TournamentController::class,'bulkImportParticipants']);
-    // Route::post('tournaments/{tournamentId}/invite-link', [TournamentController::class,'createInviteLink']);
-    // Route::patch('tournaments/{tournamentId}/lock-participants', [TournamentController::class,'setParticipantLock']);
-    // Route::get('tournaments/{tournamentId}/bracket-preview/{eventId}', [TournamentController::class,'generateBracketsPreview']);
-    // Route::post('tournaments/{tournamentId}/participants/export', [TournamentController::class,'exportParticipants']);
-    // Route::post('tournaments/{tournamentId}/results/export', [TournamentController::class,'exportResults']);
-
-    // // Additional Tournament Event Routes
-    // // Start tournament (generate bracket)
-    // Route::post('tournaments/{tournamentId}/start', [AdditionalTournamentController::class, 'startTournament']);
-
-    // // End a match (set score/winner, optionally auto-advance)
-    // Route::post('tournaments/{tournamentId}/matches/{match}/end', [AdditionalTournamentController::class, 'endMatch']);
-
-    // // Manually declare champion
-    // Route::post('tournaments/{tournamentId}/declare-champion', [AdditionalTournamentController::class, 'declareChampion']);
+    // Tournament Lifecycle Management Routes (NewTournamentController)
+    Route::post('/tournaments/{tournamentId}/open-registration', [NewTournamentController::class, 'openRegistration']);
+    Route::post('/tournaments/{tournamentId}/close-registration', [NewTournamentController::class, 'closeRegistration']);
+    Route::post('/tournaments/{tournamentId}/start', [NewTournamentController::class, 'startTournament']);
+    Route::post('/tournaments/{tournamentId}/complete', [NewTournamentController::class, 'completeTournament']);
 
     // Event check-in routes within tournaments
 
@@ -606,6 +596,36 @@ Route::middleware(['auth:api', EnsureAdmin::class, LogAdminAction::class, 'throt
     Route::patch('/venues/{id}', [\App\Http\Controllers\Admin\VenueAdminController::class, 'update']);
     Route::post('/venues/{id}/approve', [\App\Http\Controllers\Admin\VenueAdminController::class, 'approve']);
     Route::post('/venues/{id}/reject', [\App\Http\Controllers\Admin\VenueAdminController::class, 'reject']);
+    Route::post('/venues/{id}/reset-verification', [\App\Http\Controllers\Admin\VenueAdminController::class, 'resetVerification']);
+    Route::get('/venues/{id}/documents', [\App\Http\Controllers\Admin\VenueAdminController::class, 'documents']);
+    // Teams admin
+    Route::get('/teams', [\App\Http\Controllers\Admin\TeamAdminController::class, 'index']);
+    Route::get('/teams/{id}', [\App\Http\Controllers\Admin\TeamAdminController::class, 'show']);
+    Route::post('/teams/{id}/approve', [\App\Http\Controllers\Admin\TeamAdminController::class, 'approve']);
+    Route::post('/teams/{id}/reject', [\App\Http\Controllers\Admin\TeamAdminController::class, 'reject']);
+    Route::post('/teams/{id}/reset-verification', [\App\Http\Controllers\Admin\TeamAdminController::class, 'resetVerification']);
+    Route::get('/teams/{id}/documents', [\App\Http\Controllers\Admin\TeamAdminController::class, 'documents']);
+    Route::get('/teams/statistics', [\App\Http\Controllers\Admin\TeamAdminController::class, 'statistics']);
+    // Coaches admin
+    Route::get('/coaches', [\App\Http\Controllers\Admin\CoachAdminController::class, 'index']);
+    Route::get('/coaches/{id}', [\App\Http\Controllers\Admin\CoachAdminController::class, 'show']);
+    Route::post('/coaches/{id}/approve', [\App\Http\Controllers\Admin\CoachAdminController::class, 'approve']);
+    Route::post('/coaches/{id}/reject', [\App\Http\Controllers\Admin\CoachAdminController::class, 'reject']);
+    Route::post('/coaches/{id}/reset-verification', [\App\Http\Controllers\Admin\CoachAdminController::class, 'resetVerification']);
+    Route::get('/coaches/{id}/documents', [\App\Http\Controllers\Admin\CoachAdminController::class, 'documents']);
+    Route::get('/coaches/statistics', [\App\Http\Controllers\Admin\CoachAdminController::class, 'statistics']);
+    // Users (Pro Athletes) - update existing
+    Route::post('/users/{id}/approve', [\App\Http\Controllers\Admin\UserAdminController::class, 'approve']);
+    Route::post('/users/{id}/reject', [\App\Http\Controllers\Admin\UserAdminController::class, 'reject']);
+    Route::get('/users/{id}/documents', [\App\Http\Controllers\Admin\UserAdminController::class, 'documents']);
+    Route::get('/users/statistics', [\App\Http\Controllers\Admin\UserAdminController::class, 'statistics']);
+    // Entity Documents admin (polymorphic)
+    Route::get('/entity-documents', [\App\Http\Controllers\Admin\EntityDocumentAdminController::class, 'index']);
+    Route::get('/entity-documents/{id}', [\App\Http\Controllers\Admin\EntityDocumentAdminController::class, 'show']);
+    Route::post('/entity-documents/{id}/verify', [\App\Http\Controllers\Admin\EntityDocumentAdminController::class, 'verify']);
+    Route::post('/entity-documents/{id}/reject', [\App\Http\Controllers\Admin\EntityDocumentAdminController::class, 'reject']);
+    Route::post('/entity-documents/{id}/reset', [\App\Http\Controllers\Admin\EntityDocumentAdminController::class, 'resetVerification']);
+    Route::get('/entity-documents/{id}/download', [\App\Http\Controllers\Admin\EntityDocumentAdminController::class, 'download']);
     // Events admin
     Route::get('/events', [\App\Http\Controllers\Admin\EventAdminController::class, 'index']);
     Route::get('/events/{id}', [\App\Http\Controllers\Admin\EventAdminController::class, 'show']);

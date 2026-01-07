@@ -19,6 +19,7 @@ class Venue extends Model
         'longitude',
         'verified_at',
         'verification_expires_at',
+        'verified_by',
         'created_by',
         'phone_number',
         'email',
@@ -29,6 +30,7 @@ class Venue extends Model
         'is_closed',
         'closed_at',
         'closed_reason',
+        'verified_by_ai',
     ];
 
     protected $casts = [
@@ -36,6 +38,7 @@ class Venue extends Model
         'verification_expires_at' => 'datetime',
         'is_closed' => 'boolean',
         'closed_at' => 'datetime',
+        'verified_by_ai' => 'boolean',
     ];
 
     // relations
@@ -105,5 +108,25 @@ class Venue extends Model
     public function creator()
     {
         return $this->belongsTo(\App\Models\User::class, 'created_by');
+    }
+
+    public function entityDocuments()
+    {
+        return $this->morphMany(EntityDocument::class, 'documentable');
+    }
+
+    public function scopeVerifiedByAI($query)
+    {
+        return $query->where('verified_by_ai', true);
+    }
+
+    public function isVerified()
+    {
+        return !is_null($this->verified_at);
+    }
+
+    public function verifier()
+    {
+        return $this->belongsTo(\App\Models\User::class, 'verified_by');
     }
 }

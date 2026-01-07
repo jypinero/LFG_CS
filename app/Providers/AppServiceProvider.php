@@ -59,5 +59,17 @@ class AppServiceProvider extends ServiceProvider
 
 		// Register UserNotification observer for push notifications
 		UserNotification::observe(UserNotificationObserver::class);
+		
+		// Entity Document verification listener
+		\App\Models\EntityDocument::updated(function ($document) {
+			// Check if document was just verified and trigger entity verification
+			if ($document->wasChanged('verification_status') && $document->verification_status === 'verified') {
+				$verificationService = app(\App\Services\EntityVerificationService::class);
+				$verificationService->checkAndVerifyEntity(
+					$document->documentable_type,
+					$document->documentable_id
+				);
+			}
+		});
     }
 }

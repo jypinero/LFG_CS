@@ -36,6 +36,11 @@ class User extends Authenticatable implements JWTSubject
         'zip_code',
         'profile_photo',
         'role_id',
+        'is_pro_athlete',
+        'verified_at',
+        'verified_by',
+        'verification_notes',
+        'verified_by_ai',
     ];
 
     /**
@@ -58,6 +63,9 @@ class User extends Authenticatable implements JWTSubject
         return [
             'email_verified_at' => 'datetime',
             'password' => 'hashed',
+            'verified_at' => 'datetime',
+            'is_pro_athlete' => 'boolean',
+            'verified_by_ai' => 'boolean',
         ];
     }
 
@@ -115,6 +123,29 @@ class User extends Authenticatable implements JWTSubject
     public function userDocuments()
     {
         return $this->hasMany(UserDocument::class);
+    }
+
+    public function entityDocuments()
+    {
+        return $this->morphMany(EntityDocument::class, 'documentable');
+    }
+
+    public function proAthleteDocuments()
+    {
+        return $this->entityDocuments()
+            ->where('document_category', 'athlete_certification')
+            ->where('verification_status', 'verified');
+    }
+
+    public function isProAthlete()
+    {
+        return $this->is_pro_athlete && 
+               $this->proAthleteDocuments()->exists();
+    }
+
+    public function verifier()
+    {
+        return $this->belongsTo(User::class, 'verified_by');
     }
 
     public function userAdditionalSports()

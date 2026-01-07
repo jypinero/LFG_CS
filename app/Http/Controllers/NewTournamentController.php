@@ -58,7 +58,7 @@ class NewTournamentController extends Controller
                 'location' => $data['location'] ?? null,
                 'rules' => $data['rules'] ?? null,
                 'max_teams' => $data['max_teams'] ?? null,
-                'min_teams' => $data['min_teams'] ?? null,
+                'min_teams' => $data['min_teams'] ?? 2,
                 'created_by' => $user->id,
             ]);
 
@@ -1810,6 +1810,259 @@ class NewTournamentController extends Controller
 
         return response()->json([
             'message' => 'Announcement deleted',
+        ]);
+    }
+
+    /**
+     * Open tournament registration
+     * POST /api/tournaments/{tournamentId}/open-registration
+     */
+    public function openRegistration(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        if ($tournament->status !== 'draft') {
+            return response()->json(['status' => 'error', 'message' => 'Only draft tournaments can open registration'], 422);
+        }
+
+        $tournament->update(['status' => 'open_registration']);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Registration opened successfully',
+            'tournament' => $tournament
+        ]);
+    }
+
+    /**
+     * Close tournament registration
+     * POST /api/tournaments/{tournamentId}/close-registration
+     */
+    public function closeRegistration(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        if ($tournament->status !== 'open_registration') {
+            return response()->json(['status' => 'error', 'message' => 'Registration is not open'], 422);
+        }
+
+        $tournament->update(['status' => 'registration_closed']);
+
+        // Send notifications to participants
+        $participants = TournamentParticipant::where('tournament_id', $tournament->id)
+            ->whereIn('status', ['approved', 'pending', 'confirmed'])
+            ->get();
+
+        foreach ($participants as $participant) {
+            $userId = $participant->participant_type === 'individual' 
+                ? $participant->user_id 
+                : Team::find($participant->team_id)?->owner_id;
+
+            if ($userId) {
+                $notification = Notification::create([
+                    'type' => 'tournament_registration_closed',
+                    'data' => [
+                        'tournament_id' => $tournament->id,
+                        'tournament_name' => $tournament->name,
+                        'message' => "Registration closed for tournament: {$tournament->name}",
+                    ],
+                    'created_by' => $user->id,
+                ]);
+                UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $userId,
+                    'is_read' => false,
+                ]);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Registration closed successfully',
+            'tournament' => $tournament
+        ]);
+    }
+
+    /**
+     * Start tournament
+     * POST /api/tournaments/{tournamentId}/start
+     */
+    public function startTournament(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        if ($tournament->status !== 'registration_closed') {
+            return response()->json(['status' => 'error', 'message' => 'Tournament must have registration closed before starting'], 422);
+        }
+
+        // Validate minimum participants
+        $approvedCount = TournamentParticipant::where('tournament_id', $tournament->id)
+            ->where('status', 'approved')
+            ->count();
+
+        $min = (int)($tournament->min_teams ?? 2);
+        if ($approvedCount < $min) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Need at least {$min} approved participants to start. Currently have {$approvedCount}."
+            ], 422);
+        }
+
+        $tournament->update(['status' => 'ongoing']);
+
+        // Send notifications to participants
+        $participants = TournamentParticipant::where('tournament_id', $tournament->id)
+            ->where('status', 'approved')
+            ->get();
+
+        foreach ($participants as $participant) {
+            $userId = $participant->participant_type === 'individual' 
+                ? $participant->user_id 
+                : Team::find($participant->team_id)?->owner_id;
+
+            if ($userId) {
+                $notification = Notification::create([
+                    'type' => 'tournament_started',
+                    'data' => [
+                        'tournament_id' => $tournament->id,
+                        'tournament_name' => $tournament->name,
+                        'message' => "Tournament {$tournament->name} has started!",
+                    ],
+                    'created_by' => $user->id,
+                ]);
+                UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $userId,
+                    'is_read' => false,
+                ]);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Tournament started successfully',
+            'tournament' => $tournament
+        ]);
+    }
+
+    /**
+     * Complete tournament
+     * POST /api/tournaments/{tournamentId}/complete
+     */
+    public function completeTournament(Request $request, $tournamentId)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::find($tournamentId);
+
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        $isCreator = $tournament->created_by === $user->id;
+        $isOrganizer = TournamentOrganizer::where('tournament_id', $tournament->id)
+            ->where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'organizer'])
+            ->exists();
+
+        if (!$isCreator && !$isOrganizer) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        if ($tournament->status !== 'ongoing') {
+            return response()->json(['status' => 'error', 'message' => 'Tournament must be ongoing to complete'], 422);
+        }
+
+        // Validate all matches are completed
+        $hasOpenMatches = \App\Models\TeamMatchup::where('tournament_id', $tournament->id)
+            ->whereNotIn('status', ['completed', 'cancelled', 'forfeited'])
+            ->exists();
+
+        if ($hasOpenMatches) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot complete tournament with unfinished matches. Please complete or cancel all matches first.'
+            ], 422);
+        }
+
+        $tournament->update(['status' => 'completed']);
+
+        // Send completion notifications to participants
+        $participants = TournamentParticipant::where('tournament_id', $tournament->id)
+            ->where('status', 'approved')
+            ->get();
+
+        foreach ($participants as $participant) {
+            $userId = $participant->participant_type === 'individual' 
+                ? $participant->user_id 
+                : Team::find($participant->team_id)?->owner_id;
+
+            if ($userId) {
+                $notification = Notification::create([
+                    'type' => 'tournament_completed',
+                    'data' => [
+                        'tournament_id' => $tournament->id,
+                        'tournament_name' => $tournament->name,
+                        'message' => "Tournament {$tournament->name} has been completed!",
+                    ],
+                    'created_by' => $user->id,
+                ]);
+                UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $userId,
+                    'is_read' => false,
+                ]);
+            }
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Tournament completed successfully',
+            'tournament' => $tournament
         ]);
     }
 }

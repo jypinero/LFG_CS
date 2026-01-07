@@ -47,3 +47,4 @@ class CreateEventGamesTable extends Migration
 
 
 
+

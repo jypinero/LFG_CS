@@ -126,7 +126,37 @@ return [
     'log_all_processing' => env('AI_LOG_PROCESSING', true),
     'log_channel' => env('AI_LOG_CHANNEL', 'stack'),
     
+    /*
+    |--------------------------------------------------------------------------
+    | Entity Verification Settings
+    |--------------------------------------------------------------------------
+    |
+    | Configuration for entity-level verification based on document verification.
+    | Entities are auto-verified when they have enough verified documents.
+    |
+    */
+    
+    'entity_verification' => [
+        'athlete' => [
+            'required_categories' => ['athlete_certification'],
+            'min_documents' => 1,
+        ],
+        'venue' => [
+            'required_categories' => ['venue_business'],
+            'min_documents' => 1,
+        ],
+        'team' => [
+            'required_categories' => ['team_registration'],
+            'min_documents' => 1,
+        ],
+        'coach' => [
+            'required_categories' => ['coach_license'],
+            'min_documents' => 1,
+        ],
+    ],
+    
 ];
+
 
 
 

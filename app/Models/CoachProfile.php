@@ -24,6 +24,10 @@ class CoachProfile extends Model
         'rating',
         'total_reviews',
         'is_active',
+        'verified_at',
+        'verified_by',
+        'verification_notes',
+        'verified_by_ai',
     ];
 
     protected $casts = [
@@ -34,10 +38,27 @@ class CoachProfile extends Model
         'is_verified' => 'boolean',
         'is_active' => 'boolean',
         'rating' => 'decimal:2',
+        'verified_at' => 'datetime',
+        'verified_by_ai' => 'boolean',
     ];
 
     public function user()
     {
         return $this->belongsTo(User::class);
+    }
+
+    public function entityDocuments()
+    {
+        return $this->morphMany(EntityDocument::class, 'documentable');
+    }
+
+    public function isVerified()
+    {
+        return $this->is_verified && !is_null($this->verified_at);
+    }
+
+    public function verifier()
+    {
+        return $this->belongsTo(User::class, 'verified_by');
     }
 }
