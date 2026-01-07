@@ -182,3 +182,5 @@ Since Vercel is for frontend:
 
 **Remember:** Push notifications require HTTPS, so both your frontend (Vercel) and backend must be served over HTTPS. Vercel automatically provides HTTPS, but you need to ensure your backend also has SSL configured.
 
+
+

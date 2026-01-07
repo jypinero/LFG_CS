@@ -45,3 +45,5 @@ class CreateEventGamesTable extends Migration
 }
 
 
+
+
