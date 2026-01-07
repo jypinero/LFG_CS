@@ -39,6 +39,18 @@ class PushNotificationController extends Controller
      */
     public function subscribe(Request $request)
     {
+        // Debug: Log incoming request
+        Log::info('Push subscribe request received', [
+            'endpoint_length' => strlen($request->input('endpoint', '')),
+            'endpoint_sample' => substr($request->input('endpoint', ''), 0, 60) . '...',
+            'has_keys' => $request->has('keys'),
+            'keys_p256dh_length' => strlen($request->input('keys.p256dh', '')),
+            'keys_auth_length' => strlen($request->input('keys.auth', '')),
+            'keys_p256dh_sample' => substr($request->input('keys.p256dh', ''), 0, 30) . '...',
+            'keys_auth_sample' => substr($request->input('keys.auth', ''), 0, 15) . '...',
+            'raw_keys' => $request->input('keys'),
+        ]);
+
         $validator = Validator::make($request->all(), [
             'endpoint' => 'required|string|max:500',
             'keys' => 'required|array',
@@ -47,6 +59,9 @@ class PushNotificationController extends Controller
         ]);
 
         if ($validator->fails()) {
+            Log::warning('Push subscribe validation failed', [
+                'errors' => $validator->errors()->toArray()
+            ]);
             return response()->json([
                 'status' => 'error',
                 'message' => 'Invalid subscription data',
@@ -64,16 +79,34 @@ class PushNotificationController extends Controller
 
         try {
             $keys = $request->input('keys');
+            
+            // Validate key format - p256dh should be ~87 chars, auth ~22 chars (base64)
+            $p256dh = $keys['p256dh'] ?? '';
+            $auth = $keys['auth'] ?? '';
+            
+            Log::info('Saving push subscription', [
+                'user_id' => $user->id,
+                'p256dh_length' => strlen($p256dh),
+                'auth_length' => strlen($auth),
+                'p256dh_looks_valid' => strlen($p256dh) >= 80 && strlen($p256dh) <= 100,
+                'auth_looks_valid' => strlen($auth) >= 20 && strlen($auth) <= 30,
+            ]);
+
             $subscription = PushSubscription::updateOrCreate(
                 [
                     'user_id' => $user->id,
                     'endpoint' => $request->input('endpoint'),
                 ],
                 [
-                    'p256dh' => $keys['p256dh'] ?? '',
-                    'auth' => $keys['auth'] ?? '',
+                    'p256dh' => $p256dh,
+                    'auth' => $auth,
                 ]
             );
+
+            Log::info('Push subscription saved successfully', [
+                'subscription_id' => $subscription->id,
+                'user_id' => $user->id,
+            ]);
 
             return response()->json([
                 'status' => 'success',

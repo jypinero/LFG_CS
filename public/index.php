@@ -3,6 +3,9 @@
 use Illuminate\Foundation\Application;
 use Illuminate\Http\Request;
 
+// Fix for Windows OpenSSL EC key generation
+putenv('OPENSSL_CONF=C:/xampp/apache/conf/openssl.cnf');
+
 define('LARAVEL_START', microtime(true));
 
 // Determine if the application is in maintenance mode...

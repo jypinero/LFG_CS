@@ -59,6 +59,9 @@ Route::get('/sports', [AuthController::class, 'getSports']);
 // Public tournament route (no authentication required)
 Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicTournament']);
 
+// Public push notification route - VAPID key is public (not secret, no auth required)
+Route::get('/push/vapid', [PushNotificationController::class, 'getVapidKey']);
+
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();
 });
@@ -85,8 +88,7 @@ Route::middleware('auth:api')->group(function () {
     // Home route - sends welcome notification
     Route::get('/home', [NotifController::class, 'sendHomeWelcome']);
 
-    // Push notification routes
-    Route::get('/push/vapid', [PushNotificationController::class, 'getVapidKey']);
+    // Push notification routes (authenticated)
     Route::post('/push/subscribe', [PushNotificationController::class, 'subscribe']);
     Route::post('/push/unsubscribe', [PushNotificationController::class, 'unsubscribe']);
     Route::post('/push/test-welcome', [PushNotificationController::class, 'sendTestWelcome']);

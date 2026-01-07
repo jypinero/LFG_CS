@@ -14,9 +14,17 @@ class PushNotificationService
 
     public function __construct()
     {
+        // Ensure OpenSSL config is available (required on Windows for EC key generation)
+        $this->ensureOpenSSLConfig();
+
         $publicKey = env('VAPID_PUBLIC_KEY');
         $privateKey = env('VAPID_PRIVATE_KEY');
         $email = env('VAPID_EMAIL', 'mailto:admin@example.com');
+
+        Log::info('PushNotificationService initialized', [
+            'has_public_key' => !empty($publicKey),
+            'has_private_key' => !empty($privateKey),
+        ]);
 
         if (!$publicKey || !$privateKey) {
             Log::warning('VAPID keys not configured. Push notifications will not work.');
@@ -33,10 +41,75 @@ class PushNotificationService
     }
 
     /**
+     * Ensure OpenSSL configuration file is available.
+     * This is required on Windows for EC key generation used in web push encryption.
+     * 
+     * NOTE: OPENSSL_CONF must be set BEFORE PHP starts for it to take effect.
+     * If push notifications fail with "Unable to create the local key" error:
+     * 
+     * 1. Set the OPENSSL_CONF environment variable in Windows:
+     *    - Open System Properties > Environment Variables
+     *    - Add new User variable: OPENSSL_CONF = C:\xampp\apache\conf\openssl.cnf
+     *    - Restart Apache/PHP
+     * 
+     * 2. Or run in PowerShell (persistent):
+     *    [System.Environment]::SetEnvironmentVariable('OPENSSL_CONF', 'C:\xampp\apache\conf\openssl.cnf', 'User')
+     */
+    private function ensureOpenSSLConfig(): void
+    {
+        // Check if OpenSSL EC key creation works
+        $testKey = @openssl_pkey_new([
+            'curve_name' => 'prime256v1',
+            'private_key_type' => OPENSSL_KEYTYPE_EC
+        ]);
+
+        if ($testKey !== false) {
+            // OpenSSL is working correctly
+            return;
+        }
+
+        // OpenSSL EC key creation failed - this is a configuration issue
+        $existingConf = getenv('OPENSSL_CONF');
+        
+        $possibleConfigs = [
+            'C:/xampp/apache/conf/openssl.cnf',
+            'C:/xampp/php/extras/ssl/openssl.cnf',
+            dirname(PHP_BINARY) . '/extras/ssl/openssl.cnf',
+            'C:/laragon/etc/ssl/openssl.cnf',
+            'C:/php/extras/ssl/openssl.cnf',
+        ];
+
+        $foundConfig = null;
+        foreach ($possibleConfigs as $config) {
+            if (file_exists($config)) {
+                $foundConfig = $config;
+                break;
+            }
+        }
+
+        Log::error('OpenSSL EC key generation failed. Push notifications will not work.', [
+            'current_openssl_conf' => $existingConf ?: '(not set)',
+            'found_config' => $foundConfig,
+            'fix' => $foundConfig 
+                ? "Set OPENSSL_CONF environment variable to: $foundConfig (must be set before PHP starts)"
+                : 'Could not find openssl.cnf file. Install OpenSSL properly.',
+            'powershell_command' => $foundConfig 
+                ? "[System.Environment]::SetEnvironmentVariable('OPENSSL_CONF', '$foundConfig', 'User')"
+                : null,
+        ]);
+    }
+
+    /**
      * Send push notification to a user
      */
     public function sendToUser(int $userId, Notification $notification, array $options = [])
     {
+        Log::info('sendToUser called', [
+            'user_id' => $userId,
+            'notification_type' => $notification->type,
+            'notification_id' => $notification->id,
+        ]);
+
         if (!$this->webPush) {
             Log::warning('WebPush not initialized. Cannot send push notification.');
             return;
@@ -44,7 +117,13 @@ class PushNotificationService
 
         $subscriptions = PushSubscription::where('user_id', $userId)->get();
 
+        Log::info('Found subscriptions for user', [
+            'user_id' => $userId,
+            'subscription_count' => $subscriptions->count(),
+        ]);
+
         if ($subscriptions->isEmpty()) {
+            Log::warning('No push subscriptions found for user', ['user_id' => $userId]);
             return;
         }
 
@@ -64,22 +143,50 @@ class PushNotificationService
             'icon' => $options['icon'] ?? '/favicon.ico',
         ]);
 
+        Log::info('Prepared push payload', [
+            'title' => $title,
+            'body' => $body,
+        ]);
+
         foreach ($subscriptions as $subscription) {
             try {
+                // Sanitize keys - ensure they're properly base64url encoded (no padding)
+                $p256dh = rtrim(strtr($subscription->p256dh, '+/', '-_'), '=');
+                $auth = rtrim(strtr($subscription->auth, '+/', '-_'), '=');
+                
+                // Debug: Log the actual key data
+                Log::debug('Subscription key details', [
+                    'subscription_id' => $subscription->id,
+                    'endpoint_sample' => substr($subscription->endpoint, 0, 60) . '...',
+                    'p256dh_length' => strlen($p256dh),
+                    'auth_length' => strlen($auth),
+                    'p256dh_sample' => substr($p256dh, 0, 30) . '...',
+                    'auth_sample' => substr($auth, 0, 15) . '...',
+                    'p256dh_looks_valid' => strlen($p256dh) >= 80,
+                    'auth_looks_valid' => strlen($auth) >= 20,
+                ]);
+
                 $pushSubscription = Subscription::create([
                     'endpoint' => $subscription->endpoint,
                     'keys' => [
-                        'p256dh' => $subscription->p256dh,
-                        'auth' => $subscription->auth,
+                        'p256dh' => $p256dh,
+                        'auth' => $auth,
                     ],
                 ]);
 
                 $this->webPush->queueNotification($pushSubscription, $payload);
+                
+                Log::debug('Notification queued successfully', [
+                    'subscription_id' => $subscription->id,
+                ]);
             } catch (\Exception $e) {
                 Log::error('Failed to queue push notification', [
                     'user_id' => $userId,
                     'subscription_id' => $subscription->id,
-                    'error' => $e->getMessage()
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString(),
+                    'p256dh_length' => strlen($subscription->p256dh),
+                    'auth_length' => strlen($subscription->auth),
                 ]);
             }
         }
@@ -94,27 +201,50 @@ class PushNotificationService
     private function flush()
     {
         if (!$this->webPush) {
+            Log::warning('WebPush is null when trying to flush');
             return;
         }
 
-        foreach ($this->webPush->flush() as $report) {
-            $endpoint = $report->getRequest()->getUri()->__toString();
+        Log::info('Flushing push notifications');
+        $successCount = 0;
+        $failureCount = 0;
 
-            if ($report->isSuccess()) {
-                Log::debug('Push notification sent successfully', ['endpoint' => $endpoint]);
-            } else {
-                Log::warning('Push notification failed', [
-                    'endpoint' => $endpoint,
-                    'reason' => $report->getReason()
-                ]);
+        try {
+            foreach ($this->webPush->flush() as $report) {
+                $endpoint = $report->getRequest()->getUri()->__toString();
 
-                // If subscription is invalid (404/410), remove it
-                if (in_array($report->getStatusCode(), [404, 410])) {
-                    PushSubscription::where('endpoint', $endpoint)->delete();
-                    Log::info('Removed invalid push subscription', ['endpoint' => $endpoint]);
+                if ($report->isSuccess()) {
+                    Log::info('Push notification sent successfully', ['endpoint' => substr($endpoint, 0, 50) . '...']);
+                    $successCount++;
+                } else {
+                    Log::warning('Push notification failed', [
+                        'endpoint' => substr($endpoint, 0, 50) . '...',
+                        'status' => $report->getStatusCode(),
+                        'reason' => $report->getReason()
+                    ]);
+                    $failureCount++;
+
+                    // If subscription is invalid (404/410), remove it
+                    if (in_array($report->getStatusCode(), [404, 410])) {
+                        PushSubscription::where('endpoint', $endpoint)->delete();
+                        Log::info('Removed invalid push subscription', ['endpoint' => substr($endpoint, 0, 50) . '...']);
+                    }
                 }
             }
+        } catch (\Exception $e) {
+            Log::error('Error during flush', [
+                'error' => $e->getMessage(),
+                'file' => $e->getFile(),
+                'line' => $e->getLine(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            throw $e;
         }
+
+        Log::info('Push flush complete', [
+            'success' => $successCount,
+            'failed' => $failureCount,
+        ]);
     }
 
     /**
