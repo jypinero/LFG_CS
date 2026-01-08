@@ -217,15 +217,41 @@ class PushNotificationService
                     Log::info('Push notification sent successfully', ['endpoint' => substr($endpoint, 0, 50) . '...']);
                     $successCount++;
                 } else {
+                    // Safely get status code - check if method exists or use response object
+                    $statusCode = null;
+                    $reason = 'Unknown error';
+                    
+                    try {
+                        // Try to get response object first
+                        if (method_exists($report, 'getResponse')) {
+                            $response = $report->getResponse();
+                            if ($response && method_exists($response, 'getStatusCode')) {
+                                $statusCode = $response->getStatusCode();
+                            }
+                        }
+                        
+                        // Try direct method if response method doesn't work
+                        if ($statusCode === null && method_exists($report, 'getStatusCode')) {
+                            $statusCode = $report->getStatusCode();
+                        }
+                        
+                        // Get reason if method exists
+                        if (method_exists($report, 'getReason')) {
+                            $reason = $report->getReason();
+                        }
+                    } catch (\Exception $e) {
+                        Log::debug('Could not extract status code from report', ['error' => $e->getMessage()]);
+                    }
+                    
                     Log::warning('Push notification failed', [
                         'endpoint' => substr($endpoint, 0, 50) . '...',
-                        'status' => $report->getStatusCode(),
-                        'reason' => $report->getReason()
+                        'status' => $statusCode,
+                        'reason' => $reason
                     ]);
                     $failureCount++;
 
                     // If subscription is invalid (404/410), remove it
-                    if (in_array($report->getStatusCode(), [404, 410])) {
+                    if ($statusCode && in_array($statusCode, [404, 410])) {
                         PushSubscription::where('endpoint', $endpoint)->delete();
                         Log::info('Removed invalid push subscription', ['endpoint' => substr($endpoint, 0, 50) . '...']);
                     }
@@ -238,7 +264,8 @@ class PushNotificationService
                 'line' => $e->getLine(),
                 'trace' => $e->getTraceAsString()
             ]);
-            throw $e;
+            // Don't throw - allow login to continue even if push fails
+            // throw $e;
         }
 
         Log::info('Push flush complete', [
