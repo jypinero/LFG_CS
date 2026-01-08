@@ -78,7 +78,9 @@ class NotifController extends Controller
 
             $userNotifications = UserNotification::where('user_id', $userId)
                 ->with('notification')
-                ->whereHas('notification') // Filter out orphaned records
+                ->whereHas('notification', function ($q) {
+                        $q->where('type', '!=', 'message_received');
+                    })
                 ->orderBy('created_at', 'desc')
                 ->get()
                 ->filter(function ($userNotif) {

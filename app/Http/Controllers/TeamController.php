@@ -702,57 +702,84 @@ class TeamController extends Controller
      * - User can't join if already in any team.
      * - User can't join if already in the requested team.
      */
-   public function requestJoinTeam(Request $request, string $teamId)
+    public function requestJoinTeam(Request $request, string $teamId)
     {
         $user = auth()->user();
         $team = Team::find($teamId);
+
         if (! $team) {
-            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
-        }
-
-        // Check if user is already in any team
-        $existingMembership = TeamMember::where('user_id', $user->id)->first();
-        if ($existingMembership) {
-            if ($existingMembership->team_id == $team->id) {
-                return response()->json(['status' => 'error', 'message' => 'You are already on this team'], 409);
-            }
-            return response()->json(['status' => 'error', 'message' => 'You are already a member of another team'], 409);
-        }
-
-        // Check if user already requested
-        $pending = TeamMember::where('team_id', $team->id)
-            ->where('user_id', $user->id)
-            ->where('role', 'pending')
-            ->first();
-
-        if ($pending) {
-            return response()->json(['status' => 'error', 'message' => 'You have already requested to join this team'], 409);
-        }
-
-        // Validation: prevent new requests when roster is full
-        $activeCount = TeamMember::where('team_id', $team->id)
-            ->where('is_active', true)
-            ->count();
-        if ($team->roster_size_limit && $activeCount >= $team->roster_size_limit) {
             return response()->json([
                 'status' => 'error',
-                'message' => "Cannot request to join: roster is full ({$activeCount}/{$team->roster_size_limit} active)"
+                'message' => 'Team not found'
+            ], 404);
+        }
+
+        /**
+         * Check existing ACTIVE memberships
+         */
+        $activeTeams = TeamMember::where('user_id', $user->id)
+            ->where('is_active', true)
+            ->with('team:id,team_type')
+            ->get();
+
+        $hasCollegiate = $activeTeams->contains(fn ($m) => $m->team->team_type  === 'collegiate');
+        $hasProfessional = $activeTeams->contains(fn ($m) => $m->team->team_type  === 'professional');
+
+        if ($hasCollegiate && $hasProfessional) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You cannot join more teams because you are already part of both collegiate and professional teams.'
             ], 409);
         }
 
+        /**
+         * Prevent duplicate membership in same team
+         */
+        $existing = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->first();
+
+        if ($existing) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are already part of this team or have a pending request.'
+            ], 409);
+        }
+
+        /**
+         * Check roster limit (active members only)
+         */
+        $activeCount = TeamMember::where('team_id', $team->id)
+            ->where('is_active', true)
+            ->count();
+
+        if ($team->roster_size_limit && $activeCount >= $team->roster_size_limit) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Cannot request to join: roster is full ({$activeCount}/{$team->roster_size_limit})"
+            ], 409);
+        }
+
+        /**
+         * Create pending membership
+         */
         $member = TeamMember::create([
             'team_id' => $team->id,
             'user_id' => $user->id,
             'role' => 'pending',
+            'is_active' => false,
             'joined_at' => now(),
         ]);
 
-        // Send notification to team owner
+        /**
+         * Notify team owner
+         */
         $ownerId = $team->created_by;
+
         $notif = \App\Models\Notification::create([
             'type' => 'team_join_request',
             'data' => [
-                'message' => $user->username . ' requested to join your team: ' . $team->name,
+                'message' => "{$user->username} requested to join your team: {$team->name}",
                 'team_id' => $team->id,
                 'user_id' => $user->id,
             ],
