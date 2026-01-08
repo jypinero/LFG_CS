@@ -555,7 +555,7 @@ Route::middleware('auth:api')->group(function () {
 
 
     Route::post('/events/{event}/ratings',[RatingController::class, 'submit']);
-    Route::get('/profile/{userId}', [\App\Http\Controllers\ProfileController::class, 'show']);
+    Route::get('/profile/rating/{userId}', [App\Http\Controllers\ProfileController::class, 'show']);
 
 
 }); 
