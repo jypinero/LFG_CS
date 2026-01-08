@@ -22,8 +22,8 @@ class MarketingController extends Controller
 {
     public function __construct()
     {
-        // require authenticated user for index/createpost (adjust middleware driver as used in your app)
-        $this->middleware('auth')->only(['index','createpost']);
+        // require authenticated user only for createpost (index is now public)
+        $this->middleware('auth')->only(['createpost']);
     }
 
     private const RATE_LIMIT_COUNT = 5;         // posts per minute
@@ -376,11 +376,6 @@ class MarketingController extends Controller
 
     public function index(Request $request)
     {
-        $user = auth()->user();
-        if (! $user) {
-            return response()->json(['status'=>'error','message'=>'Unauthenticated'], 401);
-        }
-
         $validated = $request->validate([
             'venue_id' => 'nullable|integer|exists:venues,id',
             'author_id' => 'nullable|integer|exists:users,id',
@@ -388,20 +383,14 @@ class MarketingController extends Controller
             'create_event' => 'nullable|boolean',
         ]);
 
-        // only return posts the current user is allowed to see:
-        // - global/public posts (venue_id IS NULL)
-        // - posts authored by the user
-        // - posts for venues the user is a member of
-        $userVenueIds = VenueUser::where('user_id', $user->id)->pluck('venue_id')->toArray();
-
-        // include profile_photo so we can expose a full URL in the response
-        // include venue coordinates for location-based rendering
-        $query = MarketingPost::with(['post','event','booking','author:id,username,profile_photo','venue:id,name,latitude,longitude,address'])
-            ->where(function($q) use ($user, $userVenueIds) {
-                $q->whereNull('venue_id')
-                  ->orWhere('author_id', $user->id)
-                  ->orWhereIn('venue_id', $userVenueIds);
-            })
+        // return all marketing posts (no user-specific filtering)
+        $query = MarketingPost::with([
+                'post',
+                'event',
+                'booking',
+                'author:id,username,profile_photo',
+                'venue:id,name,latitude,longitude,address'
+            ])
             ->orderByDesc('created_at');
 
         if (! empty($validated['venue_id'])) {
@@ -433,14 +422,12 @@ class MarketingController extends Controller
                     : null;
             }
 
-            // attach first venue photo (venue_photos.image_path) if available
             $item->venue_photo_url = null;
             if (! empty($item->venue_id)) {
                 $path = DB::table('venue_photos')->where('venue_id', $item->venue_id)->value('image_path');
                 $item->venue_photo_url = $path ? Storage::url($path) : null;
             }
 
-            // Add venue coordinates for location-based rendering
             if ($item->venue) {
                 $item->latitude = $item->venue->latitude;
                 $item->longitude = $item->venue->longitude;
