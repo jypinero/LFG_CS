@@ -651,6 +651,7 @@ class EventController extends Controller
                     'is_today' => $isToday,
                     'is_upcoming' => $isUpcoming,
                     'status' => $isPast ? 'completed' : ($isToday ? 'today' : 'upcoming'),
+                    'is_rating_pending' => !$event->is_rated && $isPast,
                     'priority' => $priority,
                 ];
             })
