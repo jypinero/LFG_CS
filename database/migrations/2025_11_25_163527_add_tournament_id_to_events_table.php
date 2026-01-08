@@ -3,6 +3,7 @@
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Support\Facades\Schema;
+use Illuminate\Support\Facades\DB;
 
 return new class extends Migration
 {
@@ -10,11 +11,7 @@ return new class extends Migration
     {
         Schema::table('events', function (Blueprint $table) {
             if (!Schema::hasColumn('events', 'tournament_id')) {
-                $table->foreignId('tournament_id')
-                    ->nullable()
-                    ->after('created_by')
-                    ->constrained('tournaments')
-                    ->onDelete('cascade');
+                $table->unsignedBigInteger('tournament_id')->nullable()->after('created_by');
             }
             if (!Schema::hasColumn('events', 'game_number')) {
                 $table->integer('game_number')->nullable()->after('tournament_id');
@@ -26,6 +23,23 @@ return new class extends Migration
                 $table->boolean('is_tournament_game')->default(false)->after('game_status');
             }
         });
+        
+        // Add foreign key constraint only if tournaments table exists
+        if (Schema::hasTable('tournaments')) {
+            Schema::table('events', function (Blueprint $table) {
+                $foreignKeys = DB::select("
+                    SELECT CONSTRAINT_NAME 
+                    FROM information_schema.KEY_COLUMN_USAGE 
+                    WHERE TABLE_SCHEMA = DATABASE() 
+                    AND TABLE_NAME = 'events' 
+                    AND COLUMN_NAME = 'tournament_id' 
+                    AND REFERENCED_TABLE_NAME IS NOT NULL
+                ");
+                if (empty($foreignKeys)) {
+                    $table->foreign('tournament_id')->references('id')->on('tournaments')->onDelete('cascade');
+                }
+            });
+        }
     }
 
     public function down(): void

@@ -60,32 +60,31 @@ return new class extends Migration
             $table->text('verification_notes')->nullable();
             
             // AI Processing Status
-            $table->boolean('ai_processed')->default(false)->after('verification_notes');
-            $table->decimal('ai_confidence_score', 5, 2)->nullable()->after('ai_processed');
+            $table->boolean('ai_processed')->default(false);
+            $table->decimal('ai_confidence_score', 5, 2)->nullable();
             
             // AI Extracted Data (JSON)
-            $table->json('ai_extracted_data')->nullable()->after('ai_confidence_score');
+            $table->json('ai_extracted_data')->nullable();
             
             // AI Validation Results
-            $table->text('ai_validation_notes')->nullable()->after('ai_extracted_data');
-            $table->json('ai_flags')->nullable()->after('ai_validation_notes');
+            $table->text('ai_validation_notes')->nullable();
+            $table->json('ai_flags')->nullable();
             
             // AI Quality Metrics
-            $table->decimal('ai_quality_score', 5, 2)->nullable()->after('ai_flags');
-            $table->boolean('ai_name_matches')->nullable()->after('ai_quality_score');
+            $table->decimal('ai_quality_score', 5, 2)->nullable();
+            $table->boolean('ai_name_matches')->nullable();
             
             // Auto-verification tracking
-            $table->boolean('ai_auto_verified')->default(false)->after('ai_name_matches');
-            $table->timestamp('ai_processed_at')->nullable()->after('ai_auto_verified');
+            $table->boolean('ai_auto_verified')->default(false);
+            $table->timestamp('ai_processed_at')->nullable();
             
             // OCR extracted text (for debugging)
-            $table->text('ai_ocr_text')->nullable()->after('ai_processed_at');
+            $table->text('ai_ocr_text')->nullable();
             
             $table->timestamps();
             $table->softDeletes();
             
-            // Indexes for performance
-            $table->index(['documentable_type', 'documentable_id']);
+            // Indexes for performance (morphs() already creates index for documentable_type/documentable_id)
             $table->index('document_category');
             $table->index('verification_status');
             $table->index('ai_processed');
