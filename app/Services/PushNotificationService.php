@@ -17,9 +17,9 @@ class PushNotificationService
         // Ensure OpenSSL config is available (required on Windows for EC key generation)
         $this->ensureOpenSSLConfig();
 
-        $publicKey = env('VAPID_PUBLIC_KEY');
-        $privateKey = env('VAPID_PRIVATE_KEY');
-        $email = env('VAPID_EMAIL', 'mailto:admin@example.com');
+        $publicKey = config('push.vapid.public_key');
+        $privateKey = config('push.vapid.private_key');
+        $email = config('push.vapid.email', 'mailto:admin@example.com');
 
         Log::info('PushNotificationService initialized', [
             'has_public_key' => !empty($publicKey),
