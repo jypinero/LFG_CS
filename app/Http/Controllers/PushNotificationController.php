@@ -18,7 +18,7 @@ class PushNotificationController extends Controller
      */
     public function getVapidKey()
     {
-        $publicKey = env('VAPID_PUBLIC_KEY');
+        $publicKey = config('push.vapid.public_key');
         
         if (!$publicKey) {
             return response()->json([
