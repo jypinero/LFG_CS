@@ -11,7 +11,7 @@ return [
         'http://127.0.0.1:3000',
         'https://subatomic-billy-grazyna.ngrok-free.dev',
         // Add your specific Vercel deployment URL here
-        'lfg-theta.vercel.app',
+         'https://lfg-theta.vercel.app', 
     ],
 
     'allowed_origins_patterns' => [
