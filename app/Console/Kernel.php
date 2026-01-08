@@ -16,6 +16,7 @@ class Kernel extends ConsoleKernel
     {
         // Run your custom command every minute (adjust as needed)
         $schedule->command('tournaments:close-registration')->everyMinute();
+        $schedule->command('notify:players_to_rate')->dailyAt('08:00');
     }
 
     protected function commands()

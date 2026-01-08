@@ -17,6 +17,8 @@ use App\Http\Controllers\Admin\AuditLogController;
 use App\Http\Controllers\CoachController;
 use App\Http\Controllers\TrainingSessionController;
 use App\Http\Controllers\TrainingAnalyticsController;
+use App\Http\Controllers\RatingController;
+use App\Http\Controllers\ProfileController;
 use App\Http\Middleware\EnsureAdmin;
 use App\Http\Middleware\LogAdminAction;
 use App\Http\Controllers\SupportController;
@@ -552,6 +554,11 @@ Route::middleware('auth:api')->group(function () {
     // Use POST for force-calc (or GET if you prefer)
     Route::post('analytics/calculate/{userId}/{userType}', [TrainingAnalyticsController::class, 'calculateAnalytics']);
 
+
+    Route::post('/events/{event}/ratings',[RatingController::class, 'submit']);
+    Route::get('/profile/{userId}', [\App\Http\Controllers\ProfileController::class, 'show']);
+
+
 }); 
 
 // Admin routes (JWT protected + admin-only)
@@ -651,8 +658,8 @@ Route::middleware(['auth:api', EnsureAdmin::class, LogAdminAction::class, 'throt
 });
 
 // Ratings (user-facing, protected)
-Route::middleware('auth:api')->group(function () {
-    Route::get('/events/{id}/pending-ratings', [\App\Http\Controllers\EventRatingController::class, 'pending']);
-    Route::post('/events/{id}/ratings', [\App\Http\Controllers\EventRatingController::class, 'submit']);
-    Route::get('/events/{id}/ratings/summary', [\App\Http\Controllers\EventRatingController::class, 'summary']);
-});
+// Route::middleware('auth:api')->group(function () {
+//     Route::get('/events/{id}/pending-ratings', [\App\Http\Controllers\EventRatingController::class, 'pending']);
+//     Route::post('/events/{id}/ratings', [\App\Http\Controllers\EventRatingController::class, 'submit']);
+//     Route::get('/events/{id}/ratings/summary', [\App\Http\Controllers\EventRatingController::class, 'summary']);
+// });
