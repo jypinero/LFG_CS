@@ -6,6 +6,9 @@ use App\Models\TrainingSession;
 use App\Models\User;
 use App\Models\CoachProfile;
 use App\Models\CoachMatch;
+use App\Models\Booking;
+use App\Models\Venue;
+use App\Models\Event;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -47,10 +50,14 @@ class TrainingSessionController extends Controller
             ], 400);
         }
 
-        /** Validate match */
+        /** Validate match - must be active (not expired) */
         $matched = CoachMatch::where('student_id', $studentId)
             ->where('coach_id', $coachId)
             ->where('match_status', 'matched')
+            ->where(function($q) {
+                $q->whereNull('expires_at')
+                  ->orWhere('expires_at', '>', now());
+            })
             ->exists();
 
         if (! $matched) {
@@ -68,9 +75,25 @@ class TrainingSessionController extends Controller
             'end_time'     => 'required|date_format:H:i|after:start_time',
             'hourly_rate'  => 'required|numeric|min:0',
             'venue_id'     => 'nullable|integer|exists:venues,id',
+            'facility_id'  => 'nullable|integer|exists:facilities,id',
             'event_id'     => 'nullable|integer|exists:events,id',
             'notes'        => 'nullable|string',
         ]);
+
+        // If facility_id is provided, validate it belongs to venue
+        if ($data['facility_id'] && $data['venue_id']) {
+            $facilityBelongs = DB::table('facilities')
+                ->where('id', $data['facility_id'])
+                ->where('venue_id', $data['venue_id'])
+                ->exists();
+            
+            if (! $facilityBelongs) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Facility does not belong to the selected venue'
+                ], 422);
+            }
+        }
 
         /** Time parsing */
         $startTime = Carbon::createFromFormat('H:i', $data['start_time']);
@@ -88,7 +111,7 @@ class TrainingSessionController extends Controller
 
         $totalAmount = round($hours * $data['hourly_rate'], 2);
 
-        /** Overlap check */
+        /** Overlap check for coach */
         $conflict = TrainingSession::where('coach_id', $coachId)
             ->where('session_date', $data['session_date'])
             ->where('status', '!=', 'cancelled')
@@ -109,6 +132,36 @@ class TrainingSessionController extends Controller
             ], 409);
         }
 
+        /** Check facility availability if facility_id is provided */
+        if ($data['facility_id'] && $data['venue_id']) {
+            // Check if venue is closed
+            $venue = Venue::find($data['venue_id']);
+            if ($venue && $venue->is_closed) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This venue is closed and not accepting bookings'
+                ], 403);
+            }
+
+            // Check for conflicting bookings/events on the same facility
+            $facilityConflict = Event::where('venue_id', $data['venue_id'])
+                ->where('facility_id', $data['facility_id'])
+                ->where('date', $data['session_date'])
+                ->where(function($q) use ($data) {
+                    $q->where('start_time', '<', $data['end_time'])
+                      ->where('end_time', '>', $data['start_time'])
+                      ->where('game_status', '!=', 'cancelled');
+                })
+                ->exists();
+
+            if ($facilityConflict) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Facility is already booked for the selected date and time'
+                ], 409);
+            }
+        }
+
         try {
             $session = DB::transaction(function () use (
                 $coachId,
@@ -121,6 +174,7 @@ class TrainingSessionController extends Controller
                     'student_id'   => $studentId,
                     'event_id'     => $data['event_id'] ?? null,
                     'venue_id'     => $data['venue_id'] ?? null,
+                    'facility_id'  => $data['facility_id'] ?? null,
                     'sport'        => $data['sport'],
                     'session_date' => $data['session_date'],
                     'start_time'   => $data['start_time'],
@@ -160,7 +214,10 @@ class TrainingSessionController extends Controller
 
         $q = TrainingSession::where(function ($q) use ($userId) {
             $q->where('student_id', $userId)->orWhere('coach_id', $userId);
-        })->with(['coach:id,first_name,last_name', 'student:id,first_name,last_name']);
+        })->with([
+            'coach:id,first_name,last_name,username,profile_photo',
+            'student:id,first_name,last_name,username,profile_photo'
+        ]);
 
         if ($request->filled('status')) {
             $q->where('status', $request->input('status'));
@@ -173,6 +230,18 @@ class TrainingSessionController extends Controller
         }
 
         $sessions = $q->orderByDesc('session_date')->paginate($request->input('per_page', 20));
+        
+        // Add profile photo URLs
+        $sessions->getCollection()->transform(function($session) {
+            if ($session->coach && $session->coach->profile_photo) {
+                $session->coach->profile_photo_url = \Storage::url($session->coach->profile_photo);
+            }
+            if ($session->student && $session->student->profile_photo) {
+                $session->student->profile_photo_url = \Storage::url($session->student->profile_photo);
+            }
+            return $session;
+        });
+
         return response()->json($sessions);
     }
 
@@ -181,7 +250,10 @@ class TrainingSessionController extends Controller
         $userId = Auth::id();
         $today = Carbon::today()->toDateString();
 
-        $sessions = TrainingSession::with(['coach:id,first_name,last_name', 'student:id,first_name,last_name'])
+        $sessions = TrainingSession::with([
+            'coach:id,first_name,last_name,username,profile_photo',
+            'student:id,first_name,last_name,username,profile_photo'
+        ])
             ->where(function ($q) use ($userId) {
                 $q->where('student_id', $userId)->orWhere('coach_id', $userId);
             })
@@ -189,6 +261,17 @@ class TrainingSessionController extends Controller
             ->whereIn('status', ['pending', 'confirmed'])
             ->orderBy('session_date')
             ->get();
+
+        // Add profile photo URLs
+        $sessions->transform(function($session) {
+            if ($session->coach && $session->coach->profile_photo) {
+                $session->coach->profile_photo_url = \Storage::url($session->coach->profile_photo);
+            }
+            if ($session->student && $session->student->profile_photo) {
+                $session->student->profile_photo_url = \Storage::url($session->student->profile_photo);
+            }
+            return $session;
+        });
 
         return response()->json(['status' => 'success', 'upcoming' => $sessions]);
     }
@@ -201,11 +284,19 @@ class TrainingSessionController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
         }
 
-        $sessions = TrainingSession::with('student:id,first_name,last_name')
+        $sessions = TrainingSession::with('student:id,first_name,last_name,username,profile_photo')
             ->where('coach_id', $coachId)
             ->where('status', 'pending')
             ->orderBy('session_date')
             ->get();
+
+        // Add profile photo URLs
+        $sessions->transform(function($session) {
+            if ($session->student && $session->student->profile_photo) {
+                $session->student->profile_photo_url = \Storage::url($session->student->profile_photo);
+            }
+            return $session;
+        });
 
         return response()->json(['status' => 'success', 'pending' => $sessions]);
     }
@@ -220,6 +311,26 @@ class TrainingSessionController extends Controller
         }
         if ($session->status !== 'pending') {
             return response()->json(['status' => 'error', 'message' => 'Only pending sessions can be accepted'], 400);
+        }
+
+        // Check facility availability before accepting (if facility is specified)
+        if ($session->facility_id && $session->venue_id) {
+            $facilityConflict = Event::where('venue_id', $session->venue_id)
+                ->where('facility_id', $session->facility_id)
+                ->where('date', $session->session_date)
+                ->where(function($q) use ($session) {
+                    $q->where('start_time', '<', $session->end_time)
+                      ->where('end_time', '>', $session->start_time)
+                      ->where('game_status', '!=', 'cancelled');
+                })
+                ->exists();
+
+            if ($facilityConflict) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Facility is no longer available for this time slot'
+                ], 409);
+            }
         }
 
         $session->status = 'confirmed';
@@ -292,6 +403,35 @@ class TrainingSessionController extends Controller
             }
         }
 
+        // Create venue booking if venue and facility are specified
+        if ($session->venue_id && $session->facility_id && !$session->booking_id) {
+            try {
+                $booking = Booking::create([
+                    'venue_id' => $session->venue_id,
+                    'user_id' => $session->student_id, // Student is booking the facility
+                    'event_id' => null, // Training sessions don't have events
+                    'sport' => $session->sport,
+                    'date' => $session->session_date,
+                    'start_time' => $session->start_time,
+                    'end_time' => $session->end_time,
+                    'purpose' => 'Training session with coach: ' . ($session->coach->first_name ?? 'Coach'),
+                    'status' => 'pending', // Venue owner needs to approve
+                ]);
+
+                $session->booking_id = $booking->id;
+                Log::info('Booking created for training session', [
+                    'session_id' => $session->id,
+                    'booking_id' => $booking->id
+                ]);
+            } catch (\Throwable $e) {
+                Log::error('Failed to create booking for training session', [
+                    'session_id' => $session->id,
+                    'error' => $e->getMessage()
+                ]);
+                // Continue even if booking creation fails - session can still be confirmed
+            }
+        }
+
         $session->save();
         return response()->json(['status' => 'success', 'session' => $session]);
     }
@@ -310,6 +450,28 @@ class TrainingSessionController extends Controller
 
         $session->status = 'cancelled';
         $session->cancellation_reason = $request->input('cancellation_reason', 'Rejected by coach');
+        
+        // Cancel associated booking if exists
+        if ($session->booking_id) {
+            try {
+                $booking = Booking::find($session->booking_id);
+                if ($booking) {
+                    $booking->status = 'denied';
+                    $booking->save();
+                    Log::info('Booking cancelled due to session rejection', [
+                        'session_id' => $session->id,
+                        'booking_id' => $booking->id
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                Log::error('Failed to cancel booking', [
+                    'session_id' => $session->id,
+                    'booking_id' => $session->booking_id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
         $session->save();
 
         return response()->json(['status' => 'success', 'session' => $session]);
@@ -332,6 +494,28 @@ class TrainingSessionController extends Controller
 
         $session->status = 'cancelled';
         $session->cancellation_reason = $request->input('cancellation_reason', 'Cancelled by user');
+        
+        // Cancel associated booking if exists
+        if ($session->booking_id) {
+            try {
+                $booking = Booking::find($session->booking_id);
+                if ($booking) {
+                    $booking->status = 'denied';
+                    $booking->save();
+                    Log::info('Booking cancelled due to session cancellation', [
+                        'session_id' => $session->id,
+                        'booking_id' => $booking->id
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                Log::error('Failed to cancel booking', [
+                    'session_id' => $session->id,
+                    'booking_id' => $session->booking_id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
         $session->save();
 
         return response()->json(['status' => 'success', 'session' => $session]);
@@ -386,6 +570,27 @@ class TrainingSessionController extends Controller
             'end_time' => 'nullable|date_format:H:i|after:start_time',
             'notes' => 'nullable|string',
         ]);
+
+        // If rescheduling, cancel existing booking and it will be recreated on acceptance
+        if ($session->booking_id) {
+            try {
+                $booking = Booking::find($session->booking_id);
+                if ($booking) {
+                    $booking->status = 'denied';
+                    $booking->save();
+                    $session->booking_id = null; // Will create new booking when accepted
+                    Log::info('Booking cancelled due to session reschedule', [
+                        'session_id' => $session->id,
+                        'booking_id' => $booking->id
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                Log::error('Failed to cancel booking on reschedule', [
+                    'session_id' => $session->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
 
         $session->session_date = $data['session_date'];
         $session->start_time = $data['start_time'];
