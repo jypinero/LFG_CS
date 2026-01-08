@@ -97,6 +97,22 @@ class CoachController extends Controller
         // if requester is a coach, exclude their own profile from listings
         if ($authIsCoach) {
             $q->where('user_id', '!=', $authId);
+        } else {
+            // if requester is a student, exclude coaches they've already matched with (active matches)
+            if ($authId) {
+                $matchedCoachIds = CoachMatch::where('student_id', $authId)
+                    ->where('match_status', 'matched')
+                    ->where(function ($sub) {
+                        $sub->whereNull('expires_at')
+                            ->orWhere('expires_at', '>', now());
+                    })
+                    ->pluck('coach_id')
+                    ->toArray();
+
+                if (!empty($matchedCoachIds)) {
+                    $q->whereNotIn('user_id', $matchedCoachIds);
+                }
+            }
         }
 
         if ($request->filled('specialization')) {
