@@ -36,4 +36,9 @@ class Booking extends Model
     {
         return $this->belongsTo(Event::class);
     }
+
+    public function trainingSession()
+    {
+        return $this->hasOne(TrainingSession::class, 'booking_id');
+    }
 }

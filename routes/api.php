@@ -523,6 +523,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/coach/matches/pending', [CoachController::class, 'getPendingMatches']);
     Route::post('/coach/matches/{matchId}/respond', [CoachController::class, 'respondToMatch']);
     Route::get('/coach/students', [CoachController::class, 'getStudents']);
+    Route::get('/coach/students/{studentId}', [CoachController::class, 'getStudentDetail']);
     Route::get('/coach/sessions', [CoachController::class, 'getDashboardSessions']);
     Route::get('/coach/analytics', [CoachController::class, 'getAnalytics']);
     

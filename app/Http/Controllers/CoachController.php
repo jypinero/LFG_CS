@@ -121,6 +121,14 @@ class CoachController extends Controller
         $perPage = $request->input('per_page', 15);
         $results = $q->orderByDesc('rating')->paginate($perPage);
 
+        // Add profile photo URLs to user objects
+        $results->getCollection()->transform(function($coach) {
+            if ($coach->user && $coach->user->profile_photo) {
+                $coach->user->profile_photo_url = \Storage::url($coach->user->profile_photo);
+            }
+            return $coach;
+        });
+
         return response()->json($results);
     }
 
@@ -128,7 +136,14 @@ class CoachController extends Controller
     {
         $studentId = Auth::id();
 
-        $seenCoachIds = CoachMatch::where('student_id', $studentId)->pluck('coach_id')->toArray();
+        // Exclude expired matches from seen list (they can be shown again)
+        $seenCoachIds = CoachMatch::where('student_id', $studentId)
+            ->where(function($q) {
+                $q->whereNull('expires_at')
+                  ->orWhere('expires_at', '>', now());
+            })
+            ->pluck('coach_id')
+            ->toArray();
 
         $q = CoachProfile::where('is_active', true)
             ->whereNotIn('user_id', $seenCoachIds);
@@ -146,6 +161,13 @@ class CoachController extends Controller
             return response()->json(['status' => 'success', 'card' => null]);
         }
 
+        // Add profile photo URL to user object
+        if ($coach->user) {
+            $coach->user->profile_photo_url = $coach->user->profile_photo 
+                ? \Storage::url($coach->user->profile_photo) 
+                : null;
+        }
+
         return response()->json(['status' => 'success', 'card' => $coach]);
     }
 
@@ -155,6 +177,13 @@ class CoachController extends Controller
 
         if (! $coach) {
             return response()->json(['status' => 'error', 'message' => 'Coach not found'], 404);
+        }
+
+        // Add profile photo URL to user object
+        if ($coach->user) {
+            $coach->user->profile_photo_url = $coach->user->profile_photo 
+                ? \Storage::url($coach->user->profile_photo) 
+                : null;
         }
 
         $stats = [
@@ -265,8 +294,23 @@ class CoachController extends Controller
 
         $matches = CoachMatch::where('student_id', $studentId)
             ->where('match_status', 'matched')
-            ->with(['coach' => function ($q) { $q->select('id', 'first_name', 'last_name'); }])
+            ->where(function($q) {
+                $q->whereNull('expires_at')
+                  ->orWhere('expires_at', '>', now());
+            })
+            ->with(['coach' => function ($q) { 
+                $q->select('id', 'first_name', 'last_name', 'username', 'profile_photo'); 
+            }])
             ->get();
+
+        // Add profile photo URLs
+        $matches->each(function($match) {
+            if ($match->coach) {
+                $match->coach->profile_photo_url = $match->coach->profile_photo 
+                    ? \Storage::url($match->coach->profile_photo) 
+                    : null;
+            }
+        });
 
         return response()->json(['status' => 'success', 'matches' => $matches]);
     }
@@ -277,8 +321,19 @@ class CoachController extends Controller
 
         $matches = CoachMatch::where('coach_id', $coachId)
             ->where('match_status', 'pending')
-            ->with(['student' => function ($q) { $q->select('id', 'first_name', 'last_name'); }])
+            ->with(['student' => function ($q) { 
+                $q->select('id', 'first_name', 'last_name', 'username', 'profile_photo'); 
+            }])
             ->get();
+
+        // Add profile photo URLs
+        $matches->each(function($match) {
+            if ($match->student) {
+                $match->student->profile_photo_url = $match->student->profile_photo 
+                    ? \Storage::url($match->student->profile_photo) 
+                    : null;
+            }
+        });
 
         return response()->json(['status' => 'success', 'pending' => $matches]);
     }
@@ -390,22 +445,166 @@ class CoachController extends Controller
     {
         $coachId = Auth::id();
 
-        $studentIds = CoachMatch::where('coach_id', $coachId)
+        // Get active (non-expired) matches
+        $matches = CoachMatch::where('coach_id', $coachId)
             ->where('match_status', 'matched')
-            ->pluck('student_id')
-            ->unique()
-            ->toArray();
+            ->where(function($q) {
+                $q->whereNull('expires_at')
+                  ->orWhere('expires_at', '>', now());
+            })
+            ->with('student:id,first_name,last_name,username,email,profile_photo')
+            ->get();
 
-        $students = User::whereIn('id', $studentIds)->select('id', 'first_name', 'last_name', 'email')->get();
+        // Get unique student IDs
+        $studentIds = $matches->pluck('student_id')->unique()->toArray();
+
+        $students = User::whereIn('id', $studentIds)
+            ->select('id', 'first_name', 'last_name', 'username', 'email', 'profile_photo', 'city', 'province')
+            ->with('userProfile:id,user_id,bio,main_sport_id')
+            ->get()
+            ->map(function($student) use ($coachId) {
+                // Add profile photo URL
+                $student->profile_photo_url = $student->profile_photo 
+                    ? \Storage::url($student->profile_photo) 
+                    : null;
+
+                // Get session statistics for this student
+                $sessions = TrainingSession::where('coach_id', $coachId)
+                    ->where('student_id', $student->id)
+                    ->get();
+
+                $student->session_stats = [
+                    'total_sessions' => $sessions->count(),
+                    'completed_sessions' => $sessions->where('status', 'completed')->count(),
+                    'pending_sessions' => $sessions->where('status', 'pending')->count(),
+                    'confirmed_sessions' => $sessions->where('status', 'confirmed')->count(),
+                    'cancelled_sessions' => $sessions->where('status', 'cancelled')->count(),
+                ];
+
+                // Get match info
+                $match = CoachMatch::where('coach_id', $coachId)
+                    ->where('student_id', $student->id)
+                    ->where('match_status', 'matched')
+                    ->first();
+
+                $student->matched_at = $match->matched_at ?? null;
+                $student->expires_at = $match->expires_at ?? null;
+                $student->is_match_active = $match && (!$match->expires_at || $match->expires_at > now());
+
+                return $student;
+            });
 
         return response()->json(['status' => 'success', 'students' => $students]);
+    }
+
+    /**
+     * Get detailed information about a specific student
+     */
+    public function getStudentDetail($studentId)
+    {
+        $coachId = Auth::id();
+
+        // Verify match exists and is active
+        $match = CoachMatch::where('coach_id', $coachId)
+            ->where('student_id', $studentId)
+            ->where('match_status', 'matched')
+            ->where(function($q) {
+                $q->whereNull('expires_at')
+                  ->orWhere('expires_at', '>', now());
+            })
+            ->first();
+
+        if (!$match) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Student not found or match expired'
+            ], 404);
+        }
+
+        $student = User::with([
+            'userProfile.mainSport',
+            'userAdditionalSports.sport',
+            'userProfile:id,user_id,bio,occupation,main_sport_id,main_sport_level'
+        ])
+        ->find($studentId);
+
+        if (!$student) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Student not found'
+            ], 404);
+        }
+
+        // Add profile photo URL
+        $student->profile_photo_url = $student->profile_photo 
+            ? \Storage::url($student->profile_photo) 
+            : null;
+
+        // Get all sessions with this student
+        $sessions = TrainingSession::where('coach_id', $coachId)
+            ->where('student_id', $studentId)
+            ->orderByDesc('session_date')
+            ->get();
+
+        // Calculate session statistics
+        $sessionStats = [
+            'total_sessions' => $sessions->count(),
+            'completed_sessions' => $sessions->where('status', 'completed')->count(),
+            'pending_sessions' => $sessions->where('status', 'pending')->count(),
+            'confirmed_sessions' => $sessions->where('status', 'confirmed')->count(),
+            'cancelled_sessions' => $sessions->where('status', 'cancelled')->count(),
+            'total_revenue' => round($sessions->where('status', 'completed')->sum('total_amount'), 2),
+        ];
+
+        // Calculate total hours trained
+        $totalHours = $sessions->where('status', 'completed')
+            ->filter(function($s) {
+                return $s->start_time && $s->end_time;
+            })
+            ->reduce(function($carry, $s) {
+                try {
+                    $start = Carbon::parse($s->session_date . ' ' . $s->start_time);
+                    $end = Carbon::parse($s->session_date . ' ' . $s->end_time);
+                    $minutes = max(0, $end->diffInMinutes($start));
+                    return $carry + ($minutes / 60);
+                } catch (\Exception $e) {
+                    return $carry;
+                }
+            }, 0);
+
+        $sessionStats['total_hours_trained'] = round($totalHours, 2);
+
+        // Get upcoming sessions
+        $upcomingSessions = $sessions->filter(function($s) {
+            return in_array($s->status, ['pending', 'confirmed']) 
+                && Carbon::parse($s->session_date)->isFuture();
+        })->values();
+
+        // Get recent sessions (last 5)
+        $recentSessions = $sessions->where('status', 'completed')
+            ->take(5)
+            ->values();
+
+        return response()->json([
+            'status' => 'success',
+            'student' => $student,
+            'match' => [
+                'matched_at' => $match->matched_at,
+                'expires_at' => $match->expires_at,
+                'is_active' => !$match->expires_at || $match->expires_at > now(),
+            ],
+            'session_stats' => $sessionStats,
+            'upcoming_sessions' => $upcomingSessions,
+            'recent_sessions' => $recentSessions,
+        ]);
     }
 
     public function getDashboardSessions(Request $request)
     {
         $coachId = Auth::id();
 
-        $q = TrainingSession::where('coach_id', $coachId);
+        $q = TrainingSession::where('coach_id', $coachId)
+            ->with(['student:id,first_name,last_name,username,profile_photo']);
 
         if ($request->filled('status')) {
             $q->where('status', $request->input('status'));
@@ -422,8 +621,20 @@ class CoachController extends Controller
             $q->where('sport', $request->input('sport'));
         }
 
+        if ($request->filled('student_id')) {
+            $q->where('student_id', $request->input('student_id'));
+        }
+
         $perPage = $request->input('per_page', 15);
         $sessions = $q->orderByDesc('session_date')->paginate($perPage);
+
+        // Add profile photo URLs to student data
+        $sessions->getCollection()->transform(function($session) {
+            if ($session->student && $session->student->profile_photo) {
+                $session->student->profile_photo_url = \Storage::url($session->student->profile_photo);
+            }
+            return $session;
+        });
 
         return response()->json($sessions);
     }

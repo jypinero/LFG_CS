@@ -18,6 +18,8 @@ class TrainingSession extends Model
         'student_id',
         'event_id',
         'venue_id',
+        'facility_id',
+        'booking_id',
         'sport',
         'session_date',
         'start_time',
@@ -82,5 +84,15 @@ class TrainingSession extends Model
     public function venue()
     {
         return $this->belongsTo(Venue::class);
+    }
+
+    public function facility()
+    {
+        return $this->belongsTo(Facilities::class, 'facility_id');
+    }
+
+    public function booking()
+    {
+        return $this->belongsTo(Booking::class);
     }
 }
