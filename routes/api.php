@@ -338,6 +338,12 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/teams/{teamId}/analytics/report', [TeamAnalyticsController::class, 'report']);
 
 
+    //Challonge Integration Routes
+    Route::post('challonge/tournaments/{id}/start', [ChallongeController::class, 'startTournament']);
+    Route::post('challonge/tournaments/{id}/push-games', [ChallongeController::class, 'pushEventGames']);
+    Route::post('challonge/matches/{match_id}/sync-score', [ChallongeController::class, 'syncScoreToChallonge']);
+    Route::get('challonge/tournaments/{id}/bracket', [ChallongeController::class, 'fetchBracket']);
+
     // Tournament Management Routes
     // Tournament CRUD
     Route::get('/tournaments', [NewTournamentController::class, 'index']);

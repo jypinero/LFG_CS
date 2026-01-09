@@ -3,10 +3,10 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use App\Services\ChallongeOauthService;
-use App\Services\ChallongeService;
 use App\Models\EventGame;
+use App\Models\Event; // your local event model
+use Illuminate\Support\Facades\Log;
 
 class ChallongeController extends Controller
 {
@@ -91,5 +91,49 @@ class ChallongeController extends Controller
         }
 
         return response()->json($res->json(), 201);
+    }
+
+    public function startTournament(Request $request, $id, ChallongeOauthService $oauth)
+    {
+        $user = $request->user();
+        $res = $oauth->startTournament($user, $id);
+        if ($res->failed()) {
+            Log::error('startTournament failed', ['status'=>$res->status(),'body'=>$res->body()]);
+            return response()->json(['error'=>'failed to start'], $res->status());
+        }
+        return response()->json(['status'=>'started']);
+    }
+
+    public function pushEventGames(Request $request, $id, ChallongeOauthService $oauth)
+    {
+        // $id is local event id
+        $event = Event::with(['participants','games'])->findOrFail($id);
+        if (empty($event->challonge_tournament_id)) {
+            return response()->json(['error'=>'event not pushed to challonge'], 400);
+        }
+        $ok = $oauth->pushEventGames($request->user(), $event);
+        return response()->json(['status' => $ok ? 'ok' : 'failed']);
+    }
+
+    public function syncScoreToChallonge(Request $request, $match_id, ChallongeOauthService $oauth)
+    {
+        $request->validate(['tournament_id'=>'required','scores_csv'=>'required']);
+        $user = $request->user();
+        $tournamentId = $request->input('tournament_id');
+        $scores = $request->input('scores_csv');
+
+        $res = $oauth->updateMatchScore($user, $tournamentId, $match_id, $scores);
+        if ($res->failed()) {
+            Log::error('syncScoreToChallonge failed', ['status'=>$res->status(),'body'=>$res->body()]);
+            return response()->json(['error'=>'failed'], $res->status());
+        }
+        return response()->json(['status'=>'ok','body'=>$res->json()]);
+    }
+
+    public function fetchBracket(Request $request, $id, ChallongeOauthService $oauth)
+    {
+        $user = $request->user();
+        $data = $oauth->fetchBracket($user, $id);
+        return response()->json($data);
     }
 }

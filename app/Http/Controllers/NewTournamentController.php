@@ -18,6 +18,7 @@ use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
 use App\Services\ChallongeService;
+use App\Services\ChallongeOauthService;
 
 class NewTournamentController extends Controller
 {
@@ -2039,7 +2040,7 @@ class NewTournamentController extends Controller
      * Complete tournament
      * POST /api/tournaments/{tournamentId}/complete
      */
-    public function completeTournament(Request $request, $tournamentId)
+       public function completeTournament(Request $request, $tournamentId)
     {
         $user = auth()->user();
         $tournament = Tournament::find($tournamentId);
@@ -2111,16 +2112,18 @@ class NewTournamentController extends Controller
         ]);
     }
 
-    public function pushTournamentToChallonge(Request $request, $tournamentId, ChallongeService $challonge)
+    public function pushTournamentToChallonge(Request $request, ChallongeOauthService $oauth)
     {
-        $user = auth()->user();
+        $user = $request->user();
+        $tournamentId = $request->tournament_id;
+
         $tournament = Tournament::findOrFail($tournamentId);
 
         // check organizer permission
         $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->exists();
         if (! $isOrganizer) return response()->json(['message'=>'Unauthorized'], 403);
 
-        $remote = $challonge->createTournament($tournament, ['tournament_type' => 'double elimination']);
+        $remote = (new ChallongeService)->createTournament($tournament, ['tournament_type' => 'double elimination']);
         if (! $remote) {
             return response()->json(['message'=>'Failed to create challonge tournament'], 500);
         }
@@ -2136,13 +2139,19 @@ class NewTournamentController extends Controller
             $participants[] = ['name' => $name ?: 'entry-'.$p->id, 'misc' => 'local:'.$p->id];
         }
 
-        $addRes = $challonge->addParticipants($remote['url'] ?? $remote['id'], $participants);
+        $addRes = (new ChallongeService)->addParticipants($remote['url'] ?? $remote['id'], $participants);
         if ($addRes === null) {
             return response()->json(['message'=>'Failed to add participants'], 500);
         }
 
         // Optionally push event games to challonge
         // foreach events call $challonge->pushEventToChallonge($event, $remote['url'] ?? $remote['id']);
+
+        // then start
+        $start = $oauth->startTournament($user, $remote['id']);
+        if ($start->failed()) {
+            \Log::error('Failed to start challonge tournament', ['body'=>$start->body()]);
+        }
 
         return response()->json(['message'=>'Pushed to Challonge','remote'=>$remote], 201);
     }
