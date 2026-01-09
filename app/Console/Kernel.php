@@ -17,6 +17,8 @@ class Kernel extends ConsoleKernel
         // Run your custom command every minute (adjust as needed)
         $schedule->command('tournaments:close-registration')->everyMinute();
         $schedule->command('notify:players_to_rate')->dailyAt('08:00');
+        // run daily; adjust as needed
+        $schedule->command('challonge:refresh-tokens --days=1')->daily();
     }
 
     protected function commands()

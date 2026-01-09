@@ -11,6 +11,7 @@ use App\Http\Controllers\TeamController;
 use App\Http\Controllers\MessagingController;
 use App\Http\Controllers\TournamentController;
 use App\Http\Controllers\NewTournamentController;
+use App\Http\Controllers\ChallongeController;
 use App\Http\Controllers\Auth\OtpAuthController;
 use App\Http\Controllers\Auth\SocialiteController;
 use App\Http\Controllers\Admin\AuditLogController;
@@ -25,6 +26,9 @@ use App\Http\Controllers\SupportController;
 use App\Http\Controllers\MarketingController;
 use App\Http\Controllers\AdditionalTournamentController;
 use App\Http\Controllers\PushNotificationController;
+use App\Http\Controllers\ChallongeAuthController;
+
+
 
 /*
 |--------------------------------------------------------------------------
@@ -61,6 +65,10 @@ Route::get('/sports', [AuthController::class, 'getSports']);
 // Public tournament route (no authentication required)
 Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicTournament']);
 
+Route::get('auth/challonge/redirect', [ChallongeAuthController::class, 'redirect'])->middleware('auth:api');
+Route::get('auth/challonge/callback', [\App\Http\Controllers\ChallongeAuthController::class, 'callback']);
+Route::post('auth/challonge/save-tokens', [\App\Http\Controllers\ChallongeAuthController::class, 'saveTokens'])->middleware('auth:api');
+
 // Public push notification route - VAPID key is public (not secret, no auth required)
 Route::get('/push/vapid', [PushNotificationController::class, 'getVapidKey']);
 
@@ -69,6 +77,10 @@ Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
 });
 
 
+Route::post('webhooks/challonge', [ChallongeController::class, 'handleWebhook']);
+
+// protected route to push tournament
+Route::post('tournaments/{tournament}/push-challonge', [NewTournamentController::class, 'pushTournamentToChallonge'])->middleware('auth');
 
 // Session validation route (before auth middleware to avoid loop)
 Route::get('/auth/validate-session', [AuthController::class, 'validateSession'])->middleware('auth:api');
