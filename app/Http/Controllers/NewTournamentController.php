@@ -341,10 +341,12 @@ class NewTournamentController extends Controller
             'game_number' => 'nullable|integer',
             'game_status' => 'nullable|string',
             'is_tournament_game' => 'nullable|boolean',
+            'event_type' => 'nullable|string',
         ]);
 
         // Prevent adding events with a different sport unless tournament is multisport
-        $newSport = strtolower(trim($data['sport']));
+        $sport = $data['sport'];
+        $newSport = strtolower(trim($sport));
         $existingSports = Event::where('tournament_id', $tournament->id)
             ->whereNotNull('sport')
             ->pluck('sport')
@@ -364,31 +366,73 @@ class NewTournamentController extends Controller
             }
         }
 
-        try {
-            $event = Event::create([
-                'tournament_id' => $tournament->id,
-                'name' => $data['name'],
-                'description' => $data['description'] ?? null,
-                'event_type' => 'tournament', // fixed as per your requirement
-                'sport' => $data['sport'],
-                'venue_id' => $data['venue_id'] ?? null,
-                'facility_id' => $data['facility_id'] ?? null,
-                'slots' => $tournament->max_teams ?? null,
-                'date' => $data['date'],
-                'start_time' => $data['start_time'],
-                'end_time' => $data['end_time'],
-                'created_by' => $user->id,
-                'game_number' => $data['game_number'] ?? null,
-                'game_status' => $data['game_status'] ?? null,
-                'is_tournament_game' => $data['is_tournament_game'] ?? true, // assuming true by default for sub tournaments
-            ]);
+        // check venue open/availability
+        $venue = \App\Models\Venue::find($data['venue_id'] ?? null);
+        if ($venue && data_get($venue, 'is_closed')) {
+            return response()->json(['status'=>'error','message'=>'This venue is closed and not accepting new events.'], 403);
+        }
 
-            return response()->json([
-                'message' => 'Event (sub-tournament) created successfully',
-                'event' => $event,
-            ], 201);
+        // prevent double booking same venue+facility + date + overlapping times
+        $conflict = Event::where('venue_id', $data['venue_id'] ?? null)
+            ->where('facility_id', $data['facility_id'] ?? null)
+            ->where('date', $data['date'])
+            ->where(function($q) use ($data) {
+                $q->where('start_time', '<', $data['end_time'])
+                  ->where('end_time', '>', $data['start_time']);
+            })
+            ->exists();
+
+        if ($conflict) {
+            return response()->json(['status'=>'error','message'=>'Venue/facility already booked for the selected date/time'], 409);
+        }
+
+        DB::beginTransaction();
+        try {
+            $maxNumber = Event::where('tournament_id', $tournament->id)->max('game_number');
+            $gameNumber = ($maxNumber ?? 0) + 1;
+
+            $event = Event::create(array_merge($request->only([
+                'name','description','venue_id','facility_id','slots','date','start_time','end_time'
+            ]), [
+                'sport' => $sport,
+                'created_by' => $user->id,
+                'checkin_code' => $this->generateCheckinCode(),
+                'is_approved' => false,
+                'approved_at' => null,
+                'tournament_id' => $tournament->id,
+                'is_tournament_game' => true,
+                'game_number' => $gameNumber,
+                'event_type' => $request->input('event_type','tournament'),
+            ]));
+
+            // optional: create a booking record if model exists
+            if (class_exists(\App\Models\Booking::class)) {
+                \App\Models\Booking::create([
+                    'venue_id' => $event->venue_id,
+                    'user_id' => $user->id,
+                    'event_id' => $event->id,
+                    'sport' => $event->sport,
+                    'date' => $event->date,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                    'purpose' => 'Tournament game: '.$event->name,
+                    'status' => 'pending',
+                ]);
+            }
+
+            DB::commit();
+            return response()->json(['status'=>'success','event'=>$event->fresh()], 201);
 
         } catch (\Throwable $e) {
+            DB::rollBack();
+
+            \Log::error('createEvent failed', [
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+                'payload' => $data ?? $request->all(),
+                'tournament_id' => $tournamentId ?? null,
+            ]);
+
             return response()->json([
                 'message' => 'Failed to create event',
                 'error' => $e->getMessage(),

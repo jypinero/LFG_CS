@@ -322,6 +322,9 @@ Route::middleware('auth:api')->group(function () {
     // Delete team
     Route::delete('/teams/{teamId}', [TeamController::class, 'destroy']);
 
+    // Team Analytics
+    Route::get('/teams/{teamId}/analytics/overview', [\App\Http\Controllers\TeamAnalyticsController::class, 'overview']);
+
 
     // Tournament Management Routes
     // Tournament CRUD
