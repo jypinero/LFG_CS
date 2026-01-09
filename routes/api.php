@@ -324,6 +324,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Team Analytics
     Route::get('/teams/{teamId}/analytics/overview', [\App\Http\Controllers\TeamAnalyticsController::class, 'overview']);
+    Route::get('/teams/{teamId}/analytics/report', [\App\Http\Controllers\TeamAnalyticsController::class, 'report']);
 
 
     // Tournament Management Routes
