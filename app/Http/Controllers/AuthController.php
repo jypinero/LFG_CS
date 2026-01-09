@@ -712,8 +712,23 @@ class AuthController extends Controller
     public function updateProfile(Request $request)
     {
         $user = Auth::guard('api')->user(); // Authenticated user via API guard
-
-        $validator = \Validator::make($request->all(), [
+    
+        // Parse additional_sports if it's a JSON string (from FormData)
+        $requestData = $request->all();
+        if ($request->has('additional_sports') && is_string($request->additional_sports)) {
+            $decoded = json_decode($request->additional_sports, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $requestData['additional_sports'] = $decoded;
+                // Merge the decoded data back into the request
+                $request->merge(['additional_sports' => $decoded]);
+            } else {
+                // If JSON decode fails, set to empty array to avoid validation errors
+                $requestData['additional_sports'] = [];
+                $request->merge(['additional_sports' => []]);
+            }
+        }
+    
+        $validator = \Validator::make($requestData, [
             'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
             'city' => 'nullable|string|max:255',
             'province' => 'nullable|string|max:255',
@@ -726,7 +741,7 @@ class AuthController extends Controller
             'additional_sports.*.id' => 'required_with:additional_sports|exists:sports,id',
             'additional_sports.*.level' => 'required_with:additional_sports|in:beginner,competitive,professional',
         ]);
-
+    
         if ($validator->fails()) {
             return response()->json([
                 'status' => 'error',
@@ -734,28 +749,28 @@ class AuthController extends Controller
                 'errors' => $validator->errors(),
             ], 422);
         }
-
+    
         try {
             // ✅ Update simple user fields
             $user->fill($request->only(['username', 'city', 'province']));
-
+    
             // ✅ Handle profile photo upload
             if ($request->hasFile('profile_photo')) {
                 $oldPhoto = $user->profile_photo;
-
+    
                 // Delete old photo if it exists
                 if ($oldPhoto && \Storage::disk('public')->exists($oldPhoto)) {
                     \Storage::disk('public')->delete($oldPhoto);
                 }
-
+    
                 $file = $request->file('profile_photo');
                 $fileName = time() . '_' . $file->getClientOriginalName();
                 $path = $file->storeAs('userpfp', $fileName, 'public');
                 $user->profile_photo = $path;
             }
-
+    
             $user->save();
-
+    
             // ✅ Get or create UserProfile
             $userProfile = $user->userProfile ?: new \App\Models\UserProfile(['user_id' => $user->id]);
             
@@ -776,7 +791,7 @@ class AuthController extends Controller
             }
             
             $userProfile->save();
-
+    
             // ✅ Handle additional sports
             if ($request->has('additional_sports')) {
                 // Delete existing additional sports
@@ -786,18 +801,20 @@ class AuthController extends Controller
                 $additionalSports = $request->additional_sports;
                 $mainSportId = $userProfile->main_sport_id;
                 
-                foreach ($additionalSports as $sport) {
-                    // Don't add if it's the same as main sport
-                    if ($sport['id'] != $mainSportId) {
-                        \App\Models\UserAdditionalSport::create([
-                            'user_id' => $user->id,
-                            'sport_id' => $sport['id'],
-                            'level' => $sport['level'],
-                        ]);
+                if (is_array($additionalSports) && count($additionalSports) > 0) {
+                    foreach ($additionalSports as $sport) {
+                        // Don't add if it's the same as main sport
+                        if (isset($sport['id']) && $sport['id'] != $mainSportId) {
+                            \App\Models\UserAdditionalSport::create([
+                                'user_id' => $user->id,
+                                'sport_id' => $sport['id'],
+                                'level' => $sport['level'] ?? 'beginner',
+                            ]);
+                        }
                     }
                 }
             }
-
+    
             // ✅ Include profile photo full URL and load relationships for frontend
             $userData = $user->load([
                 'userProfile.mainSport',
@@ -807,13 +824,13 @@ class AuthController extends Controller
             $userData['profile_photo_url'] = $user->profile_photo
                 ? asset('storage/' . $user->profile_photo)
                 : null;
-
+    
             return response()->json([
                 'status' => 'success',
                 'message' => 'Profile updated successfully!',
                 'user' => $userData,
             ]);
-
+    
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',
