@@ -25,6 +25,7 @@ use App\Http\Controllers\SupportController;
 use App\Http\Controllers\MarketingController;
 use App\Http\Controllers\AdditionalTournamentController;
 use App\Http\Controllers\PushNotificationController;
+use App\Http\Controllers\TeamAnalyticsController;
 
 /*
 |--------------------------------------------------------------------------
@@ -323,8 +324,8 @@ Route::middleware('auth:api')->group(function () {
     Route::delete('/teams/{teamId}', [TeamController::class, 'destroy']);
 
     // Team Analytics
-    Route::get('/teams/{teamId}/analytics/overview', [\App\Http\Controllers\TeamAnalyticsController::class, 'overview']);
-    Route::get('/teams/{teamId}/analytics/report', [\App\Http\Controllers\TeamAnalyticsController::class, 'report']);
+    Route::get('/teams/{teamId}/analytics/overview', [TeamAnalyticsController::class, 'overview']);
+    Route::get('/teams/{teamId}/analytics/report', [TeamAnalyticsController::class, 'report']);
 
 
     // Tournament Management Routes

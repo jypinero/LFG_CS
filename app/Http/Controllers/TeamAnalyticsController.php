@@ -235,27 +235,78 @@ class TeamAnalyticsController extends Controller
             return $m['roster_status'] === 'removed';
         })->values();
 
-        // Get all events team participated in
+        // Get all events team participated in with venue and facility details
         $events = EventTeam::where('team_id', $team->id)
-            ->with('event:id,name,description,event_type,sport,date,start_time,end_time,venue_id')
+            ->with([
+                'event' => function($query) {
+                    $query->select('id', 'name', 'description', 'event_type', 'sport', 'date', 
+                                  'start_time', 'end_time', 'venue_id', 'facility_id', 
+                                  'cancelled_at', 'is_approved', 'tournament_id', 'slots');
+                },
+                'event.venue:id,name,address,latitude,longitude',
+                'event.facility:id,name,venue_id,type'
+            ])
             ->orderByDesc('created_at')
             ->get()
             ->map(function ($eventTeam) {
                 $event = $eventTeam->event;
+                if (!$event) {
+                    return null;
+                }
+
+                // Get event status (computed)
+                $status = 'scheduled';
+                if ($event->cancelled_at) {
+                    $status = 'cancelled';
+                } elseif ($event->date && $event->start_time && $event->end_time) {
+                    $now = Carbon::now();
+                    $dateOnly = Carbon::parse($event->date)->toDateString();
+                    $eventStart = Carbon::parse($dateOnly . ' ' . $event->start_time);
+                    $eventEnd = Carbon::parse($dateOnly . ' ' . $event->end_time);
+                    
+                    if ($now->lt($eventStart)) {
+                        $status = 'upcoming';
+                    } elseif ($now->between($eventStart, $eventEnd)) {
+                        $status = 'ongoing';
+                    } else {
+                        $status = 'completed';
+                    }
+                }
+
                 return [
-                    'event_id' => $event ? $event->id : null,
-                    'name' => $event ? $event->name : null,
-                    'description' => $event ? $event->description : null,
-                    'event_type' => $event ? $event->event_type : null,
-                    'sport' => $event ? $event->sport : null,
-                    'date' => $event ? $event->date : null,
-                    'start_time' => $event ? $event->start_time : null,
-                    'end_time' => $event ? $event->end_time : null,
-                    'venue_id' => $event ? $event->venue_id : null,
+                    'event_id' => $event->id,
+                    'name' => $event->name,
+                    'description' => $event->description,
+                    'event_type' => $event->event_type,
+                    'sport' => $event->sport,
+                    'date' => $event->date,
+                    'start_time' => $event->start_time,
+                    'end_time' => $event->end_time,
+                    'status' => $status,
+                    'is_approved' => (bool) $event->is_approved,
+                    'cancelled_at' => $event->cancelled_at,
+                    'slots' => $event->slots,
+                    'tournament_id' => $event->tournament_id,
+                    'venue' => $event->venue ? [
+                        'id' => $event->venue->id,
+                        'name' => $event->venue->name,
+                        'address' => $event->venue->address,
+                        'latitude' => $event->venue->latitude,
+                        'longitude' => $event->venue->longitude,
+                    ] : null,
+                    'facility' => $event->facility ? [
+                        'id' => $event->facility->id,
+                        'name' => $event->facility->name,
+                        'type' => $event->facility->type,
+                        'venue_id' => $event->facility->venue_id,
+                    ] : null,
+                    'venue_id' => $event->venue_id,
+                    'facility_id' => $event->facility_id,
                     'group' => $eventTeam->group,
                     'participated_at' => $eventTeam->created_at,
                 ];
-            });
+            })
+            ->filter(); // Remove null entries
 
         // Separate upcoming and past events
         $upcomingEvents = $events->filter(function ($e) {
