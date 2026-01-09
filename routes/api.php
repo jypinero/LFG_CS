@@ -407,6 +407,22 @@ Route::middleware('auth:api')->group(function () {
     Route::put('/tournaments/{tournamentId}/announcements/{announcementId}', [NewTournamentController::class, 'updateAnnouncement']);
     Route::delete('/tournaments/{tournamentId}/announcements/{announcementId}', [NewTournamentController::class, 'deleteAnnouncement']);
 
+    // Challonge UI Integration - GET endpoints (read/display)
+    Route::get('/tournaments/{tournamentId}/challonge/status', [ChallongeController::class, 'getTournamentStatus']);
+    Route::get('/tournaments/{tournamentId}/challonge/tournament', [ChallongeController::class, 'getChallongeTournament']);
+    Route::get('/tournaments/{tournamentId}/challonge/bracket', [ChallongeController::class, 'getChallongeBracket']);
+    Route::get('/tournaments/{tournamentId}/challonge/matches', [ChallongeController::class, 'getChallongeMatches']);
+    Route::get('/tournaments/{tournamentId}/challonge/embed', [ChallongeController::class, 'getChallongeEmbed']);
+    Route::post('/tournaments/{tournamentId}/challonge/refresh', [ChallongeController::class, 'refreshChallongeData']);
+    Route::get('/challonge/connection-status', [ChallongeController::class, 'checkChallongeConnection']);
+
+    // Challonge UI Integration - POST/PUT endpoints (push/update)
+    Route::put('/tournaments/{tournamentId}/challonge/tournament', [ChallongeController::class, 'updateChallongeTournament']);
+    Route::post('/tournaments/{tournamentId}/challonge/sync-participants', [ChallongeController::class, 'syncParticipants']);
+    Route::post('/tournaments/event-game/{gameId}/challonge/sync-score', [ChallongeController::class, 'syncMatchScore']);
+    Route::post('/tournaments/events/{eventId}/challonge/push-games', [ChallongeController::class, 'pushEventGamesToChallonge']);
+    Route::post('/tournaments/events/{eventId}/challonge/sync-bracket', [ChallongeController::class, 'syncBracket']);
+
 
     // Route::get('/tournaments', [TournamentController::class, 'index']);
     // Route::post('tournaments/create', [TournamentController::class, 'create']);
