@@ -19,6 +19,10 @@ class User extends Authenticatable implements JWTSubject
      * @var list<string>
      */
     protected $fillable = [
+        'challonge_uid',
+        'challonge_access_token',
+        'challonge_refresh_token',
+        'challonge_token_expires_at',
         'first_name',
         'middle_name',
         'last_name',

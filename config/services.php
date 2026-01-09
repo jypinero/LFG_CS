@@ -1,7 +1,6 @@
 <?php
 
 return [
-
     /*
     |--------------------------------------------------------------------------
     | Third Party Services
@@ -41,4 +40,11 @@ return [
         'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
 
+    'challonge' => [
+        'client_id'     => env('CHALLONGE_CLIENT_ID'),
+        'client_secret' => env('CHALLONGE_CLIENT_SECRET'),
+        'redirect'      => env('CHALLONGE_REDIRECT_URI'),
+        'username'      => env('CHALLONGE_USERNAME'),
+        'api_key'       => env('CHALLONGE_API_KEY'),
+    ],
 ];

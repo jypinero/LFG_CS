@@ -17,6 +17,7 @@ use App\Models\UserNotification;
 use Illuminate\Http\Request;
 use Illuminate\Validation\Rule;
 use Illuminate\Support\Facades\DB;
+use App\Services\ChallongeService;
 
 class NewTournamentController extends Controller
 {
@@ -2108,5 +2109,41 @@ class NewTournamentController extends Controller
             'message' => 'Tournament completed successfully',
             'tournament' => $tournament
         ]);
+    }
+
+    public function pushTournamentToChallonge(Request $request, $tournamentId, ChallongeService $challonge)
+    {
+        $user = auth()->user();
+        $tournament = Tournament::findOrFail($tournamentId);
+
+        // check organizer permission
+        $isOrganizer = TournamentOrganizer::where('tournament_id',$tournament->id)->where('user_id',$user->id)->exists();
+        if (! $isOrganizer) return response()->json(['message'=>'Unauthorized'], 403);
+
+        $remote = $challonge->createTournament($tournament, ['tournament_type' => 'double elimination']);
+        if (! $remote) {
+            return response()->json(['message'=>'Failed to create challonge tournament'], 500);
+        }
+
+        // store challonge url/identifier on local tournament if desired
+        $tournament->update(['external_tournament_url' => $remote['url'] ?? ($remote['id'] ?? null)]);
+
+        // add participants example: mapping teams or users -> name + misc (local id)
+        $participants = [];
+        // gather team entries across events or tournament participants as needed
+        foreach ($tournament->participants()->where('status','approved')->get() as $p) {
+            $name = $p->team_id ? \App\Models\Team::find($p->team_id)?->name : \App\Models\User::find($p->user_id)?->username;
+            $participants[] = ['name' => $name ?: 'entry-'.$p->id, 'misc' => 'local:'.$p->id];
+        }
+
+        $addRes = $challonge->addParticipants($remote['url'] ?? $remote['id'], $participants);
+        if ($addRes === null) {
+            return response()->json(['message'=>'Failed to add participants'], 500);
+        }
+
+        // Optionally push event games to challonge
+        // foreach events call $challonge->pushEventToChallonge($event, $remote['url'] ?? $remote['id']);
+
+        return response()->json(['message'=>'Pushed to Challonge','remote'=>$remote], 201);
     }
 }
