@@ -24,6 +24,8 @@ use Illuminate\Support\Facades\Schema;
 use App\Models\VenueOperatingHours;
 use App\Models\VenueAmenity;
 use App\Models\VenueClosureDate;
+use Illuminate\Support\Facades\Mail;
+use App\Mail\BookingInvoiceMail;
 
 class VenueController extends Controller
 {
@@ -1551,7 +1553,9 @@ class VenueController extends Controller
     {
         $user = auth()->user();
         
-        $booking = Booking::with(['venue', 'event'])->find($id);
+        $booking = Booking::with(['venue', 'event.facility', 'event' => function($query) {
+            $query->withCount('participants');
+        }])->find($id);
         if (!$booking) {
             return response()->json([
                 'status' => 'error',
@@ -1624,11 +1628,75 @@ class VenueController extends Controller
             }
         });
         
+        // If approved, calculate costs and send invoice email
+        if ($validated['status'] === 'approved' && $booking->event && $booking->event->facility) {
+            try {
+                // Reload booking with fresh data
+                $booking->refresh();
+                $booking->load(['venue', 'event.facility', 'event' => function($query) {
+                    $query->withCount('participants');
+                }]);
+                
+                // Calculate hours
+                $start = Carbon::parse($booking->event->start_time);
+                $end = Carbon::parse($booking->event->end_time);
+                $hours = $start->diffInMinutes($end) / 60;
+                
+                // Calculate costs
+                $pricePerHour = $booking->event->facility->price_per_hr ?? 0;
+                $totalCost = $hours * $pricePerHour;
+                
+                $slots = $booking->event->slots ?? 1;
+                $participantsCount = $booking->event->participants_count ?? 1;
+                
+                // Cost per slot if full
+                $costPerSlotIfFull = $slots > 0 ? round($totalCost / $slots, 2) : $totalCost;
+                
+                // Cost per slot (current) - based on actual participants
+                $costPerSlotCurrent = $participantsCount > 0 ? round($totalCost / $participantsCount, 2) : $totalCost;
+                
+                // Send invoice email to game creator
+                $gameCreator = User::find($booking->user_id);
+                if ($gameCreator && $gameCreator->email) {
+                    Mail::to($gameCreator->email)->send(new BookingInvoiceMail(
+                        $booking,
+                        $totalCost,
+                        $costPerSlotIfFull,
+                        $costPerSlotCurrent,
+                        $participantsCount,
+                        $slots
+                    ));
+                    
+                    Log::info('Booking invoice email sent successfully', [
+                        'booking_id' => $booking->id,
+                        'event_id' => $booking->event_id,
+                        'recipient_email' => $gameCreator->email,
+                        'recipient_user_id' => $gameCreator->id,
+                        'total_cost' => $totalCost,
+                    ]);
+                } else {
+                    Log::warning('Booking invoice email not sent - user or email not found', [
+                        'booking_id' => $booking->id,
+                        'user_id' => $booking->user_id,
+                    ]);
+                }
+            } catch (\Throwable $e) {
+                Log::error('Failed to send booking invoice email', [
+                    'booking_id' => $booking->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+        
         // Create notification for event creator
+        $notificationMessage = $validated['status'] === 'approved'
+            ? "Booking for venue has been approved, check your email for invoice and pay the amount accordingly"
+            : "Your booking request for {$booking->venue->name} has been {$validated['status']}";
+        
         $notification = Notification::create([
             'type' => 'booking_' . $validated['status'],
             'data' => [
-                'message' => "Your booking request for {$booking->venue->name} has been {$validated['status']}",
+                'message' => $notificationMessage,
                 'booking_id' => $booking->id,
                 'event_id' => $booking->event_id,
                 'status' => $validated['status'],

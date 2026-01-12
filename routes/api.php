@@ -167,6 +167,9 @@ Route::middleware('auth:api')->group(function () {
         Route::get('/', [\App\Http\Controllers\EntityDocumentController::class, 'index']);
     });
 
+    // Profile ratings route - MUST come before wildcard username route
+    Route::get('/profile/{username}/ratings', [App\Http\Controllers\ProfileController::class, 'getRatings']);
+    
     // Wildcard username route - MUST be after all specific /profile/* routes
     Route::get('/profile/{username}', [AuthController::class, 'showprofileByUsername']);
 

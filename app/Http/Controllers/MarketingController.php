@@ -121,18 +121,25 @@ class MarketingController extends Controller
             $postImagePath = $file->storeAs('posts', $fileName, 'public');
         }
 
-        // duplicate check (caption + venue + recent window)
+        // duplicate check: same caption + same venue (if provided) + same author + within time window
+        // Only flag as duplicate if exact same content within the time window
+        $hasDuplicate = false;
+        
         if (! empty($validated['caption'])) {
             $dupQuery = MarketingPost::where('author_id', $userId)
                 ->where('caption', trim($validated['caption']))
                 ->where('created_at', '>=', now()->subMinutes(self::DUPLICATE_WINDOW_MIN));
-            if (! empty($validated['venue_id'])) $dupQuery->where('venue_id', $validated['venue_id']);
-            if ($postImagePath) $dupQuery->orWhere(function($q) use ($imageHash, $userId) {
-                $q->where('author_id', $userId)->where('image_url', 'like', '%posts%'); // best-effort if stored path
-            });
-            if ($dupQuery->exists()) {
-                return response()->json(['status'=>'error','message'=>'Duplicate post detected'], 409);
+            
+            // If venue is provided, also require same venue for duplicate
+            if (! empty($validated['venue_id'])) {
+                $dupQuery->where('venue_id', $validated['venue_id']);
             }
+            
+            $hasDuplicate = $dupQuery->exists();
+        }
+        
+        if ($hasDuplicate) {
+            return response()->json(['status'=>'error','message'=>'Duplicate post detected'], 409);
         }
 
         $createEvent = !empty($validated['create_event']) && $validated['create_event'];
