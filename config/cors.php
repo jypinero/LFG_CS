@@ -12,6 +12,7 @@ return [
         'https://subatomic-billy-grazyna.ngrok-free.dev',
         // Add your specific Vercel deployment URL here
          'https://lfg-theta.vercel.app', 
+         'https://www.lfg-ph.games',
     ],
 
     'allowed_origins_patterns' => [
