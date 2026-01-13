@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('tournament_organizers', function (Blueprint $table) {
+        if (!Schema::hasTable('tournament_organizers')) {
+            Schema::create('tournament_organizers', function (Blueprint $table) {
             $table->id();
             $table->foreignId('tournament_id')->constrained()->onDelete('cascade');
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
@@ -20,7 +21,8 @@ return new class extends Migration
             $table->timestamps();
             
             $table->unique(['tournament_id', 'user_id']);
-        });
+            });
+        }
     }
 
     /**

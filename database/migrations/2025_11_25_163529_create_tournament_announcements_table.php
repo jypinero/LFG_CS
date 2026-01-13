@@ -11,7 +11,8 @@ return new class extends Migration
      */
     public function up(): void
     {
-        Schema::create('tournament_announcements', function (Blueprint $table) {
+        if (!Schema::hasTable('tournament_announcements')) {
+            Schema::create('tournament_announcements', function (Blueprint $table) {
             $table->id();
             $table->foreignId('tournament_id')->constrained()->onDelete('cascade');
             $table->foreignId('created_by')->constrained('users');
@@ -21,7 +22,8 @@ return new class extends Migration
             $table->boolean('is_pinned')->default(false);
             $table->timestamp('published_at')->nullable();
             $table->timestamps();
-        });
+            });
+        }
     }
 
     /**

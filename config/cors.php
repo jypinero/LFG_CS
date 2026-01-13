@@ -13,6 +13,7 @@ return [
         // Add your specific Vercel deployment URL here
          'https://lfg-theta.vercel.app', 
          'https://www.lfg-ph.games',
+         'https://lfg-ph.games',
     ],
 
     'allowed_origins_patterns' => [
