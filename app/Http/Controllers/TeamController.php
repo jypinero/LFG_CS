@@ -178,9 +178,17 @@ class TeamController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
+    public function index(Request $request)
     {
-        $teams = Team::with(['creator', 'sport'])->get()->map(function ($team) {
+        $perPage = min((int) $request->input('per_page', 5), 100);
+        $page = (int) $request->input('page', 1);
+
+        $query = Team::with(['creator', 'sport'])
+            ->orderByDesc('created_at');
+
+        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $teams = $paginated->getCollection()->map(function ($team) {
             return [
                 'id' => $team->id,
                 'name' => $team->name,
@@ -206,16 +214,21 @@ class TeamController extends Controller
                     'id' => $team->creator->id,
                     'name' => $team->creator->username,
                     'email' => $team->creator->email,
-                    // Add other user fields as needed
                 ] : null,
             ];
-        });
+        })->values();
 
         return response()->json([
             'status' => 'success',
             'data' => [
-                'teams' => $teams
-            ]
+                'teams' => $teams,
+            ],
+            'meta' => [
+                'current_page' => $paginated->currentPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+                'last_page' => $paginated->lastPage(),
+            ],
         ]);
     }
 
@@ -1865,13 +1878,32 @@ class TeamController extends Controller
     {
         $user = auth()->user();
 
-        $teams = Team::with(['sport','members.user','creator'])
-            ->where('created_by', $user->id)
-            ->orWhereHas('members', function ($q) use ($user) {
-                $q->where('user_id', $user->id);
-            })
-            ->get();
+        $perPage = min((int) $request->input('per_page', 5), 100);
+        $page = (int) $request->input('page', 1);
 
-        return response()->json(['status' => 'success', 'teams' => $teams], 200);
+        $query = Team::with(['sport','members.user','creator'])
+            ->where(function ($q) use ($user) {
+                $q->where('created_by', $user->id)
+                  ->orWhereHas('members', function ($q2) use ($user) {
+                      $q2->where('user_id', $user->id);
+                  });
+            })
+            ->orderByDesc('created_at');
+
+        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $teams = $paginated->getCollection()->values();
+
+        return response()->json([
+            'status' => 'success',
+            'teams' => $teams,
+            'meta' => [
+                'current_page' => $paginated->currentPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+                'last_page' => $paginated->lastPage(),
+            ],
+        ], 200);
     }
+    
 }

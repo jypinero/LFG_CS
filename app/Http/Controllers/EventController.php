@@ -11,6 +11,7 @@ use App\Models\EventParticipant;
 use App\Models\EventCheckin;
 use App\Models\EventScore;
 use App\Models\EventTeam;
+use App\Models\VenueReview;
 use App\Models\Notification;
 use App\Models\UserNotification;
 use App\Models\TeamMember; // ADDED
@@ -78,8 +79,11 @@ class EventController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index(Request $request)
+   public function index(Request $request)
     {
+        $perPage = min((int) $request->input('per_page', 5), 100);
+        $page = (int) $request->input('page', 1);
+
         // Build base query for regular events (exclude tournament games)
         $query = Event::with(['venue.photos', 'facility', 'teams.team'])
             ->where('is_approved', true)
@@ -87,115 +91,110 @@ class EventController extends Controller
             ->whereNull('cancelled_at')
             ->withCount('participants');
 
-        // Filter by event_type (for friendlygames/tune-ups)
+        // Filters
         if ($request->filled('event_type')) {
             $query->where('event_type', $request->input('event_type'));
         }
-
-        // Filter by custom date range
         if ($request->filled('start_date')) {
             $query->where('date', '>=', $request->input('start_date'));
         }
         if ($request->filled('end_date')) {
             $query->where('date', '<=', $request->input('end_date'));
         }
-
-        // Filter by day of week (0=Sunday, 6=Saturday)
-        // MySQL DAYOFWEEK returns 1=Sunday, 2=Monday, ..., 7=Saturday
         if ($request->filled('day')) {
             $dayOfWeek = (int) $request->input('day');
             if ($dayOfWeek >= 0 && $dayOfWeek <= 6) {
-                $mysqlDay = $dayOfWeek + 1; // Convert 0-6 to 1-7 for MySQL
+                $mysqlDay = $dayOfWeek + 1;
                 $query->whereRaw('DAYOFWEEK(date) = ?', [$mysqlDay]);
             }
         }
-
-        // Filter by time range
         if ($request->filled('time_from')) {
             $query->where('start_time', '>=', $request->input('time_from'));
         }
         if ($request->filled('time_to')) {
             $query->where('start_time', '<=', $request->input('time_to'));
         }
-
-        // Filter by sport
         if ($request->filled('sport')) {
             $query->where('sport', $request->input('sport'));
         }
 
-        // Order by date and time
-        $events = $query->orderBy('date')
-            ->orderBy('start_time')
-            ->get()
-            ->map(function($event) {
-                // Calculate hours
-                $start = Carbon::parse($event->start_time);
-                $end = Carbon::parse($event->end_time);
-                $hours = $start->diffInMinutes($end) / 60;
+        // paginate
+        $paginated = $query->orderBy('date')->orderBy('start_time')
+            ->paginate($perPage, ['*'], 'page', $page);
 
-                // Calculate total cost
-                $pricePerHour = $event->facility->price_per_hr ?? 0;
-                $totalCost = $hours * $pricePerHour;
+        $events = $paginated->getCollection()->map(function($event) {
+            // Calculate hours
+            $start = Carbon::parse($event->start_time);
+            $end = Carbon::parse($event->end_time);
+            $hours = $start->diffInMinutes($end) / 60;
 
-                // Fix division by zero - check if participants_count > 0
-                $divide = $event->participants_count > 0 
-                    ? round($totalCost / $event->participants_count, 2)
-                    : 0;
-                $dividedpay = $divide;
-                
-                // Determine venue primary photo url (latest upload if available)
-                $firstPhotoPath = null;
-                if ($event->venue && $event->venue->photos && $event->venue->photos->count() > 0) {
-                    $firstPhoto = $event->venue->photos->sortByDesc('uploaded_at')->first();
-                    $firstPhotoPath = $firstPhoto ? $firstPhoto->image_path : null;
-                }
-                $venuePhotoUrl = $firstPhotoPath ? url('storage/' . ltrim($firstPhotoPath, '/')) : null;
+            // Calculate total cost
+            $pricePerHour = $event->facility->price_per_hr ?? 0;
+            $totalCost = $hours * $pricePerHour;
 
-                $eventData = [
-                    'id' => $event->id,
-                    'name' => $event->name,
-                    'description' => $event->description,
-                    'sport' => $event->sport,
-                    'date' => $event->date,
-                    'start_time' => $event->start_time,
-                    'end_time' => $event->end_time,
-                    'participants_count' => $event->participants_count,
-                    'total_slots' => $event->slots,
-                    'venue' => $event->venue->name,
-                    'facility' => $event->facility->type ?? null,
-                    'longitude' => $event->venue->longitude ?? null,
-                    'latitude' => $event->venue->latitude ?? null,
-                    'venue_photo_url' => $venuePhotoUrl,
-                    'hours' => $hours,
-                    'total_cost' => $totalCost,
-                    'cost_per_slot' => $dividedpay,
-                    'host' => User::find($event->created_by)->username,
-                    'event_type' => $event->event_type,
-                    'is_approved' => (bool) $event->is_approved,
-                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
-                    'approved_at' => $event->approved_at,
-                ];
+            $divide = $event->participants_count > 0
+                ? round($totalCost / $event->participants_count, 2)
+                : 0;
+            $dividedpay = $divide;
 
-                // Add team information for team vs team events
-                if ($event->event_type === 'team vs team') {
-                    $eventData['teams'] = $event->teams->map(function($eventTeam) {
-                        return [
-                            'team_id' => $eventTeam->team_id,
-                            'team_name' => $eventTeam->team->name ?? 'Unknown Team',
-                        ];
-                    });
-                    $eventData['teams_count'] = $event->teams->count();
-                    $eventData['slots_display'] = $event->teams->count() . '/' . $event->slots . ' teams';
-                } else {
-                    $eventData['slots_display'] = $event->participants_count . '/' . $event->slots . ' participants';
-                }
+            // Venue photo
+            $firstPhotoPath = null;
+            if ($event->venue && $event->venue->photos && $event->venue->photos->count() > 0) {
+                $firstPhoto = $event->venue->photos->sortByDesc('uploaded_at')->first();
+                $firstPhotoPath = $firstPhoto ? $firstPhoto->image_path : null;
+            }
+            $venuePhotoUrl = $firstPhotoPath ? url('storage/' . ltrim($firstPhotoPath, '/')) : null;
 
-                return $eventData;
-            });
+            $eventData = [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'sport' => $event->sport,
+                'date' => $event->date,
+                'start_time' => $event->start_time,
+                'end_time' => $event->end_time,
+                'participants_count' => $event->participants_count,
+                'total_slots' => $event->slots,
+                'venue' => $event->venue->name ?? null,
+                'facility' => $event->facility->type ?? null,
+                'longitude' => $event->venue->longitude ?? null,
+                'latitude' => $event->venue->latitude ?? null,
+                'venue_photo_url' => $venuePhotoUrl,
+                'hours' => $hours,
+                'total_cost' => $totalCost,
+                'cost_per_slot' => $dividedpay,
+                'host' => User::find($event->created_by)->username,
+                'event_type' => $event->event_type,
+                'is_approved' => (bool) $event->is_approved,
+                'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                'approved_at' => $event->approved_at,
+            ];
+
+            if ($event->event_type === 'team vs team') {
+                $eventData['teams'] = $event->teams->map(function($eventTeam) {
+                    return [
+                        'team_id' => $eventTeam->team_id,
+                        'team_name' => $eventTeam->team->name ?? 'Unknown Team',
+                    ];
+                });
+                $eventData['teams_count'] = $event->teams->count();
+                $eventData['slots_display'] = $event->teams->count() . '/' . $event->slots . ' teams';
+            } else {
+                $eventData['slots_display'] = $event->participants_count . '/' . $event->slots . ' participants';
+            }
+
+            return $eventData;
+        })->values();
 
         return response()->json([
             'status' => 'success',
-            'events' => $events
+            'events' => $events,
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
         ]);
     }
 
@@ -445,51 +444,59 @@ class EventController extends Controller
         ]);
     }
 
-    public function allusercreated()
+    public function allusercreated(Request $request)
     {
         $user = auth()->user();
 
-        // Get all events where user is the creator only
-        $events = Event::with(['venue', 'facility', 'participants', 'checkins'])
+        $perPage = min((int) $request->input('per_page', 5), 100);
+        $page = (int) $request->input('page', 1);
+
+        $query = Event::with(['venue', 'facility', 'participants', 'checkins'])
             ->where('created_by', $user->id)
             ->orderBy('date')
-            ->orderBy('start_time')
-            ->get()
-            ->map(function($event) use ($user) {
-                // Get current user's check-in status if they're a participant
-                $userCheckin = $event->checkins->where('user_id', $user->id)->first();
-                
-                return [
-                    'id' => $event->id,
-                    'name' => $event->name,
-                    'description' => $event->description,
-                    'event_type' => $event->event_type,
-                    'date' => $event->date,
-                    'sport' => $event->sport,
-                    'host' => User::find($event->created_by)->username ?? null,
-                    'venue' => $event->venue->name ?? null,
-                    'longitude' => $event->venue->longitude ?? null,
-                    'latitude' => $event->venue->latitude ?? null,
-                    'facility' => $event->facility->type ?? null,
-                    'start_time' => $event->start_time,
-                    'end_time' => $event->end_time,
-                    'slots' => $event->slots,
-                    'participants_count' => $event->participants->count(),
-                    'is_approved' => (bool) $event->is_approved,
-                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
-                    'approved_at' => $event->approved_at,
-                    'cancelled_at' => $event->cancelled_at,
-                    // Check-in related fields
-                    'checkin_code' => $event->checkin_code,
-                    'can_checkin' => $event->is_approved && !$event->cancelled_at,
-                    'user_checked_in' => $userCheckin ? true : false,
-                    'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
-                ];
-            });
+            ->orderBy('start_time');
+
+        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $events = $paginated->getCollection()->map(function($event) use ($user) {
+            $userCheckin = $event->checkins->where('user_id', $user->id)->first();
+            
+            return [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'event_type' => $event->event_type,
+                'date' => $event->date,
+                'sport' => $event->sport,
+                'host' => User::find($event->created_by)->username ?? null,
+                'venue' => $event->venue->name ?? null,
+                'longitude' => $event->venue->longitude ?? null,
+                'latitude' => $event->venue->latitude ?? null,
+                'facility' => $event->facility->type ?? null,
+                'start_time' => $event->start_time,
+                'end_time' => $event->end_time,
+                'slots' => $event->slots,
+                'participants_count' => $event->participants->count(),
+                'is_approved' => (bool) $event->is_approved,
+                'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                'approved_at' => $event->approved_at,
+                'cancelled_at' => $event->cancelled_at,
+                'checkin_code' => $event->checkin_code,
+                'can_checkin' => $event->is_approved && !$event->cancelled_at,
+                'user_checked_in' => $userCheckin ? true : false,
+                'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
+            ];
+        })->values();
 
         return response()->json([
             'status' => 'success',
-            'schedule' => $events
+            'schedule' => $events,
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
         ]);
     }
 
@@ -1368,7 +1375,9 @@ class EventController extends Controller
 
         // Add participants with check-in status
         $eventData['participants'] = $event->participants->map(function($participant) {
-            $checkin = $participant->event->checkins->where('user_id', $participant->user_id)->first();
+            $checkin = EventCheckin::where('event_id', $participant->event_id)
+                ->where('user_id', $participant->user_id)
+                ->first();
             return [
                 'user_id' => $participant->user_id,
                 'username' => $participant->user->username,
@@ -2911,4 +2920,52 @@ class EventController extends Controller
             ]);
         }
     }
+
+    /**
+     * Notify participants after event completion to rate the venue.
+     * Call this when the event is marked completed (or when event end time passes in a scheduler).
+     */
+    private function notifyParticipantsToRate(Event $event)
+    {
+        // only notify once
+        if ($event->is_rating_notified ?? false) {
+            return;
+        }
+
+        $participants = EventParticipant::where('event_id', $event->id)->pluck('user_id')->unique()->filter(function($id) use ($event) {
+            // ignore event creator
+            return $id != $event->created_by;
+        })->values();
+
+        if ($participants->isEmpty()) {
+            return;
+        }
+
+        $notification = Notification::create([
+            'type' => 'rate_venue',
+            'data' => [
+                'message' => "Please rate the venue for your recent game: {$event->name}",
+                'event_id' => $event->id,
+                'venue_id' => $event->venue_id,
+            ],
+            'created_by' => $event->created_by,
+        ]);
+
+        foreach ($participants as $userId) {
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $userId,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'pending'
+            ]);
+        }
+
+        // If Event model has an 'is_rating_notified' boolean column, set it to avoid duplicate notifications
+        if (Schema::hasColumn('events', 'is_rating_notified')) {
+            $event->update(['is_rating_notified' => true]);
+        }
+    }
+
+    
 }

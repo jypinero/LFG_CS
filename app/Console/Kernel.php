@@ -10,6 +10,7 @@ class Kernel extends ConsoleKernel
     protected $commands = [
         \App\Console\Commands\CloseTournamentRegistration::class,
         \App\Console\Commands\SeedDoubleEliminationBracket::class,
+        
     ];
 
     protected function schedule(Schedule $schedule)
@@ -19,6 +20,9 @@ class Kernel extends ConsoleKernel
         $schedule->command('notify:players_to_rate')->dailyAt('08:00');
         // run daily; adjust as needed
         $schedule->command('challonge:refresh-tokens --days=1')->daily();
+        $schedule->job(new \App\Jobs\NotifyParticipantsToRateJob)->hourly()->withoutOverlapping();
+        // run the completion job every minute (adjust frequency as needed)
+        $schedule->job(new \App\Jobs\CompletePastEventsJob)->everyMinute()->withoutOverlapping();
     }
 
     protected function commands()

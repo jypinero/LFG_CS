@@ -13,9 +13,13 @@ use Illuminate\Support\Facades\Storage;
 
 class PostController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
         $userId = auth()->id();
+
+        // pagination
+        $perPage = min((int) $request->input('per_page', 5), 100);
+        $page = (int) $request->input('page', 1);
 
         // Get event IDs where the user participated
         $eventIds = \App\Models\EventParticipant::where('user_id', $userId)->pluck('event_id');
@@ -29,35 +33,47 @@ class PostController extends Controller
         $userIds->push($userId);
 
         // Get posts from those users with like and comment counts, only not archived
-        $posts = Post::whereIn('author_id', $userIds)
-            ->where('is_archived', false) // Only show not archived posts
+        $query = Post::whereIn('author_id', $userIds)
+            ->where('is_archived', false)
             ->with(['author'])
             ->withCount(['likes', 'comments'])
-            ->get()
-            ->map(function($post) use ($userId) {
-                // Check if the current user liked this post
-                $isLiked = $post->likes()->where('user_id', $userId)->where('is_liked', true)->exists();
+            ->orderByDesc('created_at');
 
-                return [
-                    'id' => $post->id,
-                    'author' => [
-                        'id' => $post->author->id,
-                        'username' => $post->author->username,
-                        'profile_photo' => $post->author->profile_photo ? \Storage::url($post->author->profile_photo) : null,
-                    ],
-                    'location' => $post->location,
-                    'image_url' => $post->image_url ? \Storage::url($post->image_url) : null,
-                    'caption' => $post->caption,
-                    'created_at' => $post->created_at,
-                    'likes_count' => $post->likes_count,
-                    'comments_count' => $post->comments_count,
-                    'is_liked' => $isLiked, // Add this field
-                ];
-            });
+        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+
+        // Transform collection to add is_liked and profile URLs
+        $paginated->getCollection()->transform(function($post) use ($userId) {
+            $isLiked = \App\Models\PostLike::where('post_id', $post->id)
+                ->where('user_id', $userId)
+                ->where('is_liked', true)
+                ->exists();
+
+            return [
+                'id' => $post->id,
+                'author' => [
+                    'id' => $post->author->id,
+                    'username' => $post->author->username,
+                    'profile_photo' => $post->author->profile_photo ? \Storage::url($post->author->profile_photo) : null,
+                ],
+                'location' => $post->location,
+                'image_url' => $post->image_url ? \Storage::url($post->image_url) : null,
+                'caption' => $post->caption,
+                'created_at' => $post->created_at,
+                'likes_count' => $post->likes_count,
+                'comments_count' => $post->comments_count,
+                'is_liked' => $isLiked,
+            ];
+        });
 
         return response()->json([
             'message' => 'See Posts successfully',
-            'posts' => $posts
+            'posts' => $paginated->items(),
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
         ], 200);
     }
 

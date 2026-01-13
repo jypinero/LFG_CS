@@ -235,6 +235,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/venues/edit/{venueId}', [VenueController::class, 'update']);
     Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
     Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
+    Route::get('/venues/created', [VenueController::class, 'CreatedVenues']);
     Route::get('/venues/owner/archived', [VenueController::class, 'OwnerArchivedVenues']);
     Route::post('/venues/{venueId}/close', [VenueController::class, 'closeVenue']);
     Route::post('/venues/{venueId}/reopen', [VenueController::class, 'reopenVenue']);
@@ -285,6 +286,9 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/venues/{venueId}/closure-dates', [VenueController::class, 'addClosureDate']);
     Route::put('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'updateClosureDate']);
     Route::delete('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'deleteClosureDate']);
+
+
+    Route::get('venues/{venueId}/facilities/{facilityId}/is-booked', [VenueController::class, 'isBooked']);
 
     // Marketing Controller Routes
     Route::post('/marketing/posts/create', [MarketingController::class, 'createpost']);
@@ -342,10 +346,10 @@ Route::middleware('auth:api')->group(function () {
 
 
     //Challonge Integration Routes
-    Route::post('challonge/tournaments/{id}/start', [ChallongeController::class, 'startTournament']);
-    Route::post('challonge/tournaments/{id}/push-games', [ChallongeController::class, 'pushEventGames']);
-    Route::post('challonge/matches/{match_id}/sync-score', [ChallongeController::class, 'syncScoreToChallonge']);
-    Route::get('challonge/tournaments/{id}/bracket', [ChallongeController::class, 'fetchBracket']);
+    // Route::post('challonge/tournaments/{id}/start', [ChallongeController::class, 'startTournament']);
+    // Route::post('challonge/tournaments/{id}/push-games', [ChallongeController::class, 'pushEventGames']);
+    // Route::post('challonge/matches/{match_id}/sync-score', [ChallongeController::class, 'syncScoreToChallonge']);
+    // Route::get('challonge/tournaments/{id}/bracket', [ChallongeController::class, 'fetchBracket']);
 
     // Tournament Management Routes
     // Tournament CRUD
@@ -410,21 +414,21 @@ Route::middleware('auth:api')->group(function () {
     Route::put('/tournaments/{tournamentId}/announcements/{announcementId}', [NewTournamentController::class, 'updateAnnouncement']);
     Route::delete('/tournaments/{tournamentId}/announcements/{announcementId}', [NewTournamentController::class, 'deleteAnnouncement']);
 
-    // Challonge UI Integration - GET endpoints (read/display)
-    Route::get('/tournaments/{tournamentId}/challonge/status', [ChallongeController::class, 'getTournamentStatus']);
-    Route::get('/tournaments/{tournamentId}/challonge/tournament', [ChallongeController::class, 'getChallongeTournament']);
-    Route::get('/tournaments/{tournamentId}/challonge/bracket', [ChallongeController::class, 'getChallongeBracket']);
-    Route::get('/tournaments/{tournamentId}/challonge/matches', [ChallongeController::class, 'getChallongeMatches']);
-    Route::get('/tournaments/{tournamentId}/challonge/embed', [ChallongeController::class, 'getChallongeEmbed']);
-    Route::post('/tournaments/{tournamentId}/challonge/refresh', [ChallongeController::class, 'refreshChallongeData']);
-    Route::get('/challonge/connection-status', [ChallongeController::class, 'checkChallongeConnection']);
+    // // Challonge UI Integration - GET endpoints (read/display)
+    // Route::get('/tournaments/{tournamentId}/challonge/status', [ChallongeController::class, 'getTournamentStatus']);
+    // Route::get('/tournaments/{tournamentId}/challonge/tournament', [ChallongeController::class, 'getChallongeTournament']);
+    // Route::get('/tournaments/{tournamentId}/challonge/bracket', [ChallongeController::class, 'getChallongeBracket']);
+    // Route::get('/tournaments/{tournamentId}/challonge/matches', [ChallongeController::class, 'getChallongeMatches']);
+    // Route::get('/tournaments/{tournamentId}/challonge/embed', [ChallongeController::class, 'getChallongeEmbed']);
+    // Route::post('/tournaments/{tournamentId}/challonge/refresh', [ChallongeController::class, 'refreshChallongeData']);
+    // Route::get('/challonge/connection-status', [ChallongeController::class, 'checkChallongeConnection']);
 
-    // Challonge UI Integration - POST/PUT endpoints (push/update)
-    Route::put('/tournaments/{tournamentId}/challonge/tournament', [ChallongeController::class, 'updateChallongeTournament']);
-    Route::post('/tournaments/{tournamentId}/challonge/sync-participants', [ChallongeController::class, 'syncParticipants']);
-    Route::post('/tournaments/event-game/{gameId}/challonge/sync-score', [ChallongeController::class, 'syncMatchScore']);
-    Route::post('/tournaments/events/{eventId}/challonge/push-games', [ChallongeController::class, 'pushEventGamesToChallonge']);
-    Route::post('/tournaments/events/{eventId}/challonge/sync-bracket', [ChallongeController::class, 'syncBracket']);
+    // // Challonge UI Integration - POST/PUT endpoints (push/update)
+    // Route::put('/tournaments/{tournamentId}/challonge/tournament', [ChallongeController::class, 'updateChallongeTournament']);
+    // Route::post('/tournaments/{tournamentId}/challonge/sync-participants', [ChallongeController::class, 'syncParticipants']);
+    // Route::post('/tournaments/event-game/{gameId}/challonge/sync-score', [ChallongeController::class, 'syncMatchScore']);
+    // Route::post('/tournaments/events/{eventId}/challonge/push-games', [ChallongeController::class, 'pushEventGamesToChallonge']);
+    // Route::post('/tournaments/events/{eventId}/challonge/sync-bracket', [ChallongeController::class, 'syncBracket']);
 
 
     // Route::get('/tournaments', [TournamentController::class, 'index']);
@@ -518,7 +522,7 @@ Route::middleware('auth:api')->group(function () {
     // Route::get('/tournaments/{tournamentId}/waitlist', [TournamentController::class, 'getWaitlist']);
     // Route::post('/tournaments/{tournamentId}/waitlist/promote', [TournamentController::class, 'promoteFromWaitlist']);
 
-    // // Tournament Phases Management
+    // // Tournament Phases Managementv
     // Route::post('/tournaments/{tournamentId}/phases', [TournamentController::class, 'createPhase']);
     // Route::get('/tournaments/{tournamentId}/phases', [TournamentController::class, 'listPhases']);
     // Route::put('/tournaments/{tournamentId}/phases/{phaseId}', [TournamentController::class, 'updatePhase']);
@@ -541,17 +545,20 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/tournaments/{tournamentId}/start', [NewTournamentController::class, 'startTournament']);
     Route::post('/tournaments/{tournamentId}/complete', [NewTournamentController::class, 'completeTournament']);
 
+    
+
+
     // Event check-in routes within tournaments
 
-    Route::post('events/{event}/checkin', [TournamentController::class, 'checkinEvent']); // code-based checkin (if present)
-    Route::post('events/checkin/qr', [TournamentController::class, 'checkinQR']);
-    Route::post('events/checkin/code', [TournamentController::class, 'checkinCode']);
-    Route::post('events/checkin/manual', [TournamentController::class, 'checkinManual']);
-    Route::get('events/{event}/checkins', [TournamentController::class, 'viewCheckins']);
+    // Route::post('events/{event}/checkin', [TournamentController::class, 'checkinEvent']); // code-based checkin (if present)
+    // Route::post('events/checkin/qr', [TournamentController::class, 'checkinQR']);
+    // Route::post('events/checkin/code', [TournamentController::class, 'checkinCode']);
+    // Route::post('events/checkin/manual', [TournamentController::class, 'checkinManual']);
+    // Route::get('events/{event}/checkins', [TournamentController::class, 'viewCheckins']);
 
 
-    Route::post('tournaments/{tournamentId}/matches/{matchId}/reset', [TournamentController::class,'resetMatch']);
-    Route::post('tournaments/{tournamentId}/bracket/reset/{eventId}', [TournamentController::class,'resetBracket']);
+    // Route::post('tournaments/{tournamentId}/matches/{matchId}/reset', [TournamentController::class,'resetMatch']);
+    // Route::post('tournaments/{tournamentId}/bracket/reset/{eventId}', [TournamentController::class,'resetBracket']);
 
 
     // Coach Application Routes

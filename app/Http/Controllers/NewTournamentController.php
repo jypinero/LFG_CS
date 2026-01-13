@@ -2155,4 +2155,42 @@ class NewTournamentController extends Controller
 
         return response()->json(['message'=>'Pushed to Challonge','remote'=>$remote], 201);
     }
+
+    public function joinedTournaments(Request $request)
+    {
+        $user = auth()->user();
+
+        // get team ids the user belongs to (if TeamMember model exists)
+        $teamIds = \App\Models\TeamMember::where('user_id', $user->id)->pluck('team_id')->toArray();
+
+        $query = Tournament::with(['events', 'participants', 'organizers.user'])
+            ->whereHas('participants', function ($q) use ($user, $teamIds) {
+                $q->where(function ($q2) use ($user, $teamIds) {
+                    $q2->where('user_id', $user->id);
+                    if (!empty($teamIds)) {
+                        $q2->orWhereIn('team_id', $teamIds);
+                    }
+                });
+            });
+
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // default per_page = 5
+        $perPage = min($request->input('per_page', 5), 100);
+        $tournaments = $query->orderBy('start_date', 'desc')->paginate($perPage);
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $tournaments->items(),
+            'pagination' => [
+                'current_page' => $tournaments->currentPage(),
+                'last_page' => $tournaments->lastPage(),
+                'per_page' => $tournaments->perPage(),
+                'total' => $tournaments->total(),
+            ],
+        ]);
+    }
+
 }

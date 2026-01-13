@@ -37,6 +37,7 @@ class VenueController extends Controller
         // Hide closed venues from general listing
         $venues = Venue::with(['photos', 'facilities.photos'])
             ->where('is_closed', false)
+            ->where('is_verified', true)
             ->get()
             ->map(function ($venue) {
             return [
@@ -148,6 +149,81 @@ class VenueController extends Controller
             'data' => [
                 'venues' => $venues
             ]
+        ]);
+    }
+
+    public function CreatedVenues()
+    {
+        $userId = auth()->id();
+
+        // pagination
+        $perPage = min((int) request()->input('per_page', 5), 100);
+        $page = (int) request()->input('page', 1);
+
+        $query = Venue::whereHas('venue_users', function ($query) use ($userId) {
+                $query->where('user_id', $userId)
+                      ->where('role', 'owner')
+                      ->where('created_by', $userId);
+            })->where('is_closed', false)
+              ->with(['photos', 'facilities.photos'])
+              ->orderBy('created_at', 'desc');
+
+        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $mapped = collect($paginated->items())->map(function ($venue) {
+            return [
+                'id' => $venue->id,
+                'name' => $venue->name,
+                'description' => $venue->description,
+                'address' => $venue->address,
+                'latitude' => $venue->latitude,
+                'longitude' => $venue->longitude,
+                'photos' => $venue->photos->map(function ($photo) {
+                    return [
+                        'id' => $photo->id,
+                        'image_url' => Storage::url($photo->image_path),
+                        'uploaded_at' => $photo->uploaded_at,
+                    ];
+                }),
+                'verified_at' => $venue->verified_at,
+                'verification_expires_at' => $venue->verification_expires_at,
+                'created_by' => $venue->created_by,
+                'created_at' => $venue->created_at,
+                'updated_at' => $venue->updated_at,
+                'facilities' => $venue->facilities->map(function ($facility) {
+                    return [
+                        'id' => $facility->id,
+                        'venue_id' => $facility->venue_id,
+                        'price_per_hr' => $facility->price_per_hr,
+                        'type' => $facility->type,
+                        'name' => $facility->name,
+                        'capacity' => $facility->capacity,
+                        'covered' => $facility->covered,
+                        'photos' => $facility->photos->map(function ($photo) {
+                            return [
+                                'id' => $photo->id,
+                                'image_url' => Storage::url($photo->image_path),
+                                'uploaded_at' => $photo->uploaded_at,
+                            ];
+                        }),
+                        'created_at' => $facility->created_at,
+                        'updated_at' => $facility->updated_at,
+                    ];
+                }),
+            ];
+        })->values();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'venues' => $mapped,
+            ],
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
         ]);
     }
     
@@ -361,6 +437,28 @@ class VenueController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
         }
 
+        // venue reviews
+        $reviewsQuery = \App\Models\VenueReview::where('venue_id', $venue->id);
+        $reviewsCount = $reviewsQuery->count();
+        $averageRating = $reviewsCount ? round((float) $reviewsQuery->avg('rating'), 2) : null;
+
+        $reviews = \App\Models\VenueReview::where('venue_id', $venue->id)
+            ->with(['user' => function($q) { $q->select('id','username','profile_photo'); }])
+            ->orderByDesc('reviewed_at')
+            ->limit(10)
+            ->get()
+            ->map(function ($r) {
+                return [
+                    'id' => $r->id,
+                    'user_id' => $r->user_id,
+                    'username' => $r->user->username ?? null,
+                    'profile_photo' => $r->user && $r->user->profile_photo ? Storage::url($r->user->profile_photo) : null,
+                    'rating' => $r->rating,
+                    'comment' => $r->comment,
+                    'reviewed_at' => $r->reviewed_at,
+                ];
+            });
+
         $venueData = [
             'id' => $venue->id,
             'name' => $venue->name,
@@ -412,6 +510,11 @@ class VenueController extends Controller
             'is_closed' => $venue->is_closed,
             'closed_at' => $venue->closed_at,
             'closed_reason' => $venue->closed_reason,
+
+            // reviews metadata + list
+            'reviews_count' => (int) $reviewsCount,
+            'average_rating' => $averageRating,
+            'reviews' => $reviews,
         ];
 
         return response()->json([
@@ -3030,15 +3133,21 @@ class VenueController extends Controller
 
         $userId = $user->id;
 
-        $venues = Venue::whereHas('venue_users', function ($q) use ($userId) {
+        // pagination
+        $perPage = min((int) request()->input('per_page', 5), 100);
+        $page = (int) request()->input('page', 1);
+
+        $query = Venue::whereHas('venue_users', function ($q) use ($userId) {
                 $q->where('user_id', $userId)
                   ->whereIn('role', ['manager', 'Manager', 'staff', 'Staff']);
             })
             ->where('created_by', '!=', $userId)
             ->with(['photos', 'facilities.photos', 'venue_users.user', 'creator'])
-            ->get();
+            ->orderBy('created_at', 'desc');
 
-        $payload = $venues->map(function ($venue) {
+        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $payload = collect($paginated->items())->map(function ($venue) {
             $reviewsCount = DB::table('venue_reviews')->where('venue_id', $venue->id)->count();
             $avgRating = DB::table('venue_reviews')->where('venue_id', $venue->id)->avg('rating');
 
@@ -3115,8 +3224,64 @@ class VenueController extends Controller
                 'reviews_count' => (int) $reviewsCount,
                 'average_rating' => $avgRating !== null ? round((float) $avgRating, 2) : null,
             ];
-        });
+        })->values();
 
-        return response()->json(['status' => 'success', 'data' => ['venues' => $payload]]);
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'venues' => $payload,
+            ],
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
+        ]);
     }
+
+
+    /**
+     * GET /api/venues/{venueId}/facilities/{facilityId}/is-booked
+     * Check if a facility is booked/has conflicting events for a given date/time.
+     * Query params: date (Y-m-d), start_time (H:i:s), end_time (H:i:s)
+     */
+    public function isBooked(Request $request, string $venueId, string $facilityId)
+    {
+        $v = $request->validate([
+            'date' => 'required|date',
+            'start_time' => 'required|date_format:H:i:s',
+            'end_time' => 'required|date_format:H:i:s|after:start_time',
+        ]);
+
+        $date = $v['date'];
+        $start = $v['start_time'];
+        $end = $v['end_time'];
+
+        // Check events that are not cancelled and overlap the requested slot.
+        $conflicts = Event::where('venue_id', $venueId)
+            ->where('facility_id', $facilityId)
+            ->whereNull('cancelled_at')
+            ->whereDate('date', $date)
+            ->where(function ($q) use ($start, $end) {
+                $q->whereBetween('start_time', [$start, $end])
+                  ->orWhereBetween('end_time', [$start, $end])
+                  ->orWhere(function ($r) use ($start, $end) {
+                      $r->where('start_time', '<=', $start)->where('end_time', '>=', $end);
+                  });
+            })
+            ->orderBy('start_time')
+            ->get(['id','name','date','start_time','end_time','is_approved']);
+
+        $isBooked = $conflicts->isNotEmpty();
+
+        return response()->json([
+            'status' => 'success',
+            'is_booked' => $isBooked,
+            'conflicts' => $conflicts,
+            'requested' => ['date' => $date, 'start_time' => $start, 'end_time' => $end],
+        ], 200);
+    }
+
+
 }

@@ -307,25 +307,30 @@ class CoachController extends Controller
     public function getMatches()
     {
         $studentId = Auth::id();
+        $perPage = min((int) request()->input('per_page', 5), 100);
+        $page = (int) request()->input('page', 1);
 
-        $matches = CoachMatch::where('student_id', $studentId)
+        $q = CoachMatch::where('student_id', $studentId)
             ->where('match_status', 'matched')
             ->where(function($q) {
                 $q->whereNull('expires_at')
                   ->orWhere('expires_at', '>', now());
             })
-            ->with(['coach' => function ($q) { 
-                $q->select('id', 'first_name', 'last_name', 'username', 'profile_photo'); 
+            ->with(['coach' => function ($q) {
+                $q->select('id', 'first_name', 'last_name', 'username', 'profile_photo');
             }])
-            ->get();
+            ->orderByDesc('matched_at');
+
+        $matches = $q->paginate($perPage, ['*'], 'page', $page);
 
         // Add profile photo URLs
-        $matches->each(function($match) {
+        $matches->getCollection()->transform(function($match) {
             if ($match->coach) {
-                $match->coach->profile_photo_url = $match->coach->profile_photo 
-                    ? \Storage::url($match->coach->profile_photo) 
+                $match->coach->profile_photo_url = $match->coach->profile_photo
+                    ? \Storage::url($match->coach->profile_photo)
                     : null;
             }
+            return $match;
         });
 
         return response()->json(['status' => 'success', 'matches' => $matches]);
