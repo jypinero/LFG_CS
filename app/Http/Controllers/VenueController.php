@@ -628,6 +628,120 @@ class VenueController extends Controller
     }
 
     /**
+     * Add one or more photos to a venue
+     * POST /api/venues/{venueId}/photos
+     */
+    public function addVenuePhoto(Request $request, $venueId)
+    {
+        $request->validate([
+            'image' => 'required', // accept either single or multiple
+            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:2048',
+        ]);
+
+        $venue = Venue::with('photos')->find($venueId);
+        if (! $venue) {
+            \Log::warning('venue.photo.add.venue_not_found', ['venue_id'=>$venueId]);
+            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
+        }
+
+        $user = auth()->user();
+
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = false;
+        if ($venue && class_exists(\App\Models\VenueUser::class)) {
+            $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+                ->where('user_id', $user->id)
+                ->where(function($q){ $q->where('role','owner')->orWhere('is_primary_owner', true); })
+                ->exists();
+        }
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            \Log::warning('venue.photo.add.forbidden', ['venue_id'=>$venueId,'user_id'=>$user->id ?? null]);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $addedPhotos = [];
+
+        // Normalize to array — even if only one file is uploaded
+        $files = $request->file('image');
+        if (!is_array($files)) {
+            $files = [$files];
+        }
+
+        foreach ($files as $imageFile) {
+            $fileName = time() . '_' . $imageFile->getClientOriginalName();
+            $path = $imageFile->storeAs('venue_photos', $fileName, 'public');
+
+            $photo = VenuePhoto::create([
+                'venue_id' => $venue->id,
+                'image_path' => $path,
+                'uploaded_at' => now(),
+            ]);
+
+            $addedPhotos[] = [
+                'id' => $photo->id,
+                'image_url' => Storage::url($photo->image_path),
+                'uploaded_at' => $photo->uploaded_at,
+            ];
+        }
+
+        $venue->load('photos');
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Photo(s) added to venue successfully',
+            'added_photos' => $addedPhotos,
+            'venue' => $venue
+        ], 201);
+    }
+
+    /**
+     * Delete a venue photo
+     * DELETE /api/venues/{venueId}/photos/{photoId}
+     */
+    public function destroyVenuePhoto(string $venueId, string $photoId)
+    {
+        $venue = Venue::with('photos')->find($venueId);
+        if (! $venue) {
+            \Log::warning('venue.photo.delete.venue_not_found', ['venue_id'=>$venueId,'photo_id'=>$photoId]);
+            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
+        }
+
+        $photo = $venue->photos->firstWhere('id', (int) $photoId);
+        if (! $photo) {
+            \Log::warning('venue.photo.delete.not_found', ['venue_id'=>$venueId,'photo_id'=>$photoId]);
+            return response()->json(['status' => 'error', 'message' => 'Photo not found for this venue'], 404);
+        }
+
+        $user = auth()->user();
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = false;
+        if ($venue && class_exists(\App\Models\VenueUser::class)) {
+            $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+                ->where('user_id', $user->id)
+                ->where(function ($q) { $q->where('role','owner')->orWhere('is_primary_owner', true); })
+                ->exists();
+        }
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            \Log::warning('venue.photo.delete.forbidden', ['venue_id'=>$venueId,'photo_id'=>$photoId,'user_id'=>$user->id ?? null]);
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        try {
+            Storage::disk('public')->delete($photo->image_path);
+            $photo->delete();
+
+            \Log::info('venue.photo.deleted', ['venue_id'=>$venueId,'photo_id'=>$photoId,'deleted_by'=>$user->id ?? null]);
+
+            return response()->json(['status' => 'success', 'message' => 'Venue photo deleted', 'data' => ['photo_id' => $photoId]], 200);
+        } catch (\Throwable $e) {
+            \Log::error('venue.photo.delete.exception', ['venue_id'=>$venueId,'photo_id'=>$photoId,'error'=>$e->getMessage()]);
+            return response()->json(['status' => 'error', 'message' => 'Delete failed', 'error' => $e->getMessage()], 500);
+        }
+    }
+
+    /**
      * Remove the specified resource from storage.
      */
     public function destroy(string $id)
