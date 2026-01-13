@@ -14,6 +14,7 @@ return [
          'https://lfg-theta.vercel.app', 
          'https://www.lfg-ph.games',
          'https://lfg-ph.games',
+         'https://srv1266167.hstgr.cloud/',
     ],
 
     'allowed_origins_patterns' => [
