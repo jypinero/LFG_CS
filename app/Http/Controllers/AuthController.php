@@ -25,9 +25,11 @@ use App\Mail\PasswordResetMail;
 use App\Http\Requests\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Http\Requests\Auth\ChangePasswordRequest;
+use App\Traits\HandlesImageCompression;
 
 class AuthController extends Controller
 {
+    use HandlesImageCompression;
     /**
      * Create a new AuthController instance.
      *
@@ -89,8 +91,8 @@ class AuthController extends Controller
             $profilePhotoPath = null;
             if ($request->hasFile('profile_photo')) {
                 $file = $request->file('profile_photo');
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $profilePhotoPath = $file->storeAs('userpfp', $fileName, 'public');
+                // Compress and store profile photo (max 800x800 for profile pics)
+                $profilePhotoPath = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
             }
 
             $user = User::create([
@@ -768,8 +770,8 @@ class AuthController extends Controller
                 }
     
                 $file = $request->file('profile_photo');
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $path = $file->storeAs('userpfp', $fileName, 'public');
+                // Compress and store profile photo (max 800x800 for profile pics)
+                $path = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
                 $user->profile_photo = $path;
             }
     

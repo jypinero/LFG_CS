@@ -10,9 +10,11 @@ use App\Models\TeamMember;
 use App\Models\TeamInvite;
 use App\Models\User; // ADDED
 use Illuminate\Support\Facades\DB; // ADDED
+use App\Traits\HandlesImageCompression;
 
 class TeamController extends Controller
 {
+    use HandlesImageCompression;
     /**
      * Discover teams that are open to new members with optional filters.
      * Query params: sport_id, q, lat, lng, radius_km (default 50), page, per_page
@@ -287,8 +289,8 @@ class TeamController extends Controller
         // Handle team photo upload
         if ($request->hasFile('team_photo')) {
             $file = $request->file('team_photo');
-            $fileName = time() . '_' . $file->getClientOriginalName();
-            $path = $file->storeAs('team_photos', $fileName, 'public');
+            // Compress and store team photo (max 1920x1920)
+            $path = $this->compressAndStoreImage($file, 'team_photos', 1920, 1920, 85);
             $data['team_photo'] = $path;
         }
 
@@ -388,8 +390,8 @@ class TeamController extends Controller
                 Storage::disk('public')->delete($team->team_photo);
             }
             $file = $request->file('team_photo');
-            $fileName = time() . '_' . $file->getClientOriginalName();
-            $path = $file->storeAs('team_photos', $fileName, 'public');
+            // Compress and store team photo (max 1920x1920)
+            $path = $this->compressAndStoreImage($file, 'team_photos', 1920, 1920, 85);
             $data['team_photo'] = $path;
         }
 
@@ -435,8 +437,8 @@ class TeamController extends Controller
 
         // Handle new photo upload
         $file = $request->file('team_photo');
-        $fileName = time() . '_' . $file->getClientOriginalName();
-        $path = $file->storeAs('team_photos', $fileName, 'public');
+        // Compress and store team photo (max 1920x1920)
+        $path = $this->compressAndStoreImage($file, 'team_photos', 1920, 1920, 85);
 
         $team->team_photo = $path;
         $team->save();

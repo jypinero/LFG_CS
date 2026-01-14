@@ -17,9 +17,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use App\Traits\HandlesImageCompression;
 
 class MarketingController extends Controller
 {
+    use HandlesImageCompression;
     public function __construct()
     {
         // require authenticated user only for createpost (index is now public)
@@ -113,12 +115,12 @@ class MarketingController extends Controller
                 return response()->json(['status'=>'error','message'=>'Image dimensions too large'], 422);
             }
 
-            // compute hash to help detect duplicates
+            // compute hash to help detect duplicates (before compression)
             $contents = file_get_contents($file->getPathname());
             $imageHash = md5($contents);
 
-            $fileName = time() . '_' . Str::random(8) . '.' . $file->getClientOriginalExtension();
-            $postImagePath = $file->storeAs('posts', $fileName, 'public');
+            // Compress and store post image (max 1920x1920 for posts)
+            $postImagePath = $this->compressAndStoreImage($file, 'posts', 1920, 1920, 85);
         }
 
         // duplicate check: same caption + same venue (if provided) + same author + within time window
