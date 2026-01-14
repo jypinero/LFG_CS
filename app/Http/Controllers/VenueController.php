@@ -37,7 +37,7 @@ class VenueController extends Controller
         // Hide closed venues from general listing
         $venues = Venue::with(['photos', 'facilities.photos'])
             ->where('is_closed', false)
-            ->where('is_verified', true)
+            ->whereNotNull('verified_at')
             ->get()
             ->map(function ($venue) {
             return [

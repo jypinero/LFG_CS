@@ -435,6 +435,14 @@ class MarketingController extends Controller
                 $item->venue_photo_url = $path ? Storage::url($path) : null;
             }
 
+            // Convert image_url to full URL (like regular posts do)
+            $item->image_url = $item->image_url ? Storage::url($item->image_url) : null;
+            
+            // Also convert post image_url if it exists
+            if ($item->post && $item->post->image_url) {
+                $item->post->image_url = Storage::url($item->post->image_url);
+            }
+
             if ($item->venue) {
                 $item->latitude = $item->venue->latitude;
                 $item->longitude = $item->venue->longitude;
