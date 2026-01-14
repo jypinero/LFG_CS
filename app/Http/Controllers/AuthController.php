@@ -729,6 +729,9 @@ class AuthController extends Controller
         }
     
         $validator = \Validator::make($requestData, [
+            'first_name' => 'nullable|string|max:255',
+            'middle_name' => 'nullable|string|max:255',
+            'last_name' => 'nullable|string|max:255',
             'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
             'city' => 'nullable|string|max:255',
             'province' => 'nullable|string|max:255',
@@ -752,7 +755,7 @@ class AuthController extends Controller
     
         try {
             // ✅ Update simple user fields
-            $user->fill($request->only(['username', 'city', 'province']));
+            $user->fill($request->only(['first_name', 'middle_name', 'last_name', 'username', 'city', 'province']));
     
             // ✅ Handle profile photo upload
             if ($request->hasFile('profile_photo')) {
