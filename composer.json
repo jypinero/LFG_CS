@@ -9,14 +9,14 @@
         "php": "^8.2",
         "doctrine/dbal": "^4.4",
         "endroid/qr-code": "^6.0",
+        "intervention/image": "*",
         "laravel/framework": "^12.0",
         "laravel/socialite": "^5.15",
         "laravel/tinker": "^2.10.1",
         "minishlink/web-push": "^10.0",
         "spatie/laravel-permission": "^6.21",
         "thiagoalessio/tesseract_ocr": "^2.13",
-        "tymon/jwt-auth": "^2.2",
-        "intervention/image": "^3.0"
+        "tymon/jwt-auth": "^2.2"
     },
     "require-dev": {
         "fakerphp/faker": "^1.23",
