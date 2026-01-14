@@ -269,7 +269,7 @@ class TournamentController extends Controller
             'registration_fee' => 'nullable|numeric|min:0',
             'rules' => 'nullable|string',
             'prizes' => 'nullable|string',
-            'photo' => 'sometimes|file|image|max:5120|mimes:jpg,jpeg,png',
+            'photo' => 'sometimes|file|image|max:10240|mimes:jpg,jpeg,png',
         ]);
 
         // Optional: if request includes team ownership validation
@@ -578,7 +578,7 @@ class TournamentController extends Controller
             'registration_fee' => 'nullable|numeric|min:0',
             'rules' => 'nullable|string',
             'prizes' => 'nullable|string',
-            'photo' => 'sometimes|file|image|max:5120|mimes:jpg,jpeg,png',
+            'photo' => 'sometimes|file|image|max:10240|mimes:jpg,jpeg,png',
         ]);
 
         $tournament->fill($data);

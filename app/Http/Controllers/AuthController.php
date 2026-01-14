@@ -70,7 +70,7 @@ class AuthController extends Controller
             'city' => 'required|string|max:255',
             'province' => 'required|string|max:255',
             'zip_code' => 'required|string|max:255',
-            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'role_id' => 'required|exists:roles,id',
             // Make sports conditional based on role
             'sports' => $requiresSports ? 'required|array|min:1' : 'nullable|array',
@@ -738,7 +738,7 @@ class AuthController extends Controller
             'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
             'city' => 'nullable|string|max:255',
             'province' => 'nullable|string|max:255',
-            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'bio' => 'nullable|string|max:1000',
             'occupation' => 'nullable|string|max:255',
             'main_sport_id' => 'nullable|exists:sports,id',

@@ -251,7 +251,7 @@ class TeamController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'certification' => 'nullable|string|max:255',
             'certified' => 'nullable|boolean',
             'team_type' => 'nullable|string|max:100',
@@ -356,7 +356,7 @@ class TeamController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'nullable|string|max:255',
-            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'certification' => 'nullable|string|max:255',
             'certified' => 'nullable|boolean',
             'team_type' => 'nullable|string|max:100',
@@ -423,7 +423,7 @@ class TeamController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'team_photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'team_photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         if ($validator->fails()) {

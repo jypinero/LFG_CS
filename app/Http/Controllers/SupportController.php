@@ -18,7 +18,7 @@ class SupportController extends Controller
             'subject' => 'required|in:Bug Report,Feature Request,Account Issue,General Question',
             'email' => 'required|email',
             'message' => 'required|string|min:10|max:2000',
-            'file' => 'nullable|image|mimes:jpeg,png,gif,webp|max:5120'
+            'file' => 'nullable|image|mimes:jpeg,png,gif,webp|max:10240'
         ]);
 
         if ($validator->fails()) {

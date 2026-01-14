@@ -63,7 +63,7 @@ class MarketingController extends Controller
         $validated = $request->validate([
             'venue_id' => 'required_if:create_event,1|integer|exists:venues,id',
             'location' => 'nullable|string|max:255',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'caption' => 'nullable|string|min:3|max:2000',
             'created_at' => 'nullable|date',
             'create_event' => 'nullable|boolean',

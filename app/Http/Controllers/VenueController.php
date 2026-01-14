@@ -298,7 +298,7 @@ class VenueController extends Controller
             'house_rules' => 'nullable|string',
             // allow single or multiple files under "image" input
             'image' => 'nullable',
-            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:4096',
+            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         $venue = Venue::create([
@@ -367,7 +367,7 @@ class VenueController extends Controller
             'capacity' => 'nullable|integer|min:1',
             'covered' => 'nullable|boolean',
             'image' => 'nullable',
-            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:4096',
+            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         // Create the Facility
@@ -601,7 +601,7 @@ class VenueController extends Controller
             'instagram_url' => 'nullable|url|max:255',
             'website' => 'nullable|url|max:255',
             'house_rules' => 'nullable|string',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         // collect allowed fields from raw request (so JSON/form-data both work)
@@ -1086,7 +1086,7 @@ class VenueController extends Controller
         $validated = $request->validate([
             'price_per_hr' => 'nullable|numeric|min:0',
             'type' => 'nullable|string|max:255',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:8192',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         $allowed = ['price_per_hr','type'];
@@ -1303,7 +1303,7 @@ class VenueController extends Controller
             'name' => 'nullable|string|max:255',
             'capacity' => 'nullable|integer|min:1',
             'covered' => 'nullable|boolean',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:8192',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         $allowed = ['price_per_hr', 'type', 'name', 'capacity', 'covered'];
