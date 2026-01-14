@@ -586,6 +586,7 @@ class AuthController extends Controller
                 'profile_photo' => $user->profile_photo ? \Storage::url($user->profile_photo) : null,
                 'first_name' => $user->first_name,
                 'last_name' => $user->last_name,
+                'is_developer' => $user->is_developer ?? false,
                 'bio' => optional($user->userProfile)->bio,
                 'sports' => $sports,
                 'games_played' => $gamesPlayed,

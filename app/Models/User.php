@@ -41,6 +41,7 @@ class User extends Authenticatable implements JWTSubject
         'profile_photo',
         'role_id',
         'is_pro_athlete',
+        'is_developer',
         'verified_at',
         'verified_by',
         'verification_notes',
@@ -74,6 +75,7 @@ class User extends Authenticatable implements JWTSubject
             'password' => 'hashed',
             'verified_at' => 'datetime',
             'is_pro_athlete' => 'boolean',
+            'is_developer' => 'boolean',
             'verified_by_ai' => 'boolean',
         ];
     }
