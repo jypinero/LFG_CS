@@ -93,6 +93,17 @@ class AuthController extends Controller
                 $file = $request->file('profile_photo');
                 // Compress and store profile photo (max 800x800 for profile pics)
                 $profilePhotoPath = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
+                
+                // Verify file was actually saved
+                if (!\Storage::disk('public')->exists($profilePhotoPath)) {
+                    \Log::error('Profile photo upload failed in register - file not saved', [
+                        'path' => $profilePhotoPath
+                    ]);
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Failed to save profile photo'
+                    ], 500);
+                }
             }
 
             $user = User::create([
@@ -712,6 +723,87 @@ class AuthController extends Controller
         ]);
     }
     
+    /**
+     * Update user profile photo
+     * 
+     * @param Request $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function updateProfilePhoto(Request $request)
+    {
+        $user = Auth::guard('api')->user();
+        
+        if (!$user) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Unauthorized'
+            ], 401);
+        }
+        
+        $validator = \Validator::make($request->all(), [
+            'photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:10240',
+        ]);
+        
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Validation failed',
+                'errors' => $validator->errors()
+            ], 422);
+        }
+        
+        try {
+            // Delete old photo if it exists
+            if ($user->profile_photo && \Storage::disk('public')->exists($user->profile_photo)) {
+                \Storage::disk('public')->delete($user->profile_photo);
+            }
+            
+            // Upload and compress new photo
+            $file = $request->file('photo');
+            $path = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
+            
+            // Verify file was actually saved
+            if (!\Storage::disk('public')->exists($path)) {
+                \Log::error('Profile photo upload failed - file not saved', [
+                    'user_id' => $user->id,
+                    'path' => $path
+                ]);
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Failed to save profile photo'
+                ], 500);
+            }
+            
+            // Update user profile photo
+            $user->profile_photo = $path;
+            $user->save();
+            
+            \Log::info('Profile photo uploaded successfully', [
+                'user_id' => $user->id,
+                'path' => $path
+            ]);
+            
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Profile photo updated successfully',
+                'profile_photo' => \Storage::url($path)
+            ], 200);
+            
+        } catch (\Exception $e) {
+            \Log::error('Profile photo upload error', [
+                'user_id' => $user->id,
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to update profile photo',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
+    }
+    
     public function updateProfile(Request $request)
     {
         $user = Auth::guard('api')->user(); // Authenticated user via API guard
@@ -770,9 +862,54 @@ class AuthController extends Controller
                 }
     
                 $file = $request->file('profile_photo');
+                
+                // Ensure userpfp directory exists
+                $userpfpDir = storage_path('app/public/userpfp');
+                if (!is_dir($userpfpDir)) {
+                    \Storage::disk('public')->makeDirectory('userpfp', 0755, true);
+                    \Log::info('Created userpfp directory', ['path' => $userpfpDir]);
+                }
+                
                 // Compress and store profile photo (max 800x800 for profile pics)
-                $path = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
+                try {
+                    $path = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
+                } catch (\Exception $e) {
+                    \Log::error('Profile photo compression failed in updateProfile', [
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Failed to process profile photo: ' . $e->getMessage()
+                    ], 500);
+                }
+                
+                // Verify file was actually saved
+                if (!\Storage::disk('public')->exists($path)) {
+                    $fullPath = \Storage::disk('public')->path($path);
+                    $dirExists = is_dir(dirname($fullPath));
+                    $isWritable = is_writable(dirname($fullPath));
+                    
+                    \Log::error('Profile photo upload failed in updateProfile - file not saved', [
+                        'user_id' => $user->id,
+                        'path' => $path,
+                        'full_path' => $fullPath,
+                        'directory_exists' => $dirExists,
+                        'directory_writable' => $isWritable,
+                        'storage_disk_root' => \Storage::disk('public')->path('')
+                    ]);
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Failed to save profile photo'
+                    ], 500);
+                }
+                
                 $user->profile_photo = $path;
+                \Log::info('Profile photo uploaded successfully in updateProfile', [
+                    'user_id' => $user->id,
+                    'path' => $path
+                ]);
             }
     
             $user->save();
