@@ -639,16 +639,21 @@ class EventController extends Controller
                 $endTime = $event->end_time ?? $event->start_time ?? '23:59:59';
                 
                 // Create event end datetime using Carbon for proper timezone handling
-                $eventEndDateTime = Carbon::parse($event->date . ' ' . $endTime);
+                // Parse date separately to handle both date-only and datetime formats
+                $eventDate = Carbon::parse($event->date)->format('Y-m-d');
+                $eventEndDateTime = Carbon::parse($eventDate . ' ' . $endTime);
                 
                 // Determine if game is past/completed (only if not cancelled)
                 $isPast = !$isCancelled && $eventEndDateTime->isPast();
                 
+                // Extract date part from event date (handle both date and datetime formats)
+                $eventDateOnly = Carbon::parse($event->date)->format('Y-m-d');
+                
                 // Determine if game is today
-                $isToday = !$isCancelled && $event->date === $today;
+                $isToday = !$isCancelled && $eventDateOnly === $today;
                 
                 // Determine if game is tomorrow
-                $isTomorrow = !$isCancelled && $event->date === $tomorrow;
+                $isTomorrow = !$isCancelled && $eventDateOnly === $tomorrow;
                 
                 // Determine if game is upcoming (future, not today or tomorrow)
                 $isUpcoming = !$isCancelled && !$isPast && !$isToday && !$isTomorrow;
