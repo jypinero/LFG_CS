@@ -3,6 +3,7 @@
 namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Storage;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Venue;
@@ -357,7 +358,7 @@ class EventController extends Controller
                     'members' => $teamMembers->map(function($member) {
                         return $member->user ? [
                             'username' => $member->user->username,
-                            'profile_photo' => $member->user->profile_photo ? asset('storage/' . $member->user->profile_photo) : null,
+                            'profile_photo' => $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
                         ] : [
                             'username' => 'Unknown User',
                             'profile_photo' => null,
@@ -371,7 +372,7 @@ class EventController extends Controller
                 'name' => $participants->map(function($participant) {
                     return $participant->user ? [
                         'username' => $participant->user->username,
-                        'profile_photo' => $participant->user->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
+                        'profile_photo' => $participant->user->profile_photo ? Storage::url($participant->user->profile_photo) : null,
                     ] : [
                         'username' => 'Unknown User',
                         'profile_photo' => null,
@@ -1381,7 +1382,7 @@ class EventController extends Controller
             return [
                 'user_id' => $participant->user_id,
                 'username' => $participant->user->username,
-                'profile_photo' => $participant->user->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
+                'profile_photo' => $participant->user->profile_photo ? Storage::url($participant->user->profile_photo) : null,
                 'status' => $participant->status,
                 'checked_in' => $checkin ? true : false,
                 'checkin_time' => $checkin ? $checkin->checkin_time : null,
@@ -2130,7 +2131,7 @@ class EventController extends Controller
                 return [
                     'user_id' => $participant->user_id,
                     'username' => $participant->user->username,
-                    'profile_photo' => $participant->user->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
+                    'profile_photo' => $participant->user->profile_photo ? Storage::url($participant->user->profile_photo) : null,
                     'status' => $participant->status,
                     'checked_in' => $checkin ? true : false,
                     'checkin_time' => $checkin ? $checkin->checkin_time : null,

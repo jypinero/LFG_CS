@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Storage;
 use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\EventTeam;
@@ -211,7 +212,7 @@ class TeamAnalyticsController extends Controller
                     'first_name' => $member->user->first_name ?? null,
                     'last_name' => $member->user->last_name ?? null,
                     'profile_photo' => $member->user && $member->user->profile_photo 
-                        ? asset('storage/' . $member->user->profile_photo) 
+                        ? Storage::url($member->user->profile_photo) 
                         : null,
                     'role' => $member->role,
                     'position' => $member->position,
@@ -398,7 +399,7 @@ class TeamAnalyticsController extends Controller
             'id' => $team->id,
             'name' => $team->name,
             'team_type' => $team->team_type,
-            'team_photo' => $team->team_photo ? asset('storage/' . $team->team_photo) : null,
+            'team_photo' => $team->team_photo ? Storage::url($team->team_photo) : null,
             'certification' => $team->certification,
             'certified' => (bool) $team->certified,
             'address_line' => $team->address_line,

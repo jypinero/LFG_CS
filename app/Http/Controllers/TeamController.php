@@ -108,7 +108,7 @@ class TeamController extends Controller
                 'id' => $team->id,
                 'name' => $team->name,
                 'created_by' => $team->created_by,
-                'team_photo' => $team->team_photo ? asset('storage/' . $team->team_photo) : null,
+                'team_photo' => $team->team_photo ? Storage::url($team->team_photo) : null,
                 'certification' => $team->certification,
                 'certified' => $team->certified,
                 'team_type' => $team->team_type,
@@ -164,7 +164,7 @@ class TeamController extends Controller
                     'request_id' => $row->id,
                     'team_id' => $row->team_id,
                     'team_name' => $row->team->name ?? null,
-                    'team_photo' => ($row->team && $row->team->team_photo) ? asset('storage/' . $row->team->team_photo) : null,
+                    'team_photo' => ($row->team && $row->team->team_photo) ? Storage::url($row->team->team_photo) : null,
                     'sport_id' => $row->team->sport_id ?? null,
                     'status' => 'pending',
                     'requested_at' => $row->joined_at,
@@ -195,7 +195,7 @@ class TeamController extends Controller
                 'id' => $team->id,
                 'name' => $team->name,
                 'created_by' => $team->created_by,
-                'team_photo' => $team->team_photo ? asset('storage/' . $team->team_photo) : null,
+                'team_photo' => $team->team_photo ? Storage::url($team->team_photo) : null,
                 'certification' => $team->certification,
                 'certified' => $team->certified,
                 'team_type' => $team->team_type,
@@ -449,7 +449,7 @@ class TeamController extends Controller
             'team' => [
                 'id' => $team->id,
                 'name' => $team->name,
-                'team_photo' => asset('storage/' . $team->team_photo),
+                'team_photo' => Storage::url($team->team_photo),
             ]
         ], 200);
     }
@@ -675,7 +675,7 @@ class TeamController extends Controller
                     'user_id' => $member->user_id,
                     'username' => $member->user->username ?? null,
                     'email' => $member->user->email ?? null,
-                    'profile_photo' => $member->user->profile_photo ? asset('storage/' . $member->user->profile_photo) : null,
+                    'profile_photo' => $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
                     'is_active' => $member->is_active,
                     'roster_status' => $member->roster_status,
                     'position' => $member->position,
@@ -688,7 +688,7 @@ class TeamController extends Controller
             'id' => $team->id,
             'name' => $team->name,
             'created_by' => $team->created_by,
-            'team_photo' => $team->team_photo ? asset('storage/' . $team->team_photo) : null,
+            'team_photo' => $team->team_photo ? Storage::url($team->team_photo) : null,
             'certification' => $team->certification,
             'certified' => $team->certified,
             'team_type' => $team->team_type,
@@ -992,7 +992,7 @@ class TeamController extends Controller
                     'user_id' => $member->user_id,
                     'username' => $member->user->username,
                     'email' => $member->user->email,
-                    'profile_photo' => $member->user->profile_photo ? asset('storage/' . $member->user->profile_photo) : null,
+                    'profile_photo' => $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
                     'requested_at' => $member->joined_at,
                     'user_joined_platform' => $member->user->created_at,
                 ];
@@ -1042,7 +1042,7 @@ class TeamController extends Controller
                     'user_id' => $userId,
                     'username' => $requestUser->username ?? null,
                     'email' => $requestUser->email ?? null,
-                    'profile_photo' => $requestUser && $requestUser->profile_photo ? asset('storage/' . $requestUser->profile_photo) : null,
+                    'profile_photo' => $requestUser && $requestUser->profile_photo ? Storage::url($requestUser->profile_photo) : null,
                     'message' => $notification->data['message'] ?? null,
                     'action_state' => $userNotif->action_state ?? 'pending',
                     'created_at' => $notification->created_at,
@@ -1685,7 +1685,7 @@ class TeamController extends Controller
             'message' => 'Certification document uploaded',
             'team' => [
                 'id' => $team->id,
-                'certification_document' => asset('storage/' . $team->certification_document),
+                'certification_document' => Storage::url($team->certification_document),
                 'certification_status' => $team->certification_status,
             ],
         ], 200);
@@ -1751,7 +1751,7 @@ class TeamController extends Controller
             'certification' => [
                 'certified' => $team->certified,
                 'certification' => $team->certification,
-                'certification_document' => $team->certification_document ? asset('storage/' . $team->certification_document) : null,
+                'certification_document' => $team->certification_document ? Storage::url($team->certification_document) : null,
                 'certification_status' => $team->certification_status,
                 'certification_verified_at' => $team->certification_verified_at,
                 'certification_ai_confidence' => $team->certification_ai_confidence,

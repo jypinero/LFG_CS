@@ -10,9 +10,11 @@ use App\Models\Notification;
 use App\Models\UserNotification;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Storage;
+use App\Traits\HandlesImageCompression;
 
 class PostController extends Controller
 {
+    use HandlesImageCompression;
     public function index(Request $request)
     {
         $userId = auth()->id();
@@ -121,8 +123,8 @@ class PostController extends Controller
         $postImagePath = null;
         if ($request->hasFile('image_url')) {
             $file = $request->file('image_url');
-            $fileName = time() . '_' . $file->getClientOriginalName();
-            $postImagePath = $file->storeAs('posts', $fileName, 'public');
+            // Compress and store post image (max 1920x1920 for posts)
+            $postImagePath = $this->compressAndStoreImage($file, 'posts', 1920, 1920, 85);
         }
 
         $post = Post::create([

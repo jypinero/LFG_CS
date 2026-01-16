@@ -1114,8 +1114,8 @@ class VenueController extends Controller
                 // replace first photo if exists, otherwise create new
                 $first = $facility->photos()->first();
                 $file = $request->file('image');
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $imagePath = $file->storeAs('facility_photo', $fileName, 'public');
+                // Compress and store facility photo (max 1920x1920)
+                $imagePath = $this->compressAndStoreImage($file, 'facility_photo', 1920, 1920, 85);
 
                 if ($first) {
                     try {
