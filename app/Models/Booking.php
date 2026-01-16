@@ -14,12 +14,15 @@ class Booking extends Model
         'user_id',
         'event_id',
         'date',
+        'end_date',
         'start_time',
         'end_time',
         'status',
         'sport',
         'purpose',
         'cancelled_by',
+        'end_date_start_time',
+        'end_date_end_time',
     ];
 
     public function venue()
