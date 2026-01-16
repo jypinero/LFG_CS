@@ -862,14 +862,42 @@ class AuthController extends Controller
                 }
     
                 $file = $request->file('profile_photo');
+                
+                // Ensure userpfp directory exists
+                $userpfpDir = storage_path('app/public/userpfp');
+                if (!is_dir($userpfpDir)) {
+                    \Storage::disk('public')->makeDirectory('userpfp', 0755, true);
+                    \Log::info('Created userpfp directory', ['path' => $userpfpDir]);
+                }
+                
                 // Compress and store profile photo (max 800x800 for profile pics)
-                $path = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
+                try {
+                    $path = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
+                } catch (\Exception $e) {
+                    \Log::error('Profile photo compression failed in updateProfile', [
+                        'user_id' => $user->id,
+                        'error' => $e->getMessage(),
+                        'trace' => $e->getTraceAsString()
+                    ]);
+                    return response()->json([
+                        'status' => 'error',
+                        'message' => 'Failed to process profile photo: ' . $e->getMessage()
+                    ], 500);
+                }
                 
                 // Verify file was actually saved
                 if (!\Storage::disk('public')->exists($path)) {
+                    $fullPath = \Storage::disk('public')->path($path);
+                    $dirExists = is_dir(dirname($fullPath));
+                    $isWritable = is_writable(dirname($fullPath));
+                    
                     \Log::error('Profile photo upload failed in updateProfile - file not saved', [
                         'user_id' => $user->id,
-                        'path' => $path
+                        'path' => $path,
+                        'full_path' => $fullPath,
+                        'directory_exists' => $dirExists,
+                        'directory_writable' => $isWritable,
+                        'storage_disk_root' => \Storage::disk('public')->path('')
                     ]);
                     return response()->json([
                         'status' => 'error',
