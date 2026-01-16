@@ -10,6 +10,7 @@ class EventGame extends Model
     use HasFactory;
 
     protected $fillable = [
+        'client_uuid',
         'event_id',
         'tournament_id',
         'round_number',
@@ -23,6 +24,8 @@ class EventGame extends Model
         'score_b',
         'winner_team_id',
         'winner_user_id',
+        'challonge_match_id',
+        'challonge_match_url',
         'game_date',
         'start_time',
         'end_time',

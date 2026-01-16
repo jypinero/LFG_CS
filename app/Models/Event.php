@@ -190,4 +190,9 @@ class Event extends Model
         return $this->hasOne(\App\Models\MessageThread::class, 'game_id', 'id')
             ->where('type', 'game_group');
     }
+
+    public function games()
+    {
+        return $this->hasMany(\App\Models\EventGame::class);
+    }
 }

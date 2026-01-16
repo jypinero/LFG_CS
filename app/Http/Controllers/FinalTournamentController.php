@@ -12,8 +12,10 @@ use App\Models\Team;
 use App\Models\TeamMember;
 use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
-use App\Models\Notification;
+use Illuminate\Support\Facades\Validator;
+use App\Models\EventGame;
 use App\Models\UserNotification;
+use App\Models\Notification;
 
 class FinalTournamentController extends Controller
 {
@@ -167,27 +169,27 @@ class FinalTournamentController extends Controller
             $teamIds = $request->team_ids;
             $enrolledParticipants = [];
 
-            foreach ($teamIds as $teamId) {
-                // create EventTeam if model exists
-                if (class_exists(\App\Models\EventTeam::class)) {
-                    \App\Models\EventTeam::create([
-                        'event_id' => $event->id,
-                        'team_id' => $teamId,
-                    ]);
-                }
+            // foreach ($teamIds as $teamId) {
+            //     // create EventTeam if model exists
+            //     if (class_exists(\App\Models\EventTeam::class)) {
+            //         \App\Models\EventTeam::create([
+            //             'event_id' => $event->id,
+            //             'team_id' => $teamId,
+            //         ]);
+            //     }
 
-                $teamMembers = TeamMember::where('team_id', $teamId)->get();
-                foreach ($teamMembers as $member) {
-                    $participant = EventParticipant::create([
-                        'event_id' => $event->id,
-                        'user_id' => $member->user_id,
-                        'team_id' => $teamId,
-                        'status' => 'confirmed',
-                        'tournament_id' => $event->tournament_id,
-                    ]);
-                    $enrolledParticipants[] = $participant;
-                }
-            }
+            //     $teamMembers = TeamMember::where('team_id', $teamId)->get();
+            //     foreach ($teamMembers as $member) {
+            //         $participant = EventParticipant::create([
+            //             'event_id' => $event->id,
+            //             'user_id' => $member->user_id,
+            //             'team_id' => $teamId,
+            //             'status' => 'confirmed',
+            //             'tournament_id' => $event->tournament_id,
+            //         ]);
+            //         $enrolledParticipants[] = $participant;
+            //     }
+            // }
 
             // create group chat if method exists
             if (method_exists($this, 'createEventGroupChat')) {
@@ -700,5 +702,26 @@ class FinalTournamentController extends Controller
         });
 
         return response()->json(['status' => 'success', 'message' => 'Sub-event cancelled'], 200);
+    }
+
+    // Store Event Game (for tournament sub-event)
+    public function storeEventGame(Request $request, $eventId)
+    {
+        $user = auth()->user();
+        if (! $user) return response()->json(['status' => 'error','message'=>'Unauthenticated'], 401);
+
+        $event = Event::findOrFail($eventId);
+
+        // Only persist existing event_id and tournament_id (use event's date/time)
+        $game = EventGame::create([
+            'event_id' => $event->id,
+            'tournament_id' => $event->tournament_id,
+            'game_date' => $event->date,
+            'start_time' => $event->start_time,
+            'end_time' => $event->end_time,
+            'status' => 'scheduled',
+        ]);
+
+        return response()->json(['status' => 'success', 'game' => $game], 201);
     }
 }
