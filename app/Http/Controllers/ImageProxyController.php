@@ -42,10 +42,21 @@ class ImageProxyController extends Controller
 
             // Check if file exists in public storage
             if (!Storage::disk('public')->exists($path)) {
-                Log::warning('Image not found in storage', ['path' => $path, 'url' => $url]);
+                $fullPath = Storage::disk('public')->path($path);
+                Log::warning('Image not found in storage', [
+                    'extracted_path' => $path,
+                    'full_disk_path' => $fullPath,
+                    'original_url' => $url,
+                    'decoded_url' => $decodedUrl
+                ]);
                 return response()->json([
                     'status' => 'error',
-                    'message' => 'Image not found'
+                    'message' => 'Image not found',
+                    'path' => $path, // Include path in response for debugging
+                    'debug' => config('app.debug') ? [
+                        'extracted_path' => $path,
+                        'full_disk_path' => $fullPath,
+                    ] : null
                 ], 404);
             }
 
