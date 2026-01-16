@@ -75,7 +75,7 @@ trait HandlesImageCompression
 
             // Store the compressed image
             $path = $directory . '/' . $fileName;
-            Storage::disk('public')->put($path, (string) $image);
+            Storage::disk('public')->put($path, $image->encode()->toString());
 
             return $path;
         } catch (\Exception $e) {
