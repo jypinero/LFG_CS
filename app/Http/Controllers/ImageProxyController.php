@@ -87,31 +87,57 @@ class ImageProxyController extends Controller
     /**
      * Extract storage path from URL
      * 
+     * Supports multiple URL formats:
+     * - Storage path only: "posts/file.jpg", "team_photos/file.jpg"
+     * - Relative URL: "/storage/posts/file.jpg"
+     * - Full URL: "https://domain.com/storage/posts/file.jpg"
+     * 
      * @param string $url
      * @return string|null
      */
     private function extractStoragePath(string $url): ?string
     {
-        // Remove query parameters if any
-        $url = parse_url($url, PHP_URL_PATH);
+        // If it's already just a storage path (no http/https, no leading slash)
+        // Example: "posts/file.jpg", "team_photos/file.jpg"
+        if (!preg_match('/^https?:\/\//', $url) && strpos($url, '/') !== 0) {
+            // Security: Prevent directory traversal
+            if (strpos($url, '..') !== false) {
+                Log::warning('ImageProxy: Directory traversal attempt blocked', ['url' => $url]);
+                return null;
+            }
+            // Already a storage path, return as-is
+            return !empty($url) ? $url : null;
+        }
         
-        if (!$url) {
+        // Remove query parameters if any
+        $path = parse_url($url, PHP_URL_PATH);
+        
+        if (!$path) {
+            Log::warning('ImageProxy: Failed to parse URL path', ['url' => $url]);
             return null;
         }
 
         // Remove leading slash if present
-        $url = ltrim($url, '/');
+        $path = ltrim($path, '/');
         
         // If URL starts with 'storage/', remove it (we need just the path after storage/)
-        if (strpos($url, 'storage/') === 0) {
-            $url = substr($url, 8); // Remove 'storage/' (8 characters)
+        // Examples: "storage/posts/file.jpg" -> "posts/file.jpg"
+        if (strpos($path, 'storage/') === 0) {
+            $path = substr($path, 8); // Remove 'storage/' (8 characters)
         }
         
         // Security: Prevent directory traversal
-        if (strpos($url, '..') !== false) {
+        if (strpos($path, '..') !== false) {
+            Log::warning('ImageProxy: Directory traversal attempt blocked', ['path' => $path, 'url' => $url]);
             return null;
         }
         
-        return $url ?: null;
+        // Validate path is not empty
+        if (empty($path)) {
+            Log::warning('ImageProxy: Path is empty', ['original_url' => $url]);
+            return null;
+        }
+        
+        return $path;
     }
 }
