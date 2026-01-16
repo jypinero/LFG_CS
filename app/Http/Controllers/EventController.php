@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Mail;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Venue;
@@ -20,6 +21,7 @@ use App\Models\Booking;
 use App\Models\VenueUser;
 use App\Models\MessageThread;
 use App\Models\ThreadParticipant;
+use App\Mail\EventCancelledMail;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\SvgWriter;
 
@@ -1548,10 +1550,17 @@ class EventController extends Controller
         // Cancel the event (soft delete by setting cancelled_at)
         $event->update(['cancelled_at' => now()]);
 
+        // Load event relationships for notifications
+        $event->load(['venue', 'facility']);
+
         // Send notification to all participants about the cancellation
-        $participants = EventParticipant::where('event_id', $event->id)->get();
+        $participants = EventParticipant::where('event_id', $event->id)
+            ->with('user')
+            ->get();
+        
         foreach ($participants as $participant) {
             if ($participant->user_id !== $event->created_by) {
+                // Create in-app notification
                 $notification = Notification::create([
                     'type' => 'event_cancelled',
                     'data' => [
@@ -1561,6 +1570,7 @@ class EventController extends Controller
                     'created_by' => $event->created_by,
                 ]);
 
+                // Create user notification (triggers push notification via observer)
                 UserNotification::create([
                     'notification_id' => $notification->id,
                     'user_id' => $participant->user_id,
@@ -1568,6 +1578,20 @@ class EventController extends Controller
                     'is_read' => false,
                     'action_state' => 'none',
                 ]);
+
+                // Send email notification
+                if ($participant->user && $participant->user->email) {
+                    try {
+                        Mail::to($participant->user->email)->send(new EventCancelledMail($event, $participant->user));
+                    } catch (\Exception $e) {
+                        // Log error but don't break the cancellation process
+                        \Illuminate\Support\Facades\Log::error('Failed to send event cancellation email', [
+                            'user_id' => $participant->user_id,
+                            'event_id' => $event->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
             }
         }
 
