@@ -26,9 +26,11 @@ use App\Models\VenueAmenity;
 use App\Models\VenueClosureDate;
 use Illuminate\Support\Facades\Mail;
 use App\Mail\BookingInvoiceMail;
+use App\Traits\HandlesImageCompression;
 
 class VenueController extends Controller
 {
+    use HandlesImageCompression;
     /**
      * Display a listing of the resource.
      */
@@ -37,7 +39,7 @@ class VenueController extends Controller
         // Hide closed venues from general listing
         $venues = Venue::with(['photos', 'facilities.photos'])
             ->where('is_closed', false)
-            ->where('is_verified', true)
+            ->whereNotNull('verified_at')
             ->get()
             ->map(function ($venue) {
             return [
@@ -296,7 +298,7 @@ class VenueController extends Controller
             'house_rules' => 'nullable|string',
             // allow single or multiple files under "image" input
             'image' => 'nullable',
-            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:4096',
+            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         $venue = Venue::create([
@@ -332,8 +334,8 @@ class VenueController extends Controller
             }
 
             foreach ($files as $file) {
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $imagePath = $file->storeAs('venue_photos', $fileName, 'public');
+                // Compress and store venue photo (max 1920x1920)
+                $imagePath = $this->compressAndStoreImage($file, 'venue_photos', 1920, 1920, 85);
 
                 $venuePhoto = VenuePhoto::create([
                     'venue_id' => $venue->id,
@@ -365,7 +367,7 @@ class VenueController extends Controller
             'capacity' => 'nullable|integer|min:1',
             'covered' => 'nullable|boolean',
             'image' => 'nullable',
-            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:4096',
+            'image.*' => 'image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         // Create the Facility
@@ -387,8 +389,8 @@ class VenueController extends Controller
             }
 
             foreach ($files as $file) {
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $imagePath = $file->storeAs('facility_photo', $fileName, 'public');
+                // Compress and store facility photo (max 1920x1920)
+                $imagePath = $this->compressAndStoreImage($file, 'facility_photo', 1920, 1920, 85);
 
                 $facilityPhoto = FacilityPhoto::create([
                     'facility_id' => $facility->id,
@@ -599,7 +601,7 @@ class VenueController extends Controller
             'instagram_url' => 'nullable|url|max:255',
             'website' => 'nullable|url|max:255',
             'house_rules' => 'nullable|string',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         // collect allowed fields from raw request (so JSON/form-data both work)
@@ -647,15 +649,15 @@ class VenueController extends Controller
                 if ($first) {
                     Storage::disk('public')->delete($first->image_path);
                     $file = $request->file('image');
-                    $fileName = time() . '_' . $file->getClientOriginalName();
-                    $imagePath = $file->storeAs('venue_photos', $fileName, 'public');
+                    // Compress and store venue photo (max 1920x1920)
+                    $imagePath = $this->compressAndStoreImage($file, 'venue_photos', 1920, 1920, 85);
                     $first->update(['image_path' => $imagePath, 'uploaded_at' => now()]);
                     $newPhoto = $first;
                 } else {
                     // create as before
                     $file = $request->file('image');
-                    $fileName = time() . '_' . $file->getClientOriginalName();
-                    $imagePath = $file->storeAs('venue_photos', $fileName, 'public');
+                    // Compress and store venue photo (max 1920x1920)
+                    $imagePath = $this->compressAndStoreImage($file, 'venue_photos', 1920, 1920, 85);
 
                     $newPhoto = VenuePhoto::create([
                         'venue_id' => $venue->id,
@@ -772,8 +774,8 @@ class VenueController extends Controller
         }
 
         foreach ($files as $imageFile) {
-            $fileName = time() . '_' . $imageFile->getClientOriginalName();
-            $path = $imageFile->storeAs('venue_photos', $fileName, 'public');
+            // Compress and store venue photo (max 1920x1920)
+            $path = $this->compressAndStoreImage($imageFile, 'venue_photos', 1920, 1920, 85);
 
             $photo = VenuePhoto::create([
                 'venue_id' => $venue->id,
@@ -1084,7 +1086,7 @@ class VenueController extends Controller
         $validated = $request->validate([
             'price_per_hr' => 'nullable|numeric|min:0',
             'type' => 'nullable|string|max:255',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:8192',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         $allowed = ['price_per_hr','type'];
@@ -1301,7 +1303,7 @@ class VenueController extends Controller
             'name' => 'nullable|string|max:255',
             'capacity' => 'nullable|integer|min:1',
             'covered' => 'nullable|boolean',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:8192',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         $allowed = ['price_per_hr', 'type', 'name', 'capacity', 'covered'];
@@ -1334,8 +1336,8 @@ class VenueController extends Controller
             if ($request->hasFile('image')) {
                 $first = $facility->photos()->first();
                 $file = $request->file('image');
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $imagePath = $file->storeAs('facility_photo', $fileName, 'public');
+                // Compress and store facility photo (max 1920x1920)
+                $imagePath = $this->compressAndStoreImage($file, 'facility_photo', 1920, 1920, 85);
 
                 if ($first) {
                     try {
@@ -1429,7 +1431,8 @@ class VenueController extends Controller
         }
 
         foreach ($files as $imageFile) {
-            $path = $imageFile->store('facility_photo', 'public');
+            // Compress and store facility photo (max 1920x1920)
+            $path = $this->compressAndStoreImage($imageFile, 'facility_photo', 1920, 1920, 85);
 
             $photo = $facility->photos()->create([
                 'image_path' => $path,

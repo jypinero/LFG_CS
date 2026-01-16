@@ -43,7 +43,7 @@ class NewTournamentController extends Controller
             'rules' => 'nullable|string',
             'max_teams' => 'nullable|integer|min:2',
             'min_teams' => 'nullable|integer|min:2',
-            'photo' => 'sometimes|file|image|max:5120|mimes:jpg,jpeg,png',
+            'photo' => 'sometimes|file|image|max:10240|mimes:jpg,jpeg,png',
         ]);
 
         DB::beginTransaction();
@@ -1091,7 +1091,7 @@ class NewTournamentController extends Controller
             'rules' => 'nullable|string',
             'max_teams' => 'nullable|integer|min:2',
             'min_teams' => 'nullable|integer|min:2',
-            'photo' => 'sometimes|file|image|max:5120|mimes:jpg,jpeg,png',
+            'photo' => 'sometimes|file|image|max:10240|mimes:jpg,jpeg,png',
         ]);
 
         if ($request->hasFile('photo')) {

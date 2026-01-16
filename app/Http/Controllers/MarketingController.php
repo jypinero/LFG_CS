@@ -17,9 +17,11 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Carbon\Carbon;
+use App\Traits\HandlesImageCompression;
 
 class MarketingController extends Controller
 {
+    use HandlesImageCompression;
     public function __construct()
     {
         // require authenticated user only for createpost (index is now public)
@@ -61,7 +63,7 @@ class MarketingController extends Controller
         $validated = $request->validate([
             'venue_id' => 'required_if:create_event,1|integer|exists:venues,id',
             'location' => 'nullable|string|max:255',
-            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:5120',
+            'image' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'caption' => 'nullable|string|min:3|max:2000',
             'created_at' => 'nullable|date',
             'create_event' => 'nullable|boolean',
@@ -113,12 +115,12 @@ class MarketingController extends Controller
                 return response()->json(['status'=>'error','message'=>'Image dimensions too large'], 422);
             }
 
-            // compute hash to help detect duplicates
+            // compute hash to help detect duplicates (before compression)
             $contents = file_get_contents($file->getPathname());
             $imageHash = md5($contents);
 
-            $fileName = time() . '_' . Str::random(8) . '.' . $file->getClientOriginalExtension();
-            $postImagePath = $file->storeAs('posts', $fileName, 'public');
+            // Compress and store post image (max 1920x1920 for posts)
+            $postImagePath = $this->compressAndStoreImage($file, 'posts', 1920, 1920, 85);
         }
 
         // duplicate check: same caption + same venue (if provided) + same author + within time window
@@ -433,6 +435,14 @@ class MarketingController extends Controller
             if (! empty($item->venue_id)) {
                 $path = DB::table('venue_photos')->where('venue_id', $item->venue_id)->value('image_path');
                 $item->venue_photo_url = $path ? Storage::url($path) : null;
+            }
+
+            // Convert image_url to full URL (like regular posts do)
+            $item->image_url = $item->image_url ? Storage::url($item->image_url) : null;
+            
+            // Also convert post image_url if it exists
+            if ($item->post && $item->post->image_url) {
+                $item->post->image_url = Storage::url($item->post->image_url);
             }
 
             if ($item->venue) {

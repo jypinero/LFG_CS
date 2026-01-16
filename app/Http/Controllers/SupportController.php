@@ -7,16 +7,18 @@ use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Validator;
 use App\Models\SupportTicket;
 use App\Mail\SupportContactMail;
+use App\Traits\HandlesImageCompression;
 
 class SupportController extends Controller
 {
+    use HandlesImageCompression;
     public function submitContact(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'subject' => 'required|in:Bug Report,Feature Request,Account Issue,General Question',
             'email' => 'required|email',
             'message' => 'required|string|min:10|max:2000',
-            'file' => 'nullable|image|mimes:jpeg,png,gif,webp|max:5120'
+            'file' => 'nullable|image|mimes:jpeg,png,gif,webp|max:10240'
         ]);
 
         if ($validator->fails()) {
@@ -31,7 +33,9 @@ class SupportController extends Controller
             $filePath = null;
 
             if ($request->hasFile('file')) {
-                $filePath = $request->file('file')->store('support-attachments', 'public');
+                $file = $request->file('file');
+                // Compress and store support ticket image (max 1920x1920)
+                $filePath = $this->compressAndStoreImage($file, 'support-attachments', 1920, 1920, 85);
             }
 
             $ticket = SupportTicket::create([

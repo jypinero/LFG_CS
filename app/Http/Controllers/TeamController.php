@@ -10,9 +10,11 @@ use App\Models\TeamMember;
 use App\Models\TeamInvite;
 use App\Models\User; // ADDED
 use Illuminate\Support\Facades\DB; // ADDED
+use App\Traits\HandlesImageCompression;
 
 class TeamController extends Controller
 {
+    use HandlesImageCompression;
     /**
      * Discover teams that are open to new members with optional filters.
      * Query params: sport_id, q, lat, lng, radius_km (default 50), page, per_page
@@ -249,7 +251,7 @@ class TeamController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'certification' => 'nullable|string|max:255',
             'certified' => 'nullable|boolean',
             'team_type' => 'nullable|string|max:100',
@@ -287,8 +289,8 @@ class TeamController extends Controller
         // Handle team photo upload
         if ($request->hasFile('team_photo')) {
             $file = $request->file('team_photo');
-            $fileName = time() . '_' . $file->getClientOriginalName();
-            $path = $file->storeAs('team_photos', $fileName, 'public');
+            // Compress and store team photo (max 1920x1920)
+            $path = $this->compressAndStoreImage($file, 'team_photos', 1920, 1920, 85);
             $data['team_photo'] = $path;
         }
 
@@ -354,7 +356,7 @@ class TeamController extends Controller
 
         $validator = Validator::make($request->all(), [
             'name' => 'nullable|string|max:255',
-            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'team_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'certification' => 'nullable|string|max:255',
             'certified' => 'nullable|boolean',
             'team_type' => 'nullable|string|max:100',
@@ -388,8 +390,8 @@ class TeamController extends Controller
                 Storage::disk('public')->delete($team->team_photo);
             }
             $file = $request->file('team_photo');
-            $fileName = time() . '_' . $file->getClientOriginalName();
-            $path = $file->storeAs('team_photos', $fileName, 'public');
+            // Compress and store team photo (max 1920x1920)
+            $path = $this->compressAndStoreImage($file, 'team_photos', 1920, 1920, 85);
             $data['team_photo'] = $path;
         }
 
@@ -421,7 +423,7 @@ class TeamController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'team_photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:4096',
+            'team_photo' => 'required|image|mimes:jpeg,png,jpg,gif|max:10240',
         ]);
 
         if ($validator->fails()) {
@@ -435,8 +437,8 @@ class TeamController extends Controller
 
         // Handle new photo upload
         $file = $request->file('team_photo');
-        $fileName = time() . '_' . $file->getClientOriginalName();
-        $path = $file->storeAs('team_photos', $fileName, 'public');
+        // Compress and store team photo (max 1920x1920)
+        $path = $this->compressAndStoreImage($file, 'team_photos', 1920, 1920, 85);
 
         $team->team_photo = $path;
         $team->save();

@@ -28,6 +28,7 @@ use App\Http\Controllers\AdditionalTournamentController;
 use App\Http\Controllers\PushNotificationController;
 use App\Http\Controllers\TeamAnalyticsController;
 use App\Http\Controllers\ChallongeAuthController;
+use App\Http\Controllers\ImageProxyController;
 
 /*
 |--------------------------------------------------------------------------
@@ -70,6 +71,9 @@ Route::post('auth/challonge/save-tokens', [\App\Http\Controllers\ChallongeAuthCo
 
 // Public push notification route - VAPID key is public (not secret, no auth required)
 Route::get('/push/vapid', [PushNotificationController::class, 'getVapidKey']);
+
+// Public image proxy route (no authentication required)
+Route::get('/image-proxy', [ImageProxyController::class, 'proxy']);
 
 Route::middleware('auth:sanctum')->get('/user', function (Request $request) {
     return $request->user();

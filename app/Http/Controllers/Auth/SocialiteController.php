@@ -15,9 +15,11 @@ use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Laravel\Socialite\Facades\Socialite;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use App\Traits\HandlesImageCompression;
 
 class SocialiteController extends Controller
 {
+    use HandlesImageCompression;
     /**
      * Redirect to Google OAuth.
      */
@@ -304,11 +306,25 @@ class SocialiteController extends Controller
                 return null;
             }
 
-            $extension = 'jpg'; // Default extension
-            $fileName = time() . '_' . $username . '_google.' . $extension;
-            $path = 'userpfp/' . $fileName;
+            // Create temporary file
+            $tempFile = tmpfile();
+            $tempPath = stream_get_meta_data($tempFile)['uri'];
+            file_put_contents($tempPath, $imageData);
 
-            Storage::disk('public')->put($path, $imageData);
+            // Create UploadedFile instance for compression
+            $uploadedFile = new \Illuminate\Http\UploadedFile(
+                $tempPath,
+                $username . '_google.jpg',
+                'image/jpeg',
+                null,
+                true // test mode
+            );
+
+            // Compress and store profile photo (max 800x800 for profile pics)
+            $path = $this->compressAndStoreImage($uploadedFile, 'userpfp', 800, 800, 85);
+
+            // Clean up temp file
+            fclose($tempFile);
 
             return $path;
         } catch (\Exception $e) {

@@ -25,9 +25,11 @@ use App\Mail\PasswordResetMail;
 use App\Http\Requests\Auth\ForgotPasswordRequest;
 use App\Http\Requests\Auth\ResetPasswordRequest;
 use App\Http\Requests\Auth\ChangePasswordRequest;
+use App\Traits\HandlesImageCompression;
 
 class AuthController extends Controller
 {
+    use HandlesImageCompression;
     /**
      * Create a new AuthController instance.
      *
@@ -68,7 +70,7 @@ class AuthController extends Controller
             'city' => 'required|string|max:255',
             'province' => 'required|string|max:255',
             'zip_code' => 'required|string|max:255',
-            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'role_id' => 'required|exists:roles,id',
             // Make sports conditional based on role
             'sports' => $requiresSports ? 'required|array|min:1' : 'nullable|array',
@@ -89,8 +91,8 @@ class AuthController extends Controller
             $profilePhotoPath = null;
             if ($request->hasFile('profile_photo')) {
                 $file = $request->file('profile_photo');
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $profilePhotoPath = $file->storeAs('userpfp', $fileName, 'public');
+                // Compress and store profile photo (max 800x800 for profile pics)
+                $profilePhotoPath = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
             }
 
             $user = User::create([
@@ -586,6 +588,7 @@ class AuthController extends Controller
                 'profile_photo' => $user->profile_photo ? \Storage::url($user->profile_photo) : null,
                 'first_name' => $user->first_name,
                 'last_name' => $user->last_name,
+                'is_developer' => $user->is_developer ?? false,
                 'bio' => optional($user->userProfile)->bio,
                 'sports' => $sports,
                 'games_played' => $gamesPlayed,
@@ -729,10 +732,13 @@ class AuthController extends Controller
         }
     
         $validator = \Validator::make($requestData, [
+            'first_name' => 'nullable|string|max:255',
+            'middle_name' => 'nullable|string|max:255',
+            'last_name' => 'nullable|string|max:255',
             'username' => 'nullable|string|max:255|unique:users,username,' . $user->id,
             'city' => 'nullable|string|max:255',
             'province' => 'nullable|string|max:255',
-            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:2048',
+            'profile_photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
             'bio' => 'nullable|string|max:1000',
             'occupation' => 'nullable|string|max:255',
             'main_sport_id' => 'nullable|exists:sports,id',
@@ -752,7 +758,7 @@ class AuthController extends Controller
     
         try {
             // ✅ Update simple user fields
-            $user->fill($request->only(['username', 'city', 'province']));
+            $user->fill($request->only(['first_name', 'middle_name', 'last_name', 'username', 'city', 'province']));
     
             // ✅ Handle profile photo upload
             if ($request->hasFile('profile_photo')) {
@@ -764,8 +770,8 @@ class AuthController extends Controller
                 }
     
                 $file = $request->file('profile_photo');
-                $fileName = time() . '_' . $file->getClientOriginalName();
-                $path = $file->storeAs('userpfp', $fileName, 'public');
+                // Compress and store profile photo (max 800x800 for profile pics)
+                $path = $this->compressAndStoreImage($file, 'userpfp', 800, 800, 85);
                 $user->profile_photo = $path;
             }
     
