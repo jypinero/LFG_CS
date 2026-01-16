@@ -828,7 +828,7 @@ class AuthController extends Controller
             ])->toArray();
             
             $userData['profile_photo_url'] = $user->profile_photo
-                ? asset('storage/' . $user->profile_photo)
+                ? \Storage::url($user->profile_photo)
                 : null;
     
             return response()->json([

@@ -5273,7 +5273,7 @@ class TournamentController extends Controller
             return [
                 'user_id' => $participant->user_id,
                 'username' => $participant->user?->username,
-                'profile_photo' => $participant->user?->profile_photo ? asset('storage/' . $participant->user->profile_photo) : null,
+                'profile_photo' => $participant->user?->profile_photo ? \Storage::url($participant->user->profile_photo) : null,
                 'status' => $participant->status,
                 'checked_in' => $checkin ? true : false,
                 'checkin_time' => $checkin?->checkin_time,
