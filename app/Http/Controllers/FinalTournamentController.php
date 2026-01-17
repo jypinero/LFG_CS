@@ -724,4 +724,103 @@ class FinalTournamentController extends Controller
 
         return response()->json(['status' => 'success', 'game' => $game], 201);
     }
+
+    // List tournaments owned by authenticated user with events and their subgames (schedule)
+    public function myTournaments(Request $request)
+    {
+        $user = auth()->user();
+        if (! $user) return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+
+        $perPage = min((int) $request->input('per_page', 10), 100);
+        $page = (int) $request->input('page', 1);
+
+        $query = Tournament::where('created_by', $user->id)->orderByDesc('created_at');
+        $paginated = $query->paginate($perPage, ['*'], 'page', $page);
+
+        $tournaments = $paginated->getCollection()->map(function($t) {
+            $events = Event::where('tournament_id', $t->id)
+                ->orderBy('date')
+                ->orderBy('start_time')
+                ->get();
+
+            $games = EventGame::whereIn('event_id', $events->pluck('id')->all())
+                ->orderBy('game_date')
+                ->orderBy('start_time')
+                ->get()
+                ->groupBy('event_id');
+
+            $eventsArr = $events->map(function($e) use ($games) {
+                return array_merge($e->toArray(), [
+                    'games' => ($games->has($e->id) ? $games->get($e->id)->values()->toArray() : []),
+                ]);
+            })->values();
+
+            return array_merge($t->toArray(), ['events' => $eventsArr]);
+        })->values();
+
+        return response()->json([
+            'status' => 'success',
+            'tournaments' => $tournaments,
+            'pagination' => [
+                'current_page' => $paginated->currentPage(),
+                'last_page' => $paginated->lastPage(),
+                'per_page' => $paginated->perPage(),
+                'total' => $paginated->total(),
+            ],
+        ], 200);
+    }
+
+    // List tournaments the authenticated user joined — include only events they are part of and each event's subgames (schedule)
+    public function joinedTournaments(Request $request)
+    {
+        $user = auth()->user();
+        if (! $user) return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+
+        // collect team ids the user belongs to (if any)
+        $teamIds = TeamMember::where('user_id', $user->id)->pluck('team_id')->unique()->filter()->values()->all();
+
+        // collect event ids where user is a participant or their team is registered
+        $eventIds = EventParticipant::where(function($q) use ($user, $teamIds) {
+                $q->where('user_id', $user->id);
+                if (! empty($teamIds)) $q->orWhereIn('team_id', $teamIds);
+            })
+            ->pluck('event_id')
+            ->unique()
+            ->filter()
+            ->values()
+            ->all();
+
+        if (empty($eventIds)) {
+            return response()->json(['status' => 'success', 'tournaments' => []], 200);
+        }
+
+        // fetch events and related tournaments
+        $events = Event::whereIn('id', $eventIds)->get();
+        $tournamentIds = $events->pluck('tournament_id')->unique()->filter()->values()->all();
+
+        $tournaments = Tournament::whereIn('id', $tournamentIds)->get()->map(function($t) use ($events) {
+            $eventsForTournament = $events->where('tournament_id', $t->id)->map(function($e) {
+                return $e;
+            })->values();
+
+            $games = EventGame::whereIn('event_id', $eventsForTournament->pluck('id')->all())
+                ->orderBy('game_date')
+                ->orderBy('start_time')
+                ->get()
+                ->groupBy('event_id');
+
+            $eventsArr = $eventsForTournament->map(function($e) use ($games) {
+                return array_merge($e->toArray(), [
+                    'games' => ($games->has($e->id) ? $games->get($e->id)->values()->toArray() : []),
+                ]);
+            })->values();
+
+            return array_merge($t->toArray(), ['events' => $eventsArr]);
+        })->values();
+
+        return response()->json([
+            'status' => 'success',
+            'tournaments' => $tournaments,
+        ], 200);
+    }
 }

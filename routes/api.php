@@ -375,7 +375,8 @@ Route::middleware('auth:api')->group(function () {
     Route::put('/tournaments/{tournamentId}/announcements/{announcementId}/put', [\App\Http\Controllers\TournamentAnnouncementController::class, 'updateAnnouncement']);
     Route::delete('/tournaments/{tournamentId}/announcements/{announcementId}/delete', [\App\Http\Controllers\TournamentAnnouncementController::class, 'deleteAnnouncement']);
 
-
+    Route::get('my-tournaments', [\App\Http\Controllers\FinalTournamentController::class, 'myTournaments']);
+    Route::get('joined-tournaments', [\App\Http\Controllers\FinalTournamentController::class, 'joinedTournaments']);
 
     //Challonge Integration Routes
     // Route::post('challonge/tournaments/{id}/start', [ChallongeController::class, 'startTournament']);
