@@ -40,6 +40,7 @@ class Event extends Model
         // add new audit fields:
         'approved_by',
         'cancelled_by',
+        'is_rating_notified',
     ];
 
     protected $casts = [
@@ -49,6 +50,7 @@ class Event extends Model
         'start_time' => 'string',
         'end_time' => 'string',
         'is_tournament_game' => 'boolean',
+        'is_rating_notified' => 'boolean',
     ];
 
     // include computed status in arrays / JSON
