@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Mail;
 use Carbon\Carbon;
 use App\Models\User;
 use App\Models\Venue;
@@ -20,6 +21,8 @@ use App\Models\Booking;
 use App\Models\VenueUser;
 use App\Models\MessageThread;
 use App\Models\ThreadParticipant;
+use App\Models\PlayerRating;
+use App\Mail\EventCancelledMail;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\SvgWriter;
 
@@ -597,8 +600,9 @@ class EventController extends Controller
     public function myGames()
     {
         $user = auth()->user();
-        $today = now()->format('Y-m-d');
-        $now = now()->format('Y-m-d H:i:s');
+        $today = Carbon::today()->format('Y-m-d');
+        $tomorrow = Carbon::tomorrow()->format('Y-m-d');
+        $now = Carbon::now();
 
         // Get all events where user is a participant or creator
         $events = Event::with(['venue', 'facility', 'participants', 'checkins'])
@@ -613,19 +617,68 @@ class EventController extends Controller
             })
             ->orderBy('date')
             ->orderBy('start_time')
-            ->get()
-            ->map(function($event) use ($user, $today, $now) {
+            ->get();
+
+        // Optimize: Get all event IDs and fetch ratings in one query to avoid N+1
+        $eventIds = $events->pluck('id')->toArray();
+        $userRatingsByEvent = PlayerRating::whereIn('event_id', $eventIds)
+            ->where('rater_user_id', $user->id)
+            ->whereNotNull('created_at')
+            ->pluck('event_id')
+            ->unique()
+            ->toArray();
+
+        $events = $events->map(function($event) use ($user, $today, $tomorrow, $now, $userRatingsByEvent) {
                 // Get current user's check-in status if they're a participant
                 $userCheckin = $event->checkins->where('user_id', $user->id)->first();
                 
-                // Determine if game is past/completed
-                $eventDateTime = $event->date . ' ' . $event->end_time;
-                $isPast = strtotime($eventDateTime) < strtotime($now);
-                $isToday = $event->date === $today;
-                $isUpcoming = !$isPast && !$isToday;
+                // Determine if event is cancelled
+                $isCancelled = !is_null($event->cancelled_at);
                 
-                // Priority: today = 1, upcoming = 2, past = 3
-                $priority = $isToday ? 1 : ($isUpcoming ? 2 : 3);
+                // Handle end_time - use start_time if end_time is null
+                $endTime = $event->end_time ?? $event->start_time ?? '23:59:59';
+                
+                // Create event end datetime using Carbon for proper timezone handling
+                // Parse date separately to handle both date-only and datetime formats
+                $eventDate = Carbon::parse($event->date)->format('Y-m-d');
+                $eventEndDateTime = Carbon::parse($eventDate . ' ' . $endTime);
+                
+                // Determine if game is past/completed (only if not cancelled)
+                $isPast = !$isCancelled && $eventEndDateTime->isPast();
+                
+                // Extract date part from event date (handle both date and datetime formats)
+                $eventDateOnly = Carbon::parse($event->date)->format('Y-m-d');
+                
+                // Determine if game is today
+                $isToday = !$isCancelled && $eventDateOnly === $today;
+                
+                // Determine if game is tomorrow
+                $isTomorrow = !$isCancelled && $eventDateOnly === $tomorrow;
+                
+                // Determine if game is upcoming (future, not today or tomorrow)
+                $isUpcoming = !$isCancelled && !$isPast && !$isToday && !$isTomorrow;
+                
+                // Check if current user has already rated players in this event
+                // Use pre-fetched ratings to avoid N+1 query issue
+                $userHasRated = in_array($event->id, $userRatingsByEvent);
+                
+                // Calculate sort priority
+                // 1 = Today (highest)
+                // 2 = Tomorrow
+                // 3 = Upcoming (future, not today/tomorrow)
+                // 4 = Past
+                // 5 = Cancelled (lowest)
+                if ($isCancelled) {
+                    $priority = 5;
+                } elseif ($isToday) {
+                    $priority = 1;
+                } elseif ($isTomorrow) {
+                    $priority = 2;
+                } elseif ($isUpcoming) {
+                    $priority = 3;
+                } else {
+                    $priority = 4; // Past
+                }
                 
                 return [
                     'id' => $event->id,
@@ -649,46 +702,69 @@ class EventController extends Controller
                     'cancelled_at' => $event->cancelled_at,
                     // Check-in related fields
                     'checkin_code' => $event->checkin_code,
-                    'can_checkin' => $event->is_approved && !$event->cancelled_at && !$isPast,
+                    'can_checkin' => $event->is_approved && !$isCancelled && !$isPast,
                     'user_checked_in' => $userCheckin ? true : false,
                     'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
                     // Indicate if user is the creator
                     'is_creator' => $event->created_by === $user->id,
-                    // Status fields
+                    // Status fields - FIXED
                     'is_past' => $isPast,
                     'is_today' => $isToday,
+                    'is_tomorrow' => $isTomorrow, // NEW - was missing
                     'is_upcoming' => $isUpcoming,
-                    'status' => $isPast ? 'completed' : ($isToday ? 'today' : 'upcoming'),
-                    'is_rating_pending' => !$event->is_rated && $isPast,
-                    'priority' => $priority,
+                    'status' => $isCancelled ? 'cancelled' : ($isPast ? 'completed' : ($isToday ? 'today' : ($isTomorrow ? 'tomorrow' : 'upcoming'))),
+                    'user_has_rated' => $userHasRated, // NEW - check if user submitted ratings
+                    'is_rating_pending' => !$userHasRated && $isPast, // Updated: use user_has_rated instead of event->is_rated
+                    'sort_priority' => $priority, // Renamed from 'priority' for clarity
+                    'priority' => $priority, // Keep for backwards compatibility
                 ];
             })
             ->sortBy(function($event) {
-                // Sort by priority first, then by date and time
+                // Improved sorting logic
+                $priority = $event['sort_priority'] ?? $event['priority'] ?? 5;
+                $date = $event['date'];
+                $startTime = $event['start_time'] ?? '00:00:00';
+                
+                // For past games (priority 4), sort by date DESC (most recent first)
+                // For cancelled games (priority 5), sort by date DESC
+                if ($priority === 4 || $priority === 5) {
+                    return [
+                        $priority,
+                        -strtotime($date . ' ' . $startTime), // Negative for descending
+                    ];
+                }
+                
+                // For today, tomorrow, and upcoming (priority 1-3), sort by date ASC, then time ASC
                 return [
-                    $event['priority'],
-                    $event['date'],
-                    $event['start_time']
+                    $priority,
+                    $date,
+                    $startTime
                 ];
             })
             ->values();
 
         // Separate games into categories
         $todayGames = $events->where('is_today', true)->values();
+        $tomorrowGames = $events->where('is_tomorrow', true)->values();
         $upcomingGames = $events->where('is_upcoming', true)->values();
         $pastGames = $events->where('is_past', true)->values();
+        $cancelledGames = $events->where('sort_priority', 5)->values();
 
         return response()->json([
             'status' => 'success',
-            'games' => $events,
+            'games' => $events, // Pre-sorted by sort_priority
             'today' => $todayGames,
+            'tomorrow' => $tomorrowGames, // NEW
             'upcoming' => $upcomingGames,
             'past' => $pastGames,
+            'cancelled' => $cancelledGames, // NEW
             'summary' => [
                 'total' => $events->count(),
                 'today_count' => $todayGames->count(),
+                'tomorrow_count' => $tomorrowGames->count(), // NEW
                 'upcoming_count' => $upcomingGames->count(),
                 'past_count' => $pastGames->count(),
+                'cancelled_count' => $cancelledGames->count(), // NEW
             ]
         ]);
     }
@@ -1548,10 +1624,17 @@ class EventController extends Controller
         // Cancel the event (soft delete by setting cancelled_at)
         $event->update(['cancelled_at' => now()]);
 
+        // Load event relationships for notifications
+        $event->load(['venue', 'facility']);
+
         // Send notification to all participants about the cancellation
-        $participants = EventParticipant::where('event_id', $event->id)->get();
+        $participants = EventParticipant::where('event_id', $event->id)
+            ->with('user')
+            ->get();
+        
         foreach ($participants as $participant) {
             if ($participant->user_id !== $event->created_by) {
+                // Create in-app notification
                 $notification = Notification::create([
                     'type' => 'event_cancelled',
                     'data' => [
@@ -1561,6 +1644,7 @@ class EventController extends Controller
                     'created_by' => $event->created_by,
                 ]);
 
+                // Create user notification (triggers push notification via observer)
                 UserNotification::create([
                     'notification_id' => $notification->id,
                     'user_id' => $participant->user_id,
@@ -1568,6 +1652,20 @@ class EventController extends Controller
                     'is_read' => false,
                     'action_state' => 'none',
                 ]);
+
+                // Send email notification
+                if ($participant->user && $participant->user->email) {
+                    try {
+                        Mail::to($participant->user->email)->send(new EventCancelledMail($event, $participant->user));
+                    } catch (\Exception $e) {
+                        // Log error but don't break the cancellation process
+                        \Illuminate\Support\Facades\Log::error('Failed to send event cancellation email', [
+                            'user_id' => $participant->user_id,
+                            'event_id' => $event->id,
+                            'error' => $e->getMessage(),
+                        ]);
+                    }
+                }
             }
         }
 
