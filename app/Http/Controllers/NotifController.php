@@ -96,6 +96,7 @@ class NotifController extends Controller
                         
                         // Extract all relevant data fields for redirects
                         'event_id' => $userNotif->notification->data['event_id'] ?? null,
+                        'venue_id' => $userNotif->notification->data['venue_id'] ?? null,
                         'team_id' => $userNotif->notification->data['team_id'] ?? null,
                         'tournament_id' => $userNotif->notification->data['tournament_id'] ?? null,
                         'post_id' => $userNotif->notification->data['post_id'] ?? null,
@@ -231,6 +232,7 @@ class NotifController extends Controller
             'booking_pending' => isset($data['booking_id']) ? "/bookings/{$data['booking_id']}" : null,
             'booking_cancelled' => isset($data['booking_id']) ? "/bookings/{$data['booking_id']}" : null,
             'booking_rescheduled' => isset($data['booking_id']) ? "/bookings/{$data['booking_id']}" : null,
+            'rate_venue' => (isset($data['event_id']) && isset($data['venue_id'])) ? "/rate-venue?event_id={$data['event_id']}&venue_id={$data['venue_id']}" : null,
             
             // Team notifications
             'team_join_request' => isset($data['team_id']) ? "/teams/{$data['team_id']}/requests" : null,

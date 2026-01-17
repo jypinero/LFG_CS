@@ -369,6 +369,7 @@ class PushNotificationService
             'booking_pending' => isset($data['booking_id']) ? "/bookings/{$data['booking_id']}" : null,
             'booking_cancelled' => isset($data['booking_id']) ? "/bookings/{$data['booking_id']}" : null,
             'booking_rescheduled' => isset($data['booking_id']) ? "/bookings/{$data['booking_id']}" : null,
+            'rate_venue' => (isset($data['event_id']) && isset($data['venue_id'])) ? "/rate-venue?event_id={$data['event_id']}&venue_id={$data['venue_id']}" : null,
             
             // Team notifications
             'team_join_request' => isset($data['team_id']) ? "/teams/{$data['team_id']}/requests" : null,
