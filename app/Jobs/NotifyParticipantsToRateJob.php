@@ -62,13 +62,18 @@ class NotifyParticipantsToRateJob implements ShouldQueue
                             return;
                         }
 
-                        // Get all participants (including event creator)
+                        // Get all participants from EventParticipant table
                         $participantIds = EventParticipant::where('event_id', $event->id)
                             ->pluck('user_id')
                             ->unique()
                             ->filter(function($id) {
-                                return $id; // Include all participants, including event creator
+                                return $id; // Filter out null values
                             })->values();
+
+                        // Always include event creator (they may not be in EventParticipant)
+                        if ($event->created_by && !$participantIds->contains($event->created_by)) {
+                            $participantIds->push($event->created_by);
+                        }
 
                         if ($participantIds->isEmpty()) {
                             Log::info('No participants found for event, marking as notified', [
