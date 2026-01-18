@@ -362,6 +362,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('tournaments/{tournamentId}/sub-events', [FinalTournamentController::class, 'storeSubEvent']);
     Route::post('tournaments/{tournamentId}/sub-events/{eventId}/cancel', [FinalTournamentController::class, 'cancelSubEvent']);
     Route::post('tournaments/events/{eventId}/games', [FinalTournamentController::class, 'storeEventGame']);
+    Route::get('tournaments/events/{eventId}/games', [FinalTournamentController::class, 'getBracket']);
 
     // Events / registration / participants
     Route::post('tournaments/events/{eventId}/register', [FinalTournamentController::class, 'register']);

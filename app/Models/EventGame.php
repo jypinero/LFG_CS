@@ -24,12 +24,18 @@ class EventGame extends Model
         'score_b',
         'winner_team_id',
         'winner_user_id',
+        'winner_name',
         'challonge_match_id',
         'challonge_match_url',
         'game_date',
         'start_time',
         'end_time',
         'status',
+        'bracket_data',
+    ];
+
+    protected $casts = [
+        'bracket_data' => 'array',
     ];
 
     public function event()

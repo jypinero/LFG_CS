@@ -704,25 +704,90 @@ class FinalTournamentController extends Controller
         return response()->json(['status' => 'success', 'message' => 'Sub-event cancelled'], 200);
     }
 
-    // Store Event Game (for tournament sub-event)
+    // Store Event Game with bracket data (for tournament sub-event)
     public function storeEventGame(Request $request, $eventId)
     {
         $user = auth()->user();
-        if (! $user) return response()->json(['status' => 'error','message'=>'Unauthenticated'], 401);
+        if (! $user) return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
 
         $event = Event::findOrFail($eventId);
+        $tournament = $event->tournament;
 
-        // Only persist existing event_id and tournament_id (use event's date/time)
-        $game = EventGame::create([
-            'event_id' => $event->id,
+        // Extract bracket info from payload
+        $bracketData = $request->all();
+        $isFinished = $request->input('bracket.isFinished', false);
+        $winner = $request->input('bracket.winner');
+
+        // Determine tournament type
+        $isTeamBased = $tournament && strtolower(str_replace([' ', '-'], '', $tournament->tournament_type ?? '')) === 'teamvsteam';
+
+        // Build game payload
+        $gamePayload = [
             'tournament_id' => $event->tournament_id,
             'game_date' => $event->date,
             'start_time' => $event->start_time,
             'end_time' => $event->end_time,
-            'status' => 'scheduled',
-        ]);
+            'status' => $isFinished ? 'completed' : 'scheduled',
+            'bracket_data' => $bracketData,
+        ];
 
-        return response()->json(['status' => 'success', 'game' => $game], 201);
+        // Set winner based on tournament type
+        if ($isFinished && $winner) {
+            if ($isTeamBased && isset($winner['teamId'])) {
+                $gamePayload['winner_team_id'] = $winner['teamId'];
+            } else {
+                $gamePayload['winner_name'] = $winner['name'] ?? null;
+            }
+        }
+
+        // Use updateOrCreate to allow multiple saves (one bracket per sub-event)
+        $game = EventGame::updateOrCreate(
+            [
+                'event_id' => $event->id,
+                'round_number' => 0,
+                'match_number' => 0,
+            ],
+            $gamePayload
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => $isFinished ? 'Tournament completed and saved' : 'Bracket progress saved',
+            'game' => $game,
+            'is_finished' => $isFinished,
+            'winner' => $winner['name'] ?? null,
+        ], $game->wasRecentlyCreated ? 201 : 200);
+    }
+
+    // Get stored bracket data for a sub-event
+    public function getBracket($eventId)
+    {
+        $event = Event::with('tournament')->findOrFail($eventId);
+
+        $game = EventGame::where('event_id', $event->id)
+            ->where('round_number', 0)
+            ->where('match_number', 0)
+            ->first();
+
+        if (! $game || ! $game->bracket_data) {
+            return response()->json([
+                'status' => 'success',
+                'event_id' => $event->id,
+                'tournament_id' => $event->tournament_id,
+                'bracket_data' => null,
+                'message' => 'No bracket data saved yet',
+            ]);
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'event_id' => $event->id,
+            'tournament_id' => $event->tournament_id,
+            'bracket_data' => $game->bracket_data,
+            'is_finished' => $game->status === 'completed',
+            'winner_team_id' => $game->winner_team_id,
+            'winner_name' => $game->winner_name,
+        ]);
     }
 
     // List tournaments owned by authenticated user with events and their subgames (schedule)
