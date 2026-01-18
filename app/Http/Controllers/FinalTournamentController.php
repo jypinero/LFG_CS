@@ -494,49 +494,43 @@ class FinalTournamentController extends Controller
             return response()->json(['type' => 'free_for_all', 'participants' => $users]);
         }
 
-        // team vs team: return minimal team + members info
-        $teams = $event->participants->whereNotNull('team_id')
-            ->groupBy('team_id')
-            ->map(function($participants) {
-                // Get team from first participant
-                $team = $participants->first()->team;
-                
-                // Find team-level registration (participant with team_id but no user_id, or use first one)
-                $teamParticipant = $participants->firstWhere('user_id', null) ?? $participants->first();
-                
-                $members = $participants->whereNotNull('user_id')->map(function($p){
-                    $u = $p->user;
-                    $memberData = [
-                        'first_name' => $u->first_name ?? null,
-                        'last_name'  => $u->last_name ?? null,
-                        'position'   => $p->position ?? ($u->position ?? null),
-                    ];
-                    
-                    // Include individual member status if available
-                    if ($p->status) {
-                        $memberData['status'] = $p->status;
-                    }
-                    
-                    return $memberData;
-                })->values();
+        // team vs team: return team-level registrations only (team_id but no user_id)
+        // These are the registrations that should be approved, not individual member records
+        $teamParticipants = $event->participants()
+            ->whereNotNull('team_id')
+            ->whereNull('user_id')
+            ->with(['team.members.user'])
+            ->get();
 
-                $teamData = [
-                    'id' => $teamParticipant->id,
-                    'team_name' => $team->name ?? null,
-                    'status' => $teamParticipant->status ?? null,
-                    'members' => $members,
+        $teams = $teamParticipants->map(function($teamParticipant) {
+            $team = $teamParticipant->team;
+            
+            // Build members list from Team->members relationship for display
+            $members = $team->members->map(function($member) {
+                $u = $member->user;
+                return [
+                    'first_name' => $u->first_name ?? null,
+                    'last_name'  => $u->last_name ?? null,
+                    'position'   => $member->position ?? ($member->role ?? null) ?? ($u->position ?? null),
                 ];
-                
-                // Include documents if column exists and documents are present
-                if (Schema::hasColumn('event_participants', 'documents') && $teamParticipant->documents) {
-                    $teamData['documents'] = json_decode($teamParticipant->documents, true);
-                } else {
-                    $teamData['documents'] = null;
-                }
-                
-                return $teamData;
-            })
-            ->values();
+            })->values();
+
+            $teamData = [
+                'id' => $teamParticipant->id,
+                'team_name' => $team->name ?? null,
+                'status' => $teamParticipant->status ?? null,
+                'members' => $members,
+            ];
+            
+            // Include documents from team-level registration record
+            if (Schema::hasColumn('event_participants', 'documents') && $teamParticipant->documents) {
+                $teamData['documents'] = json_decode($teamParticipant->documents, true);
+            } else {
+                $teamData['documents'] = null;
+            }
+            
+            return $teamData;
+        })->values();
 
         return response()->json(['type' => 'team_vs_team', 'teams' => $teams]);
     }
