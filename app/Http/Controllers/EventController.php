@@ -706,6 +706,7 @@ class EventController extends Controller
                 'sort_priority' => $priority,
                 'priority' => $priority, // Keep for backwards compatibility
                 'priority_24h' => $priority24h, // For sorting upcoming by proximity
+                'hours_until_start' => $hoursUntilStart, // Hours until event start for "happening soon" display
             ];
         })
         ->sortBy(function($event) {
@@ -1456,7 +1457,7 @@ class EventController extends Controller
         $start = Carbon::parse($event->start_time);
         $end = Carbon::parse($event->end_time);
         $hours = $start->diffInMinutes($end) / 60;
-        $pricePerHour = $event->facility->price_per_hr ?? 0;
+        $pricePerHour = $event->facility ? ($event->facility->price_per_hr ?? 0) : 0;
         $totalCost = $hours * $pricePerHour;
         $costPerPerson = $event->participants_count > 0 ? round($totalCost / $event->participants_count, 2) : 0;
         
@@ -1485,23 +1486,23 @@ class EventController extends Controller
             'is_approved' => (bool) $event->is_approved,
             'approval_status' => $event->is_approved ? 'approved' : 'pending',
             'approved_at' => $event->approved_at,
-                    'venue' => [
+            'venue' => $event->venue ? [
                 'id' => $event->venue->id,
                 'name' => $event->venue->name,
                 'address' => $event->venue->address,
                 'latitude' => $event->venue->latitude,
                 'longitude' => $event->venue->longitude,
                 'photo_url' => $venuePhotoUrl,
-            ],
-            'facility' => [
+            ] : null,
+            'facility' => $event->facility ? [
                 'id' => $event->facility->id,
                 'type' => $event->facility->type,
                 'price_per_hr' => $event->facility->price_per_hr,
-            ],
-            'creator' => [
+            ] : null,
+            'creator' => $event->creator ? [
                 'id' => $event->creator->id,
                 'username' => $event->creator->username,
-            ],
+            ] : null,
             'costs' => [
                 'total_cost' => $totalCost,
                 'cost_per_person' => $costPerPerson,
