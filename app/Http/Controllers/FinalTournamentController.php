@@ -890,11 +890,20 @@ class FinalTournamentController extends Controller
         $bracketData = null;
         
         // FIRST: Check if bracket key exists (wrapped format - full export)
-        // This handles: { tournament: {...}, bracket: {...} }
+        // This handles: { tournament: {...}, bracket: {...} } OR { bracket: {...}, type: "...", isFinished: ... }
         if (isset($allData['bracket'])) {
             if (is_array($allData['bracket'])) {
                 // Standard exported format: { tournament: {...}, bracket: {...} }
+                // OR mixed format: { bracket: {...}, type: "...", isFinished: ... }
+                // Extract just the bracket object, ignore root-level type/isFinished
                 $bracketData = $allData['bracket'];
+                
+                // Log extraction for debugging
+                \Log::info('Extracted bracket from bracket key', [
+                    'bracket_keys' => array_keys($bracketData),
+                    'has_type' => isset($bracketData['type']),
+                    'has_rounds' => isset($bracketData['rounds']),
+                ]);
             } elseif (is_string($allData['bracket'])) {
                 // If bracket is a JSON string, decode it
                 $decoded = json_decode($allData['bracket'], true);
@@ -907,9 +916,14 @@ class FinalTournamentController extends Controller
         // SECOND: Check if data is directly the bracket structure (simple import format)
         // This handles: { type: "...", rounds: [...], ... }
         // Only check this if we didn't find a bracket key (to avoid conflicts)
+        // IMPORTANT: Must check for 'rounds' key to ensure it's actually bracket data
         if (!$bracketData && isset($allData['type']) && isset($allData['rounds']) && is_array($allData['rounds'])) {
             // Direct bracket format - this is the format for simple imports
             $bracketData = $allData;
+            
+            \Log::info('Using direct bracket format', [
+                'bracket_keys' => array_keys($bracketData),
+            ]);
         }
         
         // THIRD: Check alternative key names
@@ -961,6 +975,20 @@ class FinalTournamentController extends Controller
             }
         }
         
+        // Final check: If bracketData has a nested 'bracket' key with rounds, extract it
+        // This handles cases where the extraction didn't work correctly
+        if ($bracketData && is_array($bracketData) && isset($bracketData['bracket']) && is_array($bracketData['bracket'])) {
+            if (isset($bracketData['bracket']['rounds'])) {
+                // The actual bracket data is nested inside
+                \Log::info('Extracting nested bracket structure', [
+                    'event_id' => $eventId,
+                    'outer_keys' => array_keys($bracketData),
+                    'inner_keys' => array_keys($bracketData['bracket']),
+                ]);
+                $bracketData = $bracketData['bracket'];
+            }
+        }
+        
         // Validate bracket structure
         if (!$bracketData || !is_array($bracketData)) {
             \Log::warning('Invalid bracket data structure received - not an array', [
@@ -984,6 +1012,16 @@ class FinalTournamentController extends Controller
                     'sample_received_data' => array_slice($allData, 0, 3, true), // First 3 keys for debugging
                 ]
             ], 400);
+        }
+        
+        // Check if bracketData has a nested 'bracket' key (shouldn't happen, but handle it)
+        if (isset($bracketData['bracket']) && is_array($bracketData['bracket']) && isset($bracketData['bracket']['rounds'])) {
+            // If bracketData has a nested bracket with rounds, use that instead
+            \Log::warning('Found nested bracket structure, extracting inner bracket', [
+                'event_id' => $eventId,
+                'outer_keys' => array_keys($bracketData),
+            ]);
+            $bracketData = $bracketData['bracket'];
         }
         
         // Check for required fields
