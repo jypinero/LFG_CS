@@ -49,6 +49,13 @@ class EventRatingController extends Controller
 		if (now()->lessThan($eventEnd) || now()->greaterThan($eventEnd->copy()->addHours(48))) {
 			return response()->json(['message' => 'Rating window closed'], 400);
 		}
+		
+		// Check if event has participants
+		$participantCount = EventParticipant::where('event_id', $eventId)->count();
+		if ($participantCount === 0) {
+			return response()->json(['message' => 'Cannot rate games without participants'], 403);
+		}
+		
 		if ((int)$request->input('ratee_id') === (int)$user->id) {
 			return response()->json(['message' => 'Cannot rate self'], 422);
 		}

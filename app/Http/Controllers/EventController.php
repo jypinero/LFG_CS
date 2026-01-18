@@ -597,6 +597,154 @@ class EventController extends Controller
         ]);
     }
 
+    /**
+     * Helper method to process events and categorize them
+     */
+    private function processEventGroup($events, $user, $today, $tomorrow, $now, $userRatingsByEvent)
+    {
+        $processed = $events->map(function($event) use ($user, $today, $tomorrow, $now, $userRatingsByEvent) {
+            // Get current user's check-in status if they're a participant
+            $userCheckin = $event->checkins->where('user_id', $user->id)->first();
+            
+            // Determine if event is cancelled
+            $isCancelled = !is_null($event->cancelled_at);
+            
+            // Handle end_time - use start_time if end_time is null
+            $endTime = $event->end_time ?? $event->start_time ?? '23:59:59';
+            $startTime = $event->start_time ?? '00:00:00';
+            
+            // Create event datetime using Carbon for proper timezone handling
+            $eventDate = Carbon::parse($event->date)->format('Y-m-d');
+            $eventStartDateTime = Carbon::parse($eventDate . ' ' . $startTime);
+            $eventEndDateTime = Carbon::parse($eventDate . ' ' . $endTime);
+            
+            // Determine if game is past/completed (only if not cancelled) - based on date+time
+            $isPast = !$isCancelled && $eventEndDateTime->isPast();
+            
+            // Extract date part from event date
+            $eventDateOnly = Carbon::parse($event->date)->format('Y-m-d');
+            
+            // Determine if game is today
+            $isToday = !$isCancelled && $eventDateOnly === $today;
+            
+            // Determine if game is tomorrow
+            $isTomorrow = !$isCancelled && $eventDateOnly === $tomorrow;
+            
+            // Determine if game is upcoming (future, not today or tomorrow)
+            $isUpcoming = !$isCancelled && !$isPast && !$isToday && !$isTomorrow;
+            
+            // Calculate hours until event start for 24h proximity priority
+            $hoursUntilStart = $isUpcoming ? $now->diffInHours($eventStartDateTime, false) : null;
+            $isWithin24Hours = $isUpcoming && $hoursUntilStart !== null && $hoursUntilStart <= 24 && $hoursUntilStart >= 0;
+            
+            // Check if current user has already rated players in this event
+            $userHasRated = in_array($event->id, $userRatingsByEvent);
+            
+            // Calculate sort priority
+            // 0 = Within 24 hours (if upcoming) - NEW
+            // 1 = Today
+            // 2 = Tomorrow
+            // 3 = Upcoming (>= 24 hours away)
+            // 4 = Past
+            // 5 = Cancelled (always bottom)
+            if ($isCancelled) {
+                $priority = 5;
+                $priority24h = 1; // Not applicable for cancelled
+            } elseif ($isToday) {
+                $priority = 1;
+                $priority24h = 0; // Not applicable for today
+            } elseif ($isTomorrow) {
+                $priority = 2;
+                $priority24h = 0; // Not applicable for tomorrow
+            } elseif ($isWithin24Hours) {
+                $priority = 0; // Highest priority for events within 24 hours
+                $priority24h = 0;
+            } elseif ($isUpcoming) {
+                $priority = 3;
+                $priority24h = 1; // >= 24 hours away
+            } else {
+                $priority = 4; // Past
+                $priority24h = 1; // Not applicable for past
+            }
+            
+            return [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'event_type' => $event->event_type,
+                'date' => $event->date,
+                'sport' => $event->sport,
+                'host' => User::find($event->created_by)->username ?? null,
+                'venue' => $event->venue->name ?? null,
+                'longitude' => $event->venue->longitude ?? null,
+                'latitude' => $event->venue->latitude ?? null,
+                'facility' => $event->facility->type ?? null,
+                'start_time' => $event->start_time,
+                'end_time' => $event->end_time,
+                'slots' => $event->slots,
+                'participants_count' => $event->participants->count(),
+                'is_approved' => (bool) $event->is_approved,
+                'approval_status' => $event->is_approved ? 'approved' : 'pending',
+                'approved_at' => $event->approved_at,
+                'cancelled_at' => $event->cancelled_at,
+                // Check-in related fields
+                'checkin_code' => $event->checkin_code,
+                'can_checkin' => $event->is_approved && !$isCancelled && !$isPast,
+                'user_checked_in' => $userCheckin ? true : false,
+                'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
+                // Indicate if user is the creator
+                'is_creator' => $event->created_by === $user->id,
+                // Status fields
+                'is_past' => $isPast,
+                'is_today' => $isToday,
+                'is_tomorrow' => $isTomorrow,
+                'is_upcoming' => $isUpcoming,
+                'is_within_24h' => $isWithin24Hours,
+                'status' => $isCancelled ? 'cancelled' : ($isPast ? 'completed' : ($isToday ? 'today' : ($isTomorrow ? 'tomorrow' : ($isWithin24Hours ? 'upcoming_24h' : 'upcoming')))),
+                'user_has_rated' => $userHasRated,
+                'is_rating_pending' => !$userHasRated && $isPast,
+                'sort_priority' => $priority,
+                'priority' => $priority, // Keep for backwards compatibility
+                'priority_24h' => $priority24h, // For sorting upcoming by proximity
+            ];
+        })
+        ->sortBy(function($event) {
+            // Sorting logic: priority ASC, then by priority_24h for upcoming, then date/time
+            $priority = $event['sort_priority'] ?? $event['priority'] ?? 5;
+            $priority24h = $event['priority_24h'] ?? 1;
+            $date = $event['date'];
+            $startTime = $event['start_time'] ?? '00:00:00';
+            
+            // For cancelled and past games (priority 4-5), sort by date DESC (most recent at bottom/top)
+            if ($priority === 4 || $priority === 5) {
+                return [
+                    $priority,
+                    -strtotime($date . ' ' . $startTime), // Negative for descending
+                ];
+            }
+            
+            // For upcoming with 24h priority: sort by priority_24h, then date ASC, then time ASC
+            if ($priority === 0 || $priority === 3) {
+                return [
+                    $priority,
+                    $priority24h, // 0 = <24h, 1 = >=24h
+                    $date,
+                    $startTime
+                ];
+            }
+            
+            // For today and tomorrow: sort by time ASC
+            return [
+                $priority,
+                $date,
+                $startTime
+            ];
+        })
+        ->values();
+        
+        return $processed;
+    }
+
     public function myGames()
     {
         $user = auth()->user();
@@ -604,168 +752,90 @@ class EventController extends Controller
         $tomorrow = Carbon::tomorrow()->format('Y-m-d');
         $now = Carbon::now();
 
-        // Get all events where user is a participant or creator
-        $events = Event::with(['venue', 'facility', 'participants', 'checkins'])
-            ->where(function($q) use ($user) {
-                $q->where('created_by', $user->id)
-                  ->orWhere(function($inner) use ($user) {
-                      $inner->where('is_approved', true)
-                            ->whereHas('participants', function($q2) use ($user) {
-                                $q2->where('user_id', $user->id);
-                            });
-                  });
+        // Base query condition for events where user is a participant or creator
+        $baseCondition = function($q) use ($user) {
+            $q->where('created_by', $user->id)
+              ->orWhere(function($inner) use ($user) {
+                  $inner->where('is_approved', true)
+                        ->whereHas('participants', function($q2) use ($user) {
+                            $q2->where('user_id', $user->id);
+                        });
+              });
+        };
+
+        // Get regular events (non-tournament)
+        $regularEvents = Event::with(['venue', 'facility', 'participants', 'checkins'])
+            ->where($baseCondition)
+            ->where(function($q) {
+                $q->whereNull('is_tournament_game')
+                  ->orWhere('is_tournament_game', false);
             })
             ->orderBy('date')
             ->orderBy('start_time')
             ->get();
 
+        // Get tournament events
+        $tournamentEvents = Event::with(['venue', 'facility', 'participants', 'checkins'])
+            ->where($baseCondition)
+            ->where('is_tournament_game', true)
+            ->orderBy('date')
+            ->orderBy('start_time')
+            ->get();
+
         // Optimize: Get all event IDs and fetch ratings in one query to avoid N+1
-        $eventIds = $events->pluck('id')->toArray();
-        $userRatingsByEvent = PlayerRating::whereIn('event_id', $eventIds)
+        $allEventIds = $regularEvents->pluck('id')->merge($tournamentEvents->pluck('id'))->toArray();
+        $userRatingsByEvent = PlayerRating::whereIn('event_id', $allEventIds)
             ->where('rater_user_id', $user->id)
             ->whereNotNull('created_at')
             ->pluck('event_id')
             ->unique()
             ->toArray();
 
-        $events = $events->map(function($event) use ($user, $today, $tomorrow, $now, $userRatingsByEvent) {
-                // Get current user's check-in status if they're a participant
-                $userCheckin = $event->checkins->where('user_id', $user->id)->first();
-                
-                // Determine if event is cancelled
-                $isCancelled = !is_null($event->cancelled_at);
-                
-                // Handle end_time - use start_time if end_time is null
-                $endTime = $event->end_time ?? $event->start_time ?? '23:59:59';
-                
-                // Create event end datetime using Carbon for proper timezone handling
-                // Parse date separately to handle both date-only and datetime formats
-                $eventDate = Carbon::parse($event->date)->format('Y-m-d');
-                $eventEndDateTime = Carbon::parse($eventDate . ' ' . $endTime);
-                
-                // Determine if game is past/completed (only if not cancelled)
-                $isPast = !$isCancelled && $eventEndDateTime->isPast();
-                
-                // Extract date part from event date (handle both date and datetime formats)
-                $eventDateOnly = Carbon::parse($event->date)->format('Y-m-d');
-                
-                // Determine if game is today
-                $isToday = !$isCancelled && $eventDateOnly === $today;
-                
-                // Determine if game is tomorrow
-                $isTomorrow = !$isCancelled && $eventDateOnly === $tomorrow;
-                
-                // Determine if game is upcoming (future, not today or tomorrow)
-                $isUpcoming = !$isCancelled && !$isPast && !$isToday && !$isTomorrow;
-                
-                // Check if current user has already rated players in this event
-                // Use pre-fetched ratings to avoid N+1 query issue
-                $userHasRated = in_array($event->id, $userRatingsByEvent);
-                
-                // Calculate sort priority
-                // 1 = Today (highest)
-                // 2 = Tomorrow
-                // 3 = Upcoming (future, not today/tomorrow)
-                // 4 = Past
-                // 5 = Cancelled (lowest)
-                if ($isCancelled) {
-                    $priority = 5;
-                } elseif ($isToday) {
-                    $priority = 1;
-                } elseif ($isTomorrow) {
-                    $priority = 2;
-                } elseif ($isUpcoming) {
-                    $priority = 3;
-                } else {
-                    $priority = 4; // Past
-                }
-                
-                return [
-                    'id' => $event->id,
-                    'name' => $event->name,
-                    'description' => $event->description,
-                    'event_type' => $event->event_type,
-                    'date' => $event->date,
-                    'sport' => $event->sport,
-                    'host' => User::find($event->created_by)->username ?? null,
-                    'venue' => $event->venue->name ?? null,
-                    'longitude' => $event->venue->longitude ?? null,
-                    'latitude' => $event->venue->latitude ?? null,
-                    'facility' => $event->facility->type ?? null,
-                    'start_time' => $event->start_time,
-                    'end_time' => $event->end_time,
-                    'slots' => $event->slots,
-                    'participants_count' => $event->participants->count(),
-                    'is_approved' => (bool) $event->is_approved,
-                    'approval_status' => $event->is_approved ? 'approved' : 'pending',
-                    'approved_at' => $event->approved_at,
-                    'cancelled_at' => $event->cancelled_at,
-                    // Check-in related fields
-                    'checkin_code' => $event->checkin_code,
-                    'can_checkin' => $event->is_approved && !$isCancelled && !$isPast,
-                    'user_checked_in' => $userCheckin ? true : false,
-                    'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
-                    // Indicate if user is the creator
-                    'is_creator' => $event->created_by === $user->id,
-                    // Status fields - FIXED
-                    'is_past' => $isPast,
-                    'is_today' => $isToday,
-                    'is_tomorrow' => $isTomorrow, // NEW - was missing
-                    'is_upcoming' => $isUpcoming,
-                    'status' => $isCancelled ? 'cancelled' : ($isPast ? 'completed' : ($isToday ? 'today' : ($isTomorrow ? 'tomorrow' : 'upcoming'))),
-                    'user_has_rated' => $userHasRated, // NEW - check if user submitted ratings
-                    'is_rating_pending' => !$userHasRated && $isPast, // Updated: use user_has_rated instead of event->is_rated
-                    'sort_priority' => $priority, // Renamed from 'priority' for clarity
-                    'priority' => $priority, // Keep for backwards compatibility
-                ];
-            })
-            ->sortBy(function($event) {
-                // Improved sorting logic
-                $priority = $event['sort_priority'] ?? $event['priority'] ?? 5;
-                $date = $event['date'];
-                $startTime = $event['start_time'] ?? '00:00:00';
-                
-                // For past games (priority 4), sort by date DESC (most recent first)
-                // For cancelled games (priority 5), sort by date DESC
-                if ($priority === 4 || $priority === 5) {
-                    return [
-                        $priority,
-                        -strtotime($date . ' ' . $startTime), // Negative for descending
-                    ];
-                }
-                
-                // For today, tomorrow, and upcoming (priority 1-3), sort by date ASC, then time ASC
-                return [
-                    $priority,
-                    $date,
-                    $startTime
-                ];
-            })
-            ->values();
+        // Process both groups using the helper method
+        $processedRegularEvents = $this->processEventGroup($regularEvents, $user, $today, $tomorrow, $now, $userRatingsByEvent);
+        $processedTournamentEvents = $this->processEventGroup($tournamentEvents, $user, $today, $tomorrow, $now, $userRatingsByEvent);
 
-        // Separate games into categories
-        $todayGames = $events->where('is_today', true)->values();
-        $tomorrowGames = $events->where('is_tomorrow', true)->values();
-        $upcomingGames = $events->where('is_upcoming', true)->values();
-        $pastGames = $events->where('is_past', true)->values();
-        $cancelledGames = $events->where('sort_priority', 5)->values();
+        // Helper function to categorize events
+        $categorizeEvents = function($events) {
+            $todayGames = $events->where('is_today', true)->values();
+            $tomorrowGames = $events->where('is_tomorrow', true)->values();
+            // Upcoming includes both <24h (priority 0) and >=24h (priority 3)
+            $upcomingGames = $events->filter(function($event) {
+                $priority = $event['sort_priority'] ?? $event['priority'] ?? 5;
+                return $priority === 0 || $priority === 3;
+            })->values();
+            // Upcoming within 24h are priority 0
+            $upcoming24hGames = $events->where('is_within_24h', true)->values();
+            $pastGames = $events->where('is_past', true)->values();
+            $cancelledGames = $events->where('sort_priority', 5)->values();
+
+            return [
+                'games' => $events,
+                'today' => $todayGames,
+                'tomorrow' => $tomorrowGames,
+                'upcoming' => $upcomingGames,
+                'upcoming_24h' => $upcoming24hGames,
+                'past' => $pastGames,
+                'cancelled' => $cancelledGames,
+                'summary' => [
+                    'total' => $events->count(),
+                    'today_count' => $todayGames->count(),
+                    'tomorrow_count' => $tomorrowGames->count(),
+                    'upcoming_count' => $upcomingGames->count(),
+                    'upcoming_24h_count' => $upcoming24hGames->count(),
+                    'past_count' => $pastGames->count(),
+                    'cancelled_count' => $cancelledGames->count(),
+                ]
+            ];
+        };
+
+        $eventsCategory = $categorizeEvents($processedRegularEvents);
+        $tournamentsCategory = $categorizeEvents($processedTournamentEvents);
 
         return response()->json([
             'status' => 'success',
-            'games' => $events, // Pre-sorted by sort_priority
-            'today' => $todayGames,
-            'tomorrow' => $tomorrowGames, // NEW
-            'upcoming' => $upcomingGames,
-            'past' => $pastGames,
-            'cancelled' => $cancelledGames, // NEW
-            'summary' => [
-                'total' => $events->count(),
-                'today_count' => $todayGames->count(),
-                'tomorrow_count' => $tomorrowGames->count(), // NEW
-                'upcoming_count' => $upcomingGames->count(),
-                'past_count' => $pastGames->count(),
-                'cancelled_count' => $cancelledGames->count(), // NEW
-            ]
+            'events' => $eventsCategory,
+            'tournaments' => $tournamentsCategory,
         ]);
     }
 
