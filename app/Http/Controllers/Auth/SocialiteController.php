@@ -146,9 +146,8 @@ class SocialiteController extends Controller
                     $counter++;
                 }
 
-                // Get default role (athletes)
-                $defaultRole = Role::where('name', 'athletes')->first();
-
+                // Don't auto-assign role - let user select during completion
+                // This matches the traditional signup flow where users choose their role
                 $user = User::create([
                     'first_name' => $nameParts['first'],
                     'middle_name' => $nameParts['middle'],
@@ -157,7 +156,7 @@ class SocialiteController extends Controller
                     'email' => $googleUser->getEmail(),
                     'provider' => 'google',
                     'provider_id' => $googleUser->getId(),
-                    'role_id' => $defaultRole ? $defaultRole->id : null,
+                    'role_id' => null, // User must select role during completion
                     'profile_photo' => $this->downloadProfilePhoto($googleUser->getAvatar(), $username),
                 ]);
 
@@ -256,7 +255,13 @@ class SocialiteController extends Controller
         if (!$user->role_id) {
             $missingFields[] = 'role_id';
         }
-        if (!$user->userProfile || !$user->userProfile->main_sport_id) {
+        
+        // Only require sports for roles that need them (athletes, trainer)
+        $role = $user->role_id ? Role::find($user->role_id) : null;
+        $rolesRequiringSports = ['athletes', 'trainer'];
+        $requiresSports = $role && in_array(strtolower($role->name), $rolesRequiringSports);
+        
+        if ($requiresSports && (!$user->userProfile || !$user->userProfile->main_sport_id)) {
             $missingFields[] = 'sports';
         }
 
