@@ -374,18 +374,40 @@ class TeamController extends Controller
             return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
         }
 
-        $data = array_filter([
-            'name' => $request->name,
-            'certification' => $request->certification ?? null,
-            'certified' => $request->has('certified') ? $request->boolean('certified') : null,
-            'team_type' => $request->team_type ?? null,
-            'address_line' => $request->address_line ?? null,
-            'latitude' => $request->latitude ?? null,
-            'longitude' => $request->longitude ?? null,
-            'sport_id' => $request->sport_id ?? null,
-            'bio' => $request->bio ?? null,
-            'roster_size_limit' => $request->roster_size_limit ?? null,
-        ], function ($v) { return !is_null($v); });
+        $data = [];
+        
+        // Only include fields that are explicitly provided in the request
+        if ($request->has('name')) {
+            $data['name'] = $request->name;
+        }
+        if ($request->has('certification')) {
+            $data['certification'] = $request->certification;
+        }
+        if ($request->has('certified')) {
+            $data['certified'] = $request->boolean('certified');
+        }
+        if ($request->has('team_type')) {
+            $data['team_type'] = $request->team_type;
+        }
+        if ($request->has('address_line')) {
+            $data['address_line'] = $request->address_line;
+        }
+        if ($request->has('latitude')) {
+            $data['latitude'] = $request->latitude;
+        }
+        if ($request->has('longitude')) {
+            $data['longitude'] = $request->longitude;
+        }
+        if ($request->has('sport_id')) {
+            // Allow setting to null to clear sport, or to a valid sport_id
+            $data['sport_id'] = $request->sport_id ? (int)$request->sport_id : null;
+        }
+        if ($request->has('bio')) {
+            $data['bio'] = $request->bio;
+        }
+        if ($request->has('roster_size_limit')) {
+            $data['roster_size_limit'] = $request->roster_size_limit;
+        }
 
         if ($request->hasFile('team_photo')) {
             if ($team->team_photo) {
@@ -397,9 +419,34 @@ class TeamController extends Controller
             $data['team_photo'] = $path;
         }
 
-        $team->update($data);
+        if (!empty($data)) {
+            $team->update($data);
+        }
 
-        return response()->json(['status'=>'success','message'=>'Team updated','team'=>$team], 200);
+        // Reload team with relationships for response
+        $team->load('sport', 'creator');
+
+        return response()->json([
+            'status'=>'success',
+            'message'=>'Team updated',
+            'team'=>[
+                'id' => $team->id,
+                'name' => $team->name,
+                'sport_id' => $team->sport_id,
+                'sport' => $team->sport ? [
+                    'id' => $team->sport->id,
+                    'name' => $team->sport->name,
+                    'category' => $team->sport->category,
+                ] : null,
+                'bio' => $team->bio,
+                'team_type' => $team->team_type,
+                'address_line' => $team->address_line,
+                'latitude' => $team->latitude,
+                'longitude' => $team->longitude,
+                'roster_size_limit' => $team->roster_size_limit,
+                'team_photo' => $team->team_photo ? Storage::url($team->team_photo) : null,
+            ]
+        ], 200);
     }
 
     /**
