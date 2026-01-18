@@ -473,11 +473,22 @@ class FinalTournamentController extends Controller
         if (strpos($subType, 'free') !== false || strpos($subType, 'free_for_all') !== false) {
             $users = $event->participants->whereNotNull('user_id')->map(function($p){
                 $u = $p->user;
-                return [
+                $result = [
+                    'id' => $p->id,
                     'first_name' => $u->first_name ?? null,
                     'last_name'  => $u->last_name ?? null,
                     'position'   => $p->position ?? ($u->position ?? null),
+                    'status' => $p->status ?? null,
                 ];
+                
+                // Include documents if column exists and documents are present
+                if (Schema::hasColumn('event_participants', 'documents') && $p->documents) {
+                    $result['documents'] = json_decode($p->documents, true);
+                } else {
+                    $result['documents'] = null;
+                }
+                
+                return $result;
             })->values();
 
             return response()->json(['type' => 'free_for_all', 'participants' => $users]);
@@ -485,24 +496,47 @@ class FinalTournamentController extends Controller
 
         // team vs team: return minimal team + members info
         $teams = $event->participants->whereNotNull('team_id')
-            ->map(fn($p) => $p->team)
-            ->unique('id')
-            ->values()
-            ->map(function($team) {
-                $members = $team->members->map(function($m){
-                    $u = $m->user;
-                    return [
+            ->groupBy('team_id')
+            ->map(function($participants) {
+                // Get team from first participant
+                $team = $participants->first()->team;
+                
+                // Find team-level registration (participant with team_id but no user_id, or use first one)
+                $teamParticipant = $participants->firstWhere('user_id', null) ?? $participants->first();
+                
+                $members = $participants->whereNotNull('user_id')->map(function($p){
+                    $u = $p->user;
+                    $memberData = [
                         'first_name' => $u->first_name ?? null,
                         'last_name'  => $u->last_name ?? null,
-                        'position'   => $m->position ?? ($m->role ?? null) ?? ($u->position ?? null),
+                        'position'   => $p->position ?? ($u->position ?? null),
                     ];
+                    
+                    // Include individual member status if available
+                    if ($p->status) {
+                        $memberData['status'] = $p->status;
+                    }
+                    
+                    return $memberData;
                 })->values();
 
-                return [
+                $teamData = [
+                    'id' => $teamParticipant->id,
                     'team_name' => $team->name ?? null,
-                    'members'   => $members,
+                    'status' => $teamParticipant->status ?? null,
+                    'members' => $members,
                 ];
-            });
+                
+                // Include documents if column exists and documents are present
+                if (Schema::hasColumn('event_participants', 'documents') && $teamParticipant->documents) {
+                    $teamData['documents'] = json_decode($teamParticipant->documents, true);
+                } else {
+                    $teamData['documents'] = null;
+                }
+                
+                return $teamData;
+            })
+            ->values();
 
         return response()->json(['type' => 'team_vs_team', 'teams' => $teams]);
     }
