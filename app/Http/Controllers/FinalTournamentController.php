@@ -833,10 +833,40 @@ class FinalTournamentController extends Controller
         $event = Event::findOrFail($eventId);
         $tournament = $event->tournament;
 
-        // Extract bracket info from payload
-        $bracketData = $request->all();
-        $isFinished = $request->input('bracket.isFinished', false);
-        $winner = $request->input('bracket.winner');
+        // Extract bracket data from the exported structure
+        // Frontend sends: { tournament: {...}, bracket: {...} }
+        $allData = $request->all();
+        
+        // Extract the bracket object from the exported structure
+        $bracketData = null;
+        if (isset($allData['bracket']) && is_array($allData['bracket'])) {
+            // Standard exported format: { tournament: {...}, bracket: {...} }
+            $bracketData = $allData['bracket'];
+        } elseif (isset($allData['type']) && isset($allData['rounds'])) {
+            // Direct bracket format (backward compatibility)
+            $bracketData = $allData;
+        } else {
+            // Try to find bracket in nested structure
+            if (isset($allData['bracket']['bracket'])) {
+                $bracketData = $allData['bracket']['bracket'];
+            }
+        }
+        
+        // Validate bracket structure
+        if (!$bracketData || !is_array($bracketData) || !isset($bracketData['type']) || !isset($bracketData['rounds'])) {
+            \Log::warning('Invalid bracket data structure received', [
+                'event_id' => $eventId,
+                'received_data' => $allData
+            ]);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }'
+            ], 400);
+        }
+        
+        // Extract isFinished and winner from bracket data
+        $isFinished = $bracketData['isFinished'] ?? false;
+        $winner = $bracketData['winner'] ?? null;
 
         // Determine tournament type
         $isTeamBased = $tournament && strtolower(str_replace([' ', '-'], '', $tournament->tournament_type ?? '')) === 'teamvsteam';
@@ -1008,8 +1038,38 @@ class FinalTournamentController extends Controller
             return response()->json($response);
         }
 
-        // Add bracket data if exists
-        $response['bracket_data'] = $game->bracket_data;
+        // Normalize bracket_data structure
+        // Handle various storage formats:
+        // 1. Direct bracket: { type, rounds, ... }
+        // 2. Nested: { bracket: { type, rounds, ... } }
+        // 3. Double nested: { bracket: { bracket: { type, rounds, ... } } }
+        $bracketData = $game->bracket_data;
+        
+        // Extract bracket from nested structures
+        if (isset($bracketData['bracket']) && is_array($bracketData['bracket'])) {
+            // Check if it's double nested
+            if (isset($bracketData['bracket']['bracket']) && is_array($bracketData['bracket']['bracket'])) {
+                $bracketData = $bracketData['bracket']['bracket'];
+            } else {
+                $bracketData = $bracketData['bracket'];
+            }
+        }
+        
+        // Validate the bracket structure has required fields
+        if (!is_array($bracketData) || !isset($bracketData['type']) || !isset($bracketData['rounds'])) {
+            \Log::warning('Invalid bracket_data structure in database', [
+                'event_id' => $eventId,
+                'stored_bracket_data' => $game->bracket_data,
+                'normalized_attempt' => $bracketData
+            ]);
+            
+            $response['bracket_data'] = null;
+            $response['message'] = 'Bracket data is not available or invalid';
+            return response()->json($response, 400);
+        }
+
+        // Add bracket data (now normalized to expected structure)
+        $response['bracket_data'] = $bracketData;
         $response['is_finished'] = $game->status === 'completed';
         $response['winner_team_id'] = $game->winner_team_id;
         $response['winner_name'] = $game->winner_name;
