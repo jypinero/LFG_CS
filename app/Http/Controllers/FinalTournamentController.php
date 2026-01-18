@@ -59,6 +59,67 @@ class FinalTournamentController extends Controller
         return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 201);
     }
 
+    // Update Tournament (uses same validation as storeTournament, except name is 'sometimes')
+    public function updateTournament(Request $request, $id)
+    {
+        $user = auth()->user();
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+        }
+
+        $tournament = Tournament::find($id);
+        if (!$tournament) {
+            return response()->json(['status' => 'error', 'message' => 'Tournament not found'], 404);
+        }
+
+        // Only creator can update
+        $isCreator = $tournament->created_by === $user->id;
+        if (!$isCreator) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        // Use same validation as storeTournament, but name is 'sometimes' instead of 'required'
+        $data = $request->validate([
+            'name' => 'sometimes|string|max:255',
+            'photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
+            'description' => 'nullable|string',
+            'location' => 'nullable|string',
+            'type' => 'nullable|string',
+            'tournament_type' => 'nullable|string',
+            'start_date' => 'nullable|date',
+            'end_date' => 'nullable|date',
+            'registration_deadline' => 'nullable|date',
+            'status' => 'nullable|string',
+            'requires_documents' => 'nullable|boolean',
+            'required_documents' => 'nullable|array',
+            'settings' => 'nullable|array',
+            'max_teams' => 'nullable|integer',
+            'min_teams' => 'nullable|integer',
+            'registration_fee' => 'nullable|numeric',
+            'rules' => 'nullable|string',
+            'prizes' => 'nullable|string',
+        ]);
+
+        // Handle uploaded photo file (same as storeTournament)
+        if ($request->hasFile('photo')) {
+            // Delete old photo if exists
+            if (!empty($tournament->photo)) {
+                try {
+                    Storage::disk('public')->delete($tournament->photo);
+                } catch (\Throwable $ex) {}
+            }
+            $path = $request->file('photo')->store('tournaments', 'public');
+            $data['photo'] = $path;
+        }
+
+        $tournament->update($data);
+
+        $tournamentArray = $tournament->fresh()->toArray();
+        $tournamentArray['photo_url'] = $tournament->photo ? Storage::url($tournament->photo) : null;
+
+        return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 200);
+    }
+
     // Create Sub-Event using existing Event table (populate all Event fillable fields)
     public function storeSubEvent(Request $request, $tournamentId)
     {
