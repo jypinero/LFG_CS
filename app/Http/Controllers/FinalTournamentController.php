@@ -854,7 +854,34 @@ class FinalTournamentController extends Controller
         // Set winner based on tournament type
         if ($isFinished && $winner) {
             if ($isTeamBased && isset($winner['teamId'])) {
-                $gamePayload['winner_team_id'] = $winner['teamId'];
+                // Validate that the teamId exists in teams table
+                $teamId = $winner['teamId'];
+                
+                // If teamId doesn't exist in teams, check if it's a participant ID
+                if (!Team::where('id', $teamId)->exists()) {
+                    // Try to find the team_id from EventParticipant
+                    $participant = EventParticipant::where('id', $teamId)
+                        ->where('event_id', $event->id)
+                        ->whereNotNull('team_id')
+                        ->first();
+                    
+                    if ($participant && $participant->team_id) {
+                        $teamId = $participant->team_id;
+                    } else {
+                        // Invalid teamId - don't set winner_team_id
+                        \Log::warning('Invalid teamId in bracket winner', [
+                            'event_id' => $event->id,
+                            'teamId' => $winner['teamId'],
+                            'winner' => $winner
+                        ]);
+                        $teamId = null;
+                    }
+                }
+                
+                // Only set winner_team_id if we have a valid team ID
+                if ($teamId && Team::where('id', $teamId)->exists()) {
+                    $gamePayload['winner_team_id'] = $teamId;
+                }
             } else {
                 $gamePayload['winner_name'] = $winner['name'] ?? null;
             }
