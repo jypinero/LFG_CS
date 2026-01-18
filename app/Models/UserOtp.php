@@ -9,8 +9,12 @@ class UserOtp extends Model
 {
 	use HasFactory;
 
+	const TYPE_LOGIN = 'login';
+	const TYPE_VERIFICATION = 'verification';
+
 	protected $fillable = [
 		'user_id',
+		'type',
 		'code',
 		'expires_at',
 		'consumed_at',

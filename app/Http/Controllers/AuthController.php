@@ -364,9 +364,13 @@ class AuthController extends Controller
                 return $team['team_name'] !== null;
             });
 
+            $userWithRelations = $user->load('role', 'userProfile.mainSport', 'userCertifications', 'userDocuments', 'userAdditionalSports.sport');
+            
             return response()->json([
                 'status' => 'success',
-                'user' => $user->load('role', 'userProfile.mainSport', 'userCertifications', 'userDocuments', 'userAdditionalSports.sport'),
+                'user' => $userWithRelations,
+                'email_verified' => !is_null($user->email_verified_at),
+                'email_verified_at' => $user->email_verified_at,
                 'has_team' => TeamMember::where('user_id', $user->id)->exists(),
                 'current_teams' => $currentTeams,
                 'past_teams' => $pastTeams,
@@ -1123,6 +1127,82 @@ class AuthController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Failed to change password.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Get onboarding status - checks if user can complete onboarding
+     * 
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function getOnboardingStatus()
+    {
+        try {
+            $user = Auth::guard('api')->user();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not authenticated',
+                ], 401);
+            }
+
+            $emailVerified = !is_null($user->email_verified_at);
+            $canComplete = $emailVerified;
+
+            return response()->json([
+                'status' => 'success',
+                'can_complete' => $canComplete,
+                'email_verified' => $emailVerified,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to get onboarding status.',
+                'error' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Complete onboarding - only allowed if email is verified
+     * 
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function completeOnboarding()
+    {
+        try {
+            $user = Auth::guard('api')->user();
+
+            if (!$user) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not authenticated',
+                ], 401);
+            }
+
+            // Check if email is verified
+            if (is_null($user->email_verified_at)) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Email must be verified to complete onboarding',
+                    'email_verified' => false,
+                ], 422);
+            }
+
+            // Onboarding completion is handled by frontend (localStorage)
+            // Backend just validates that email is verified
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Onboarding can be completed',
+                'email_verified' => true,
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to complete onboarding.',
                 'error' => $e->getMessage(),
             ], 500);
         }

@@ -28,6 +28,7 @@ class OtpAuthController extends Controller
 		$code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 		$otp = UserOtp::create([
 			'user_id' => $user->id,
+			'type' => UserOtp::TYPE_LOGIN,
 			'code' => $code,
 			'expires_at' => Carbon::now()->addMinutes(10),
 			'ip' => $request->ip(),
@@ -50,6 +51,7 @@ class OtpAuthController extends Controller
 		}
 
 		$otp = UserOtp::where('user_id', $user->id)
+			->where('type', UserOtp::TYPE_LOGIN)
 			->whereNull('consumed_at')
 			->orderByDesc('id')
 			->first();
@@ -116,6 +118,7 @@ class OtpAuthController extends Controller
 		$code = str_pad((string) random_int(0, 999999), 6, '0', STR_PAD_LEFT);
 		$otp = UserOtp::create([
 			'user_id' => $user->id,
+			'type' => UserOtp::TYPE_LOGIN,
 			'code' => $code,
 			'expires_at' => Carbon::now()->addMinutes(10),
 		]);

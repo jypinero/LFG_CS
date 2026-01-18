@@ -30,6 +30,7 @@ use App\Http\Controllers\PushNotificationController;
 use App\Http\Controllers\TeamAnalyticsController;
 use App\Http\Controllers\ChallongeAuthController;
 use App\Http\Controllers\ImageProxyController;
+use App\Http\Controllers\EmailVerificationController;
 
 /*
 |--------------------------------------------------------------------------
@@ -96,6 +97,15 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/refresh', [AuthController::class, 'refresh']);
     Route::get('/me', [AuthController::class, 'me']);
     Route::post('/auth/change-password', [AuthController::class, 'changePassword']);
+    
+    // Onboarding routes
+    Route::get('/onboarding/status', [AuthController::class, 'getOnboardingStatus']);
+    Route::post('/onboarding/complete', [AuthController::class, 'completeOnboarding']);
+    
+    // Email verification routes
+    Route::post('/email/verification/send', [EmailVerificationController::class, 'sendVerificationOtp'])->middleware('throttle:otp-send');
+    Route::post('/email/verification/verify', [EmailVerificationController::class, 'verifyEmail'])->middleware('throttle:otp-verify');
+    Route::post('/email/verification/resend', [EmailVerificationController::class, 'resendVerificationOtp'])->middleware('throttle:otp-send');
     
     // Notifications routes - MUST come before /users/{id} to avoid route conflict
     Route::get('/users/notifications', [NotifController::class, 'userNotifications']);
