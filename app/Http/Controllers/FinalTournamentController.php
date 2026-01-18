@@ -947,31 +947,47 @@ class FinalTournamentController extends Controller
             ->where('match_number', 0)
             ->first();
 
-        if (! $game || ! $game->bracket_data) {
-            return response()->json([
-                'status' => 'success',
-                'event_id' => $event->id,
-                'tournament_id' => $event->tournament_id,
-                'tournament_type' => $tournamentType,
-                'participants' => $participants,
-                'participants_count' => count($participants),
-                'bracket_data' => null,
-                'message' => 'No bracket data saved yet',
-            ]);
-        }
-
-        return response()->json([
+        // Build response with event and tournament details
+        $response = [
             'status' => 'success',
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'date' => $event->date,
+                'start_time' => $event->start_time,
+                'end_time' => $event->end_time,
+                'sport' => $event->sport,
+                'status' => $event->status,
+                'is_approved' => $event->is_approved ?? false,
+            ],
+            'tournament' => [
+                'id' => $tournament->id,
+                'name' => $tournament->name,
+                'tournament_type' => $tournamentType,
+                'type' => $tournament->type,
+                'status' => $tournament->status,
+            ],
             'event_id' => $event->id,
             'tournament_id' => $event->tournament_id,
             'tournament_type' => $tournamentType,
             'participants' => $participants,
             'participants_count' => count($participants),
-            'bracket_data' => $game->bracket_data,
-            'is_finished' => $game->status === 'completed',
-            'winner_team_id' => $game->winner_team_id,
-            'winner_name' => $game->winner_name,
-        ]);
+        ];
+
+        if (! $game || ! $game->bracket_data) {
+            $response['bracket_data'] = null;
+            $response['message'] = 'No bracket data saved yet';
+            return response()->json($response);
+        }
+
+        // Add bracket data if exists
+        $response['bracket_data'] = $game->bracket_data;
+        $response['is_finished'] = $game->status === 'completed';
+        $response['winner_team_id'] = $game->winner_team_id;
+        $response['winner_name'] = $game->winner_name;
+
+        return response()->json($response);
     }
 
     // List tournaments owned by authenticated user with events and their subgames (schedule)
