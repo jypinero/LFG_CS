@@ -181,6 +181,62 @@ class EntityDocumentController extends Controller
         return $map[$type] ?? null;
     }
 
+    /**
+     * Delete document
+     */
+    public function destroy($id)
+    {
+        $user = auth()->user();
+        
+        $document = EntityDocument::find($id);
+        
+        if (!$document) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Document not found'
+            ], 404);
+        }
+        
+        // Get the entity to check permissions
+        $entity = $document->documentable;
+        if (!$entity) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Associated entity not found'
+            ], 404);
+        }
+        
+        // Determine entity type for permission check
+        $entityType = $this->getEntityTypeFromModel($document->documentable_type);
+        
+        if (!$entityType) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid entity type'
+            ], 400);
+        }
+        
+        // Check if user has permission to delete document for this entity
+        if (!$this->canUploadDocument($user, $entity, $entityType)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You do not have permission to delete this document'
+            ], 403);
+        }
+        
+        // Delete file from storage
+        if ($document->file_path && Storage::disk('public')->exists($document->file_path)) {
+            Storage::disk('public')->delete($document->file_path);
+        }
+        
+        $document->delete();
+        
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Document deleted successfully'
+        ]);
+    }
+
     protected function canUploadDocument($user, $entity, $entityType)
     {
         switch ($entityType) {
@@ -195,5 +251,16 @@ class EntityDocumentController extends Controller
             default:
                 return false;
         }
+    }
+
+    protected function getEntityTypeFromModel($modelClass)
+    {
+        $map = [
+            User::class => 'user',
+            Venue::class => 'venue',
+            Team::class => 'team',
+            CoachProfile::class => 'coach',
+        ];
+        return $map[$modelClass] ?? null;
     }
 }

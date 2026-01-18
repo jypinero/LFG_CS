@@ -170,6 +170,7 @@ Route::middleware('auth:api')->group(function () {
     Route::prefix('entity-documents')->group(function () {
         Route::post('/', [\App\Http\Controllers\EntityDocumentController::class, 'store']);
         Route::get('/', [\App\Http\Controllers\EntityDocumentController::class, 'index']);
+        Route::delete('/{id}', [\App\Http\Controllers\EntityDocumentController::class, 'destroy']);
     });
 
     // Profile ratings route - MUST come before wildcard username route
