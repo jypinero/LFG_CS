@@ -464,41 +464,66 @@ class FinalTournamentController extends Controller
             'participants',
             'participants.user',
             'participants.team',
-            'participants.team.members.user'
+            'participants.team.members.user',
+            'tournament'
         ])->findOrFail($eventId);
 
+        // Get tournament type as primary source, fallback to event type
+        $tournament = $event->tournament;
+        $tournamentType = $tournament->tournament_type ?? null;
+        
         // determine effective sub-type
         $subType = strtolower($event->sub_event_type ?? $event->event_type ?? '');
+        
+        // Use tournament_type if available, otherwise infer from event type
+        $isFreeForAll = false;
+        if ($tournamentType) {
+            $isFreeForAll = (strtolower($tournamentType) === 'free for all');
+        } else {
+            $isFreeForAll = (strpos($subType, 'free') !== false || strpos($subType, 'free_for_all') !== false);
+        }
 
-        if (strpos($subType, 'free') !== false || strpos($subType, 'free_for_all') !== false) {
-            $users = $event->participants->whereNotNull('user_id')->map(function($p){
-                $u = $p->user;
-                $result = [
-                    'id' => $p->id,
-                    'first_name' => $u->first_name ?? null,
-                    'last_name'  => $u->last_name ?? null,
-                    'position'   => $p->position ?? ($u->position ?? null),
-                    'status' => $p->status ?? null,
-                ];
-                
-                // Include documents if column exists and documents are present
-                if (Schema::hasColumn('event_participants', 'documents') && $p->documents) {
-                    $result['documents'] = json_decode($p->documents, true);
-                } else {
-                    $result['documents'] = null;
-                }
-                
-                return $result;
-            })->values();
+        if ($isFreeForAll) {
+            // Filter by approved/confirmed status
+            $users = $event->participants
+                ->whereNotNull('user_id')
+                ->whereIn('status', ['approved', 'confirmed', 'pending'])
+                ->map(function($p){
+                    $u = $p->user;
+                    $result = [
+                        'id' => $p->id,
+                        'user_id' => $u->id ?? null,
+                        'first_name' => $u->first_name ?? null,
+                        'last_name'  => $u->last_name ?? null,
+                        'position'   => $p->position ?? ($u->position ?? null),
+                        'status' => $p->status ?? null,
+                    ];
+                    
+                    // Include documents if column exists and documents are present
+                    if (Schema::hasColumn('event_participants', 'documents') && $p->documents) {
+                        $result['documents'] = json_decode($p->documents, true);
+                    } else {
+                        $result['documents'] = null;
+                    }
+                    
+                    return $result;
+                })->values();
 
-            return response()->json(['type' => 'free_for_all', 'participants' => $users]);
+            return response()->json([
+                'type' => 'free_for_all',
+                'tournament_type' => $tournamentType ?? 'free for all',
+                'participants' => $users,
+                'participants_count' => $users->count(),
+            ]);
         }
 
         // team vs team: return team-level registrations only (team_id but no user_id)
         // These are the registrations that should be approved, not individual member records
+        // Filter by approved/confirmed status
         $teamParticipants = $event->participants()
             ->whereNotNull('team_id')
             ->whereNull('user_id')
+            ->whereIn('status', ['approved', 'confirmed', 'pending'])
             ->with(['team.members.user'])
             ->get();
 
@@ -517,6 +542,7 @@ class FinalTournamentController extends Controller
 
             $teamData = [
                 'id' => $teamParticipant->id,
+                'team_id' => $team->id ?? null,
                 'team_name' => $team->name ?? null,
                 'status' => $teamParticipant->status ?? null,
                 'members' => $members,
@@ -532,7 +558,12 @@ class FinalTournamentController extends Controller
             return $teamData;
         })->values();
 
-        return response()->json(['type' => 'team_vs_team', 'teams' => $teams]);
+        return response()->json([
+            'type' => 'team_vs_team',
+            'tournament_type' => $tournamentType ?? 'team vs team',
+            'teams' => $teams,
+            'participants_count' => $teams->count(),
+        ]);
     }
 
     // List tournaments (use all Tournament fields)
@@ -852,6 +883,64 @@ class FinalTournamentController extends Controller
     public function getBracket($eventId)
     {
         $event = Event::with('tournament')->findOrFail($eventId);
+        $tournament = $event->tournament;
+
+        if (!$tournament) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Tournament not found for this event',
+            ], 404);
+        }
+
+        // Get tournament type
+        $tournamentType = $tournament->tournament_type ?? 'team vs team';
+
+        // Fetch participants based on tournament type
+        $participants = [];
+        
+        if ($tournamentType === 'team vs team') {
+            // Fetch team participants (team-level registrations)
+            // Check for both 'approved' and 'confirmed' status
+            $teamParticipants = EventParticipant::where('event_id', $event->id)
+                ->whereNotNull('team_id')
+                ->whereNull('user_id') // Team-level registration
+                ->whereIn('status', ['approved', 'confirmed'])
+                ->with('team')
+                ->get();
+
+            $participants = $teamParticipants->map(function($tp) {
+                $team = $tp->team;
+                return [
+                    'id' => $tp->id,
+                    'team_id' => $team->id ?? null,
+                    'name' => $team->name ?? $tp->team_name ?? 'Unknown Team',
+                    'display_name' => $team->display_name ?? $team->name ?? null,
+                    'status' => $tp->status,
+                ];
+            })->values()->toArray();
+        } else {
+            // Free for all - fetch individual participants
+            // Check for both 'approved' and 'confirmed' status
+            $userParticipants = EventParticipant::where('event_id', $event->id)
+                ->whereNotNull('user_id')
+                ->whereIn('status', ['approved', 'confirmed'])
+                ->with('user')
+                ->get();
+
+            $participants = $userParticipants->map(function($up) {
+                $user = $up->user;
+                $fullName = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
+                return [
+                    'id' => $up->id,
+                    'user_id' => $user->id ?? null,
+                    'name' => $fullName ?: ($user->username ?? 'Unknown User'),
+                    'first_name' => $user->first_name ?? null,
+                    'last_name' => $user->last_name ?? null,
+                    'username' => $user->username ?? null,
+                    'status' => $up->status,
+                ];
+            })->values()->toArray();
+        }
 
         $game = EventGame::where('event_id', $event->id)
             ->where('round_number', 0)
@@ -863,6 +952,9 @@ class FinalTournamentController extends Controller
                 'status' => 'success',
                 'event_id' => $event->id,
                 'tournament_id' => $event->tournament_id,
+                'tournament_type' => $tournamentType,
+                'participants' => $participants,
+                'participants_count' => count($participants),
                 'bracket_data' => null,
                 'message' => 'No bracket data saved yet',
             ]);
@@ -872,6 +964,9 @@ class FinalTournamentController extends Controller
             'status' => 'success',
             'event_id' => $event->id,
             'tournament_id' => $event->tournament_id,
+            'tournament_type' => $tournamentType,
+            'participants' => $participants,
+            'participants_count' => count($participants),
             'bracket_data' => $game->bracket_data,
             'is_finished' => $game->status === 'completed',
             'winner_team_id' => $game->winner_team_id,
