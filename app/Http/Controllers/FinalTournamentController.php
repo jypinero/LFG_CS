@@ -834,19 +834,23 @@ class FinalTournamentController extends Controller
         $tournament = $event->tournament;
 
         // Extract bracket data from the exported structure
-        // Frontend sends: { tournament: {...}, bracket: {...} }
+        // Frontend sends: { tournament: {...}, bracket: {...} } OR { type, rounds, ... }
         $allData = $request->all();
         
+        // Log raw request for debugging
+        $rawContent = $request->getContent();
+        $contentType = $request->header('Content-Type');
+        
         // If request is empty or only has route parameters, try to get JSON from raw body
-        if ((empty($allData) || count($allData) <= 1) && $request->getContent()) {
-            $jsonData = json_decode($request->getContent(), true);
+        if ((empty($allData) || count($allData) <= 1) && $rawContent) {
+            $jsonData = json_decode($rawContent, true);
             if (json_last_error() === JSON_ERROR_NONE && is_array($jsonData)) {
                 $allData = $jsonData;
             }
         }
         
         // Also try json() method which handles JSON requests better
-        if (empty($allData) || !isset($allData['bracket'])) {
+        if (empty($allData) || (!isset($allData['bracket']) && !isset($allData['type']))) {
             try {
                 $jsonData = $request->json()->all();
                 if (!empty($jsonData)) {
@@ -857,6 +861,14 @@ class FinalTournamentController extends Controller
             }
         }
         
+        // If still empty, try to decode raw content as JSON
+        if (empty($allData) && $rawContent) {
+            $decoded = json_decode($rawContent, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $allData = $decoded;
+            }
+        }
+        
         // Log received data for debugging
         \Log::info('Bracket data received', [
             'event_id' => $eventId,
@@ -864,7 +876,10 @@ class FinalTournamentController extends Controller
             'has_bracket_key' => isset($allData['bracket']),
             'has_type_key' => isset($allData['type']),
             'has_rounds_key' => isset($allData['rounds']),
-            'content_type' => $request->header('Content-Type'),
+            'content_type' => $contentType,
+            'raw_content_length' => strlen($rawContent),
+            'raw_content_preview' => substr($rawContent, 0, 200), // First 200 chars
+            'all_data_preview' => array_slice($allData, 0, 5, true), // First 5 keys
         ]);
         
         // Extract the bracket object from the exported structure
@@ -898,12 +913,20 @@ class FinalTournamentController extends Controller
         }
         
         // THIRD: Check alternative key names
-        if (!$bracketData && isset($allData['bracket_data']) && is_array($allData['bracket_data'])) {
-            $bracketData = $allData['bracket_data'];
-        }
-        
-        if (!$bracketData && isset($allData['bracketData']) && is_array($allData['bracketData'])) {
-            $bracketData = $allData['bracketData'];
+        $alternativeKeys = ['bracket_data', 'bracketData', 'data', 'payload', 'body'];
+        foreach ($alternativeKeys as $key) {
+            if (!$bracketData && isset($allData[$key]) && is_array($allData[$key])) {
+                // Check if this alternative key contains bracket structure
+                if (isset($allData[$key]['type']) && isset($allData[$key]['rounds'])) {
+                    $bracketData = $allData[$key];
+                    break;
+                }
+                // Or if it contains a bracket key
+                if (isset($allData[$key]['bracket']) && is_array($allData[$key]['bracket'])) {
+                    $bracketData = $allData[$key]['bracket'];
+                    break;
+                }
+            }
         }
         
         // FOURTH: Try to find bracket in nested structure
@@ -916,6 +939,28 @@ class FinalTournamentController extends Controller
             $bracketData = $allData['bracket_data']['bracket'];
         }
         
+        // SIXTH: Check if any field contains a JSON string that needs decoding
+        if (!$bracketData) {
+            foreach ($allData as $key => $value) {
+                if (is_string($value) && strlen($value) > 10) {
+                    // Try to decode as JSON
+                    $decoded = json_decode($value, true);
+                    if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                        // Check if decoded data is bracket structure
+                        if (isset($decoded['type']) && isset($decoded['rounds'])) {
+                            $bracketData = $decoded;
+                            break;
+                        }
+                        // Or if it contains bracket key
+                        if (isset($decoded['bracket']) && is_array($decoded['bracket'])) {
+                            $bracketData = $decoded['bracket'];
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+        
         // Validate bracket structure
         if (!$bracketData || !is_array($bracketData)) {
             \Log::warning('Invalid bracket data structure received - not an array', [
@@ -923,15 +968,20 @@ class FinalTournamentController extends Controller
                 'received_data_keys' => array_keys($allData),
                 'bracket_data_type' => $bracketData ? gettype($bracketData) : 'null',
                 'raw_request' => $request->all(),
+                'raw_content' => $request->getContent(),
             ]);
             return response()->json([
                 'status' => 'error',
-                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }',
+                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } } OR { type, rounds, ... }',
                 'hint' => 'Make sure you are sending the bracket object with "type" and "rounds" fields',
                 'debug' => [
                     'received_keys' => array_keys($allData),
                     'has_bracket' => isset($allData['bracket']),
+                    'has_type' => isset($allData['type']),
+                    'has_rounds' => isset($allData['rounds']),
                     'content_type' => $request->header('Content-Type'),
+                    'bracket_data_type' => $bracketData ? gettype($bracketData) : 'null',
+                    'sample_received_data' => array_slice($allData, 0, 3, true), // First 3 keys for debugging
                 ]
             ], 400);
         }
@@ -943,15 +993,17 @@ class FinalTournamentController extends Controller
                 'bracket_data_keys' => array_keys($bracketData),
                 'has_type' => isset($bracketData['type']),
                 'has_rounds' => isset($bracketData['rounds']),
+                'bracket_data_sample' => array_slice($bracketData, 0, 5, true), // First 5 keys
             ]);
             return response()->json([
                 'status' => 'error',
-                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }',
+                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } } OR { type, rounds, ... }',
                 'hint' => 'Bracket data must contain "type" and "rounds" fields. Received keys: ' . implode(', ', array_keys($bracketData)),
                 'debug' => [
                     'bracket_keys' => array_keys($bracketData),
                     'has_type' => isset($bracketData['type']),
                     'has_rounds' => isset($bracketData['rounds']),
+                    'bracket_data_sample' => array_slice($bracketData, 0, 5, true),
                 ]
             ], 400);
         }
