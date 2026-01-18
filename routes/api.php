@@ -67,6 +67,9 @@ Route::get('/sports', [AuthController::class, 'getSports']);
 // Public tournament route (no authentication required)
 Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicTournament']);
 
+// Public bracket route (no authentication required)
+Route::get('/tournaments/events/{eventId}/bracket/public', [FinalTournamentController::class, 'getPublicBracket']);
+
 Route::get('auth/challonge/redirect', [ChallongeAuthController::class, 'redirect'])->middleware('auth:api');
 Route::get('auth/challonge/callback', [\App\Http\Controllers\ChallongeAuthController::class, 'callback']);
 Route::post('auth/challonge/save-tokens', [\App\Http\Controllers\ChallongeAuthController::class, 'saveTokens'])->middleware('auth:api');

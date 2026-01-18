@@ -837,30 +837,78 @@ class FinalTournamentController extends Controller
         // Frontend sends: { tournament: {...}, bracket: {...} }
         $allData = $request->all();
         
-        // Extract the bracket object from the exported structure
-        $bracketData = null;
-        if (isset($allData['bracket']) && is_array($allData['bracket'])) {
-            // Standard exported format: { tournament: {...}, bracket: {...} }
-            $bracketData = $allData['bracket'];
-        } elseif (isset($allData['type']) && isset($allData['rounds'])) {
-            // Direct bracket format (backward compatibility)
-            $bracketData = $allData;
-        } else {
-            // Try to find bracket in nested structure
-            if (isset($allData['bracket']['bracket'])) {
-                $bracketData = $allData['bracket']['bracket'];
+        // If request is empty, try to get JSON from raw body
+        if (empty($allData) && $request->getContent()) {
+            $jsonData = json_decode($request->getContent(), true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($jsonData)) {
+                $allData = $jsonData;
             }
         }
         
+        // Log received data for debugging
+        \Log::info('Bracket data received', [
+            'event_id' => $eventId,
+            'request_keys' => array_keys($allData),
+            'has_bracket_key' => isset($allData['bracket']),
+            'has_type_key' => isset($allData['type']),
+            'has_rounds_key' => isset($allData['rounds']),
+            'content_type' => $request->header('Content-Type'),
+        ]);
+        
+        // Extract the bracket object from the exported structure
+        $bracketData = null;
+        
+        // Check if bracket key exists and is an array
+        if (isset($allData['bracket'])) {
+            if (is_array($allData['bracket'])) {
+                // Standard exported format: { tournament: {...}, bracket: {...} }
+                $bracketData = $allData['bracket'];
+            } elseif (is_string($allData['bracket'])) {
+                // If bracket is a JSON string, decode it
+                $decoded = json_decode($allData['bracket'], true);
+                if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                    $bracketData = $decoded;
+                }
+            }
+        }
+        
+        // If no bracket key, check if data is directly the bracket structure
+        if (!$bracketData && isset($allData['type']) && isset($allData['rounds'])) {
+            // Direct bracket format (backward compatibility)
+            $bracketData = $allData;
+        }
+        
+        // Try to find bracket in nested structure
+        if (!$bracketData && isset($allData['bracket']['bracket']) && is_array($allData['bracket']['bracket'])) {
+            $bracketData = $allData['bracket']['bracket'];
+        }
+        
         // Validate bracket structure
-        if (!$bracketData || !is_array($bracketData) || !isset($bracketData['type']) || !isset($bracketData['rounds'])) {
-            \Log::warning('Invalid bracket data structure received', [
+        if (!$bracketData || !is_array($bracketData)) {
+            \Log::warning('Invalid bracket data structure received - not an array', [
                 'event_id' => $eventId,
-                'received_data' => $allData
+                'received_data_keys' => array_keys($allData),
+                'bracket_data_type' => $bracketData ? gettype($bracketData) : 'null',
             ]);
             return response()->json([
                 'status' => 'error',
-                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }'
+                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }',
+                'hint' => 'Make sure you are sending the bracket object with "type" and "rounds" fields'
+            ], 400);
+        }
+        
+        // Check for required fields
+        if (!isset($bracketData['type']) || !isset($bracketData['rounds'])) {
+            \Log::warning('Invalid bracket data structure received - missing required fields', [
+                'event_id' => $eventId,
+                'bracket_data_keys' => array_keys($bracketData),
+                'has_type' => isset($bracketData['type']),
+                'has_rounds' => isset($bracketData['rounds']),
+            ]);
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }',
+                'hint' => 'Bracket data must contain "type" and "rounds" fields. Received keys: ' . implode(', ', array_keys($bracketData))
             ], 400);
         }
         
@@ -1071,6 +1119,154 @@ class FinalTournamentController extends Controller
         // Add bracket data (now normalized to expected structure)
         $response['bracket_data'] = $bracketData;
         $response['is_finished'] = $game->status === 'completed';
+        $response['winner_team_id'] = $game->winner_team_id;
+        $response['winner_name'] = $game->winner_name;
+
+        return response()->json($response);
+    }
+
+    // Get public bracket data for a sub-event (no authentication required)
+    public function getPublicBracket($eventId)
+    {
+        $event = Event::with('tournament')->findOrFail($eventId);
+        $tournament = $event->tournament;
+
+        if (!$tournament) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Tournament not found for this event',
+            ], 404);
+        }
+
+        // Only show public tournaments (not drafts)
+        if ($tournament->status === 'draft') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Tournament not found',
+            ], 404);
+        }
+
+        // Get tournament type
+        $tournamentType = $tournament->tournament_type ?? 'team vs team';
+
+        // Fetch participants based on tournament type (public info only)
+        $participants = [];
+        
+        if ($tournamentType === 'team vs team') {
+            // Fetch team participants (team-level registrations)
+            $teamParticipants = EventParticipant::where('event_id', $event->id)
+                ->whereNotNull('team_id')
+                ->whereNull('user_id')
+                ->whereIn('status', ['approved', 'confirmed'])
+                ->with('team')
+                ->get();
+
+            $participants = $teamParticipants->map(function($tp) {
+                $team = $tp->team;
+                return [
+                    'id' => $tp->id,
+                    'team_id' => $team->id ?? null,
+                    'name' => $team->name ?? $tp->team_name ?? 'Unknown Team',
+                    'display_name' => $team->display_name ?? $team->name ?? null,
+                    // Don't include status for public view
+                ];
+            })->values()->toArray();
+        } else {
+            // Free for all - fetch individual participants (public info only)
+            $userParticipants = EventParticipant::where('event_id', $event->id)
+                ->whereNotNull('user_id')
+                ->whereIn('status', ['approved', 'confirmed'])
+                ->with('user')
+                ->get();
+
+            $participants = $userParticipants->map(function($up) {
+                $user = $up->user;
+                $fullName = trim(($user->first_name ?? '') . ' ' . ($user->last_name ?? ''));
+                return [
+                    'id' => $up->id,
+                    'user_id' => $user->id ?? null,
+                    'name' => $fullName ?: ($user->username ?? 'Unknown User'),
+                    'first_name' => $user->first_name ?? null,
+                    'last_name' => $user->last_name ?? null,
+                    'username' => $user->username ?? null,
+                    // Don't include status for public view
+                ];
+            })->values()->toArray();
+        }
+
+        $game = EventGame::where('event_id', $event->id)
+            ->where('round_number', 0)
+            ->where('match_number', 0)
+            ->first();
+
+        // Build response with event and tournament details (public info only)
+        $response = [
+            'status' => 'success',
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'date' => $event->date,
+                'start_time' => $event->start_time,
+                'end_time' => $event->end_time,
+                'sport' => $event->sport,
+                'status' => $event->status,
+                // Don't include is_approved for public view
+            ],
+            'tournament' => [
+                'id' => $tournament->id,
+                'name' => $tournament->name,
+                'tournament_type' => $tournamentType,
+                'type' => $tournament->type,
+                'status' => $tournament->status,
+            ],
+            'event_id' => $event->id,
+            'tournament_id' => $event->tournament_id,
+            'tournament_type' => $tournamentType,
+            'participants' => $participants,
+            'participants_count' => count($participants),
+        ];
+
+        if (! $game || ! $game->bracket_data) {
+            $response['bracket_data'] = null;
+            $response['message'] = 'No bracket data saved yet';
+            return response()->json($response);
+        }
+
+        // Normalize bracket_data structure
+        // Handle various storage formats:
+        // 1. Direct bracket: { type, rounds, ... }
+        // 2. Nested: { bracket: { type, rounds, ... } }
+        // 3. Double nested: { bracket: { bracket: { type, rounds, ... } } }
+        $bracketData = $game->bracket_data;
+        
+        // Extract bracket from nested structures
+        if (isset($bracketData['bracket']) && is_array($bracketData['bracket'])) {
+            // Check if it's double nested
+            if (isset($bracketData['bracket']['bracket']) && is_array($bracketData['bracket']['bracket'])) {
+                $bracketData = $bracketData['bracket']['bracket'];
+            } else {
+                $bracketData = $bracketData['bracket'];
+            }
+        }
+        
+        // Validate the bracket structure has required fields
+        if (!is_array($bracketData) || !isset($bracketData['type']) || !isset($bracketData['rounds'])) {
+            \Log::warning('Invalid bracket_data structure in database', [
+                'event_id' => $eventId,
+                'stored_bracket_data' => $game->bracket_data,
+                'normalized_attempt' => $bracketData
+            ]);
+            
+            $response['bracket_data'] = null;
+            $response['message'] = 'Bracket data is not available or invalid';
+            return response()->json($response, 400);
+        }
+
+        // Add bracket data (now normalized to expected structure)
+        $response['bracket_data'] = $bracketData;
+        $response['is_finished'] = $game->status === 'completed';
+        // Include winner info for public view
         $response['winner_team_id'] = $game->winner_team_id;
         $response['winner_name'] = $game->winner_name;
 
