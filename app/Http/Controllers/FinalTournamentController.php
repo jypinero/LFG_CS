@@ -837,11 +837,23 @@ class FinalTournamentController extends Controller
         // Frontend sends: { tournament: {...}, bracket: {...} }
         $allData = $request->all();
         
-        // If request is empty, try to get JSON from raw body
-        if (empty($allData) && $request->getContent()) {
+        // If request is empty or only has route parameters, try to get JSON from raw body
+        if ((empty($allData) || count($allData) <= 1) && $request->getContent()) {
             $jsonData = json_decode($request->getContent(), true);
             if (json_last_error() === JSON_ERROR_NONE && is_array($jsonData)) {
                 $allData = $jsonData;
+            }
+        }
+        
+        // Also try json() method which handles JSON requests better
+        if (empty($allData) || !isset($allData['bracket'])) {
+            try {
+                $jsonData = $request->json()->all();
+                if (!empty($jsonData)) {
+                    $allData = array_merge($allData, $jsonData);
+                }
+            } catch (\Exception $e) {
+                // Not a JSON request, continue with $allData
             }
         }
         
@@ -856,9 +868,14 @@ class FinalTournamentController extends Controller
         ]);
         
         // Extract the bracket object from the exported structure
+        // Supports multiple formats (in priority order):
+        // 1. Wrapped: { tournament: {...}, bracket: { type, rounds, ... } } - Full export format
+        // 2. Direct bracket: { type, rounds, ... } - Simple import format
+        // 3. Alternative keys: bracket_data, bracketData, etc.
         $bracketData = null;
         
-        // Check if bracket key exists and is an array
+        // FIRST: Check if bracket key exists (wrapped format - full export)
+        // This handles: { tournament: {...}, bracket: {...} }
         if (isset($allData['bracket'])) {
             if (is_array($allData['bracket'])) {
                 // Standard exported format: { tournament: {...}, bracket: {...} }
@@ -872,15 +889,31 @@ class FinalTournamentController extends Controller
             }
         }
         
-        // If no bracket key, check if data is directly the bracket structure
-        if (!$bracketData && isset($allData['type']) && isset($allData['rounds'])) {
-            // Direct bracket format (backward compatibility)
+        // SECOND: Check if data is directly the bracket structure (simple import format)
+        // This handles: { type: "...", rounds: [...], ... }
+        // Only check this if we didn't find a bracket key (to avoid conflicts)
+        if (!$bracketData && isset($allData['type']) && isset($allData['rounds']) && is_array($allData['rounds'])) {
+            // Direct bracket format - this is the format for simple imports
             $bracketData = $allData;
         }
         
-        // Try to find bracket in nested structure
+        // THIRD: Check alternative key names
+        if (!$bracketData && isset($allData['bracket_data']) && is_array($allData['bracket_data'])) {
+            $bracketData = $allData['bracket_data'];
+        }
+        
+        if (!$bracketData && isset($allData['bracketData']) && is_array($allData['bracketData'])) {
+            $bracketData = $allData['bracketData'];
+        }
+        
+        // FOURTH: Try to find bracket in nested structure
         if (!$bracketData && isset($allData['bracket']['bracket']) && is_array($allData['bracket']['bracket'])) {
             $bracketData = $allData['bracket']['bracket'];
+        }
+        
+        // FIFTH: Try to find bracket_data nested
+        if (!$bracketData && isset($allData['bracket_data']['bracket']) && is_array($allData['bracket_data']['bracket'])) {
+            $bracketData = $allData['bracket_data']['bracket'];
         }
         
         // Validate bracket structure
@@ -889,11 +922,17 @@ class FinalTournamentController extends Controller
                 'event_id' => $eventId,
                 'received_data_keys' => array_keys($allData),
                 'bracket_data_type' => $bracketData ? gettype($bracketData) : 'null',
+                'raw_request' => $request->all(),
             ]);
             return response()->json([
                 'status' => 'error',
                 'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }',
-                'hint' => 'Make sure you are sending the bracket object with "type" and "rounds" fields'
+                'hint' => 'Make sure you are sending the bracket object with "type" and "rounds" fields',
+                'debug' => [
+                    'received_keys' => array_keys($allData),
+                    'has_bracket' => isset($allData['bracket']),
+                    'content_type' => $request->header('Content-Type'),
+                ]
             ], 400);
         }
         
@@ -908,7 +947,12 @@ class FinalTournamentController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Invalid bracket data structure. Expected: { tournament: {...}, bracket: { type, rounds, ... } }',
-                'hint' => 'Bracket data must contain "type" and "rounds" fields. Received keys: ' . implode(', ', array_keys($bracketData))
+                'hint' => 'Bracket data must contain "type" and "rounds" fields. Received keys: ' . implode(', ', array_keys($bracketData)),
+                'debug' => [
+                    'bracket_keys' => array_keys($bracketData),
+                    'has_type' => isset($bracketData['type']),
+                    'has_rounds' => isset($bracketData['rounds']),
+                ]
             ], 400);
         }
         
