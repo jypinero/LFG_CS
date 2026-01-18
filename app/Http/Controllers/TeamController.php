@@ -9,6 +9,8 @@ use App\Models\Team;
 use App\Models\TeamMember;
 use App\Models\TeamInvite;
 use App\Models\User; // ADDED
+use App\Models\EventParticipant;
+use App\Models\EventTeam;
 use Illuminate\Support\Facades\DB; // ADDED
 use App\Traits\HandlesImageCompression;
 
@@ -650,13 +652,130 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Owner cannot remove themselves. Transfer ownership first.'], 403);
         }
 
-        // Mark member as left instead of deleting
-        $member->is_active = false;
-        $member->roster_status = 'removed';
-        $member->removed_at = now();
+        DB::beginTransaction();
+        try {
+            // Mark member as removed
+            $member->is_active = false;
+            $member->roster_status = 'removed';
+            $member->removed_at = now();
+            $member->save();
+
+            // Clean up event participants for this user/team combination
+            // Regular events (non-tournament)
+            $eventParticipants = EventParticipant::where('team_id', $team->id)
+                ->where('user_id', $member->user_id)
+                ->whereNull('tournament_id')
+                ->with('event')
+                ->get();
+
+            foreach ($eventParticipants as $participant) {
+                $event = $participant->event;
+                
+                // For team vs team events, check if this is the last team member in the event
+                if ($event && $event->event_type === 'team vs team') {
+                    $remainingTeamMembers = EventParticipant::where('event_id', $event->id)
+                        ->where('team_id', $team->id)
+                        ->where('user_id', '!=', $member->user_id)
+                        ->count();
+
+                    // If this is the last member, remove the team from the event entirely
+                    if ($remainingTeamMembers === 0) {
+                        EventTeam::where('event_id', $event->id)
+                            ->where('team_id', $team->id)
+                            ->delete();
+                    }
+                }
+                
+                // Remove this participant
+                $participant->delete();
+            }
+
+            // Tournament events - remove EventParticipants for tournaments
+            // Note: Tournament participants are managed separately, but EventParticipants for tournaments should also be cleaned
+            EventParticipant::where('team_id', $team->id)
+                ->where('user_id', $member->user_id)
+                ->whereNotNull('tournament_id')
+                ->delete();
+
+            DB::commit();
+            
+            return response()->json([
+                'status'=>'success',
+                'message'=>'Member removed and cleaned up from events',
+                'member'=>$member
+            ], 200);
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to remove member: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Restore a removed member back to active status
+     */
+    public function restoreMember(Request $request, string $teamId, string $memberId)
+    {
+        $user = auth()->user();
+        $team = Team::find($teamId);
+        if (! $team) {
+            return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
+        }
+
+        // Only owner, captain, or manager can restore members
+        $isOwner = $user->id === $team->created_by;
+        $isCaptain = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'captain')
+            ->exists();
+        $isManager = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $user->id)
+            ->where('role', 'manager')
+            ->exists();
+
+        if (! $isOwner && ! $isCaptain && ! $isManager) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden - only owner, captain, or manager can restore members'], 403);
+        }
+
+        $member = TeamMember::where('team_id', $team->id)
+            ->where('id', $memberId)
+            ->first();
+
+        if (! $member) {
+            return response()->json(['status' => 'error', 'message' => 'Team member not found'], 404);
+        }
+
+        // Check if member is actually removed
+        if ($member->roster_status !== 'removed') {
+            return response()->json(['status' => 'error', 'message' => 'Member is not in removed status'], 400);
+        }
+
+        // Check roster size limit if team has one
+        $activeCount = TeamMember::where('team_id', $team->id)
+            ->where('is_active', true)
+            ->where('roster_status', '!=', 'removed')
+            ->count();
+        
+        if ($team->roster_size_limit && $activeCount >= $team->roster_size_limit) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Cannot restore member: Roster size limit reached ({$activeCount}/{$team->roster_size_limit} active)"
+            ], 409);
+        }
+
+        // Restore member to active status
+        $member->is_active = true;
+        $member->roster_status = 'active';
+        $member->removed_at = null;
         $member->save();
 
-        return response()->json(['status'=>'success','message'=>'Member marked as removed','member'=>$member], 200);
+        return response()->json([
+            'status'=>'success',
+            'message'=>'Member restored successfully',
+            'member'=>$member
+        ], 200);
     }
 
     public function members(string $teamId)
@@ -666,23 +785,44 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Team not found'], 404);
         }
 
-        $members = TeamMember::where('team_id', $team->id)
+        $allMembers = TeamMember::where('team_id', $team->id)
             ->with('user:id,username,email,profile_photo')
-            ->get()
-            ->map(function ($member) {
-                return [
-                    'id' => $member->id,
-                    'user_id' => $member->user_id,
-                    'username' => $member->user->username ?? null,
-                    'email' => $member->user->email ?? null,
-                    'profile_photo' => $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
-                    'is_active' => $member->is_active,
-                    'roster_status' => $member->roster_status,
-                    'position' => $member->position,
-                    'role' => $member->role,
-                    'joined_at' => $member->joined_at,
-                ];
-            });
+            ->get();
+
+        $activeMembers = $allMembers->filter(function($m) {
+            return $m->is_active && $m->roster_status !== 'removed';
+        })->map(function ($member) {
+            return [
+                'id' => $member->id,
+                'user_id' => $member->user_id,
+                'username' => $member->user->username ?? null,
+                'email' => $member->user->email ?? null,
+                'profile_photo' => $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
+                'is_active' => $member->is_active,
+                'roster_status' => $member->roster_status,
+                'position' => $member->position,
+                'role' => $member->role,
+                'joined_at' => $member->joined_at,
+            ];
+        })->values();
+
+        $removedMembers = $allMembers->filter(function($m) {
+            return $m->roster_status === 'removed';
+        })->map(function ($member) {
+            return [
+                'id' => $member->id,
+                'user_id' => $member->user_id,
+                'username' => $member->user->username ?? null,
+                'email' => $member->user->email ?? null,
+                'profile_photo' => $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
+                'is_active' => $member->is_active,
+                'roster_status' => $member->roster_status,
+                'position' => $member->position,
+                'role' => $member->role,
+                'joined_at' => $member->joined_at,
+                'removed_at' => $member->removed_at,
+            ];
+        })->values();
 
         $teamInfo = [
             'id' => $team->id,
@@ -707,7 +847,8 @@ class TeamController extends Controller
         return response()->json([
             'status' => 'success',
             'team' => $teamInfo,
-            'members' => $members,
+            'members' => $activeMembers,
+            'removed_members' => $removedMembers,
         ]);
     }
 
@@ -1314,7 +1455,8 @@ class TeamController extends Controller
 
         $members = TeamMember::where('team_id', $team->id)
             ->with('user:id,username,email')
-            ->where('roster_status', '!=', 'removed' && 'roster_status', '!=', 'left')
+            ->where('roster_status', '!=', 'removed')
+            ->where('roster_status', '!=', 'left')
             ->get();
 
         $active = $members->where('is_active', true)->map(function ($member) {
