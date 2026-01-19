@@ -179,6 +179,9 @@ class FinalTournamentController extends Controller
 
         $user = auth()->user();
 
+        // Determine slots value: use request value, fallback to tournament max_teams, or default to 10
+        $slots = $request->slots ?? $tournament->max_teams ?? 10;
+
         // prepare event payload — store canonical event_type = 'tournament' and persist sub-type if column exists
         $payload = [
             'name' => $request->name,
@@ -186,7 +189,7 @@ class FinalTournamentController extends Controller
             'sport' => $request->sport,
             'venue_id' => $request->venue_id,
             'facility_id' => $request->facility_id,
-            'slots' => $tournament->max_teams,
+            'slots' => $slots,
             'date' => $request->date,
             'start_time' => $request->start_time,
             'end_time' => $request->end_time,

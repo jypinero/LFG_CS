@@ -1810,6 +1810,7 @@ class VenueController extends Controller
             $conflict = Event::where('facility_id', $facilityId)
                 ->whereDate('date', $date)
                 ->where('is_approved', true)
+                ->whereNull('cancelled_at') // Exclude cancelled events
                 ->where('id', '!=', $booking->event->id)
                 ->where(function($q) use ($start, $end) {
                     $q->whereBetween('start_time', [$start, $end])
