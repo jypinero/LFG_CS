@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use App\Models\Tournament;
 use App\Models\Event;
@@ -753,8 +754,56 @@ class FinalTournamentController extends Controller
         $event = Event::with('participants')->findOrFail($eventId);
 
         // authorization: only the event creator can cancel the event
-        if (!$event->created_by || (int)$event->created_by !== (int)$user->id) {
-            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        // Add detailed logging and comparison
+        $eventCreatorId = $event->created_by;
+        $userId = $user->id;
+        
+        // Log for debugging
+        Log::info('Cancel Sub Event Authorization Check', [
+            'event_id' => $eventId,
+            'event_created_by' => $eventCreatorId,
+            'event_created_by_type' => gettype($eventCreatorId),
+            'user_id' => $userId,
+            'user_id_type' => gettype($userId),
+            'strict_match' => $eventCreatorId === $userId,
+            'loose_match' => $eventCreatorId == $userId,
+            'int_match' => (int)$eventCreatorId === (int)$userId,
+            'string_match' => (string)$eventCreatorId === (string)$userId,
+        ]);
+        
+        // Try multiple comparison methods to ensure we catch the match
+        $isAuthorized = false;
+        
+        if ($eventCreatorId && $userId) {
+            // Try strict comparison first
+            if ($eventCreatorId === $userId) {
+                $isAuthorized = true;
+            }
+            // Try loose comparison
+            elseif ($eventCreatorId == $userId) {
+                $isAuthorized = true;
+            }
+            // Try integer comparison
+            elseif ((int)$eventCreatorId === (int)$userId) {
+                $isAuthorized = true;
+            }
+            // Try string comparison
+            elseif ((string)$eventCreatorId === (string)$userId) {
+                $isAuthorized = true;
+            }
+        }
+        
+        if (!$isAuthorized) {
+            return response()->json([
+                'status' => 'error', 
+                'message' => 'Forbidden',
+                'debug' => [
+                    'event_id' => $eventId,
+                    'event_created_by' => $eventCreatorId,
+                    'current_user_id' => $userId,
+                    'reason' => $eventCreatorId ? 'User ID does not match event creator' : 'Event has no creator'
+                ]
+            ], 403);
         }
 
         DB::transaction(function() use ($event, $data, $user) {
