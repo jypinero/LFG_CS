@@ -754,14 +754,21 @@ class FinalTournamentController extends Controller
         $event = Event::with('participants')->findOrFail($eventId);
 
         // authorization: only the event creator can cancel the event
-        // Add detailed logging and comparison
-        $eventCreatorId = $event->created_by;
+        // Use getOriginal() to get raw database value, avoiding any accessor/mutator transformations
+        $eventCreatorId = $event->getOriginal('created_by') ?? $event->getAttribute('created_by');
         $userId = $user->id;
         
-        // Log for debugging
+        // Also check raw attributes array as fallback
+        if (is_null($eventCreatorId) && isset($event->attributes['created_by'])) {
+            $eventCreatorId = $event->attributes['created_by'];
+        }
+        
+        // Log for debugging with both original and accessor values
         Log::info('Cancel Sub Event Authorization Check', [
             'event_id' => $eventId,
-            'event_created_by' => $eventCreatorId,
+            'event_created_by_original' => $event->getOriginal('created_by'),
+            'event_created_by_accessor' => $event->created_by,
+            'event_created_by_raw' => $eventCreatorId,
             'event_created_by_type' => gettype($eventCreatorId),
             'user_id' => $userId,
             'user_id_type' => gettype($userId),
@@ -799,7 +806,9 @@ class FinalTournamentController extends Controller
                 'message' => 'Forbidden',
                 'debug' => [
                     'event_id' => $eventId,
-                    'event_created_by' => $eventCreatorId,
+                    'event_created_by_original' => $event->getOriginal('created_by'),
+                    'event_created_by_accessor' => $event->created_by,
+                    'event_created_by_used' => $eventCreatorId,
                     'current_user_id' => $userId,
                     'reason' => $eventCreatorId ? 'User ID does not match event creator' : 'Event has no creator'
                 ]
