@@ -751,12 +751,18 @@ class FinalTournamentController extends Controller
             'reason' => 'nullable|string|max:1000',
         ]);
 
-        $event = Event::with('participants')->findOrFail($eventId);
-        $tournament = $event->tournament ?? \App\Models\Tournament::find($event->tournament_id);
+        // Eager load tournament relationship
+        $event = Event::with(['participants', 'tournament'])->findOrFail($eventId);
+        
+        // Get tournament - try relationship first, then direct lookup
+        $tournament = $event->tournament;
+        if (!$tournament && $event->tournament_id) {
+            $tournament = \App\Models\Tournament::find($event->tournament_id);
+        }
 
         // authorization: event creator or tournament creator or tournament organizer
-        $isEventCreator = $event->created_by == $user->id;
-        $isTournamentCreator = $tournament && $tournament->created_by == $user->id;
+        $isEventCreator = $event->created_by && (int)$event->created_by === (int)$user->id;
+        $isTournamentCreator = $tournament && $tournament->created_by && (int)$tournament->created_by === (int)$user->id;
         $isOrganizer = $tournament && TournamentOrganizer::where('tournament_id', $tournament->id)
             ->where('user_id', $user->id)
             ->whereIn('role', ['owner', 'organizer'])
