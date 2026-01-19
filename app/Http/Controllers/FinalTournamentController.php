@@ -742,7 +742,7 @@ class FinalTournamentController extends Controller
         return response()->json(['status' => 'success', 'participant' => $participant->fresh()], 200);
     }
 
-    public function cancelSubEvent(Request $request, $eventId)
+    public function cancelSubEvent(Request $request, $tournamentId, $eventId)
     {
         $user = auth()->user();
         if (! $user) return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
@@ -751,11 +751,22 @@ class FinalTournamentController extends Controller
             'reason' => 'nullable|string|max:1000',
         ]);
 
+        // Explicitly get eventId from route to ensure correct parameter binding
+        $eventId = $request->route('eventId') ?? $eventId;
+        
+        // Direct database query to get raw value, bypassing any model transformations
+        $eventFromDb = DB::table('events')->where('id', $eventId)->first();
+        
+        if (!$eventFromDb) {
+            return response()->json(['status' => 'error', 'message' => 'Event not found'], 404);
+        }
+        
+        // Get event model for other operations
         $event = Event::with('participants')->findOrFail($eventId);
-
+        
         // authorization: only the event creator can cancel the event
-        // Use getOriginal() to get raw database value, avoiding any accessor/mutator transformations
-        $eventCreatorId = $event->getOriginal('created_by') ?? $event->getAttribute('created_by');
+        // Use direct DB value first, then fallback to model methods
+        $eventCreatorId = $eventFromDb->created_by ?? $event->getOriginal('created_by') ?? $event->getAttribute('created_by');
         $userId = $user->id;
         
         // Also check raw attributes array as fallback
@@ -763,12 +774,16 @@ class FinalTournamentController extends Controller
             $eventCreatorId = $event->attributes['created_by'];
         }
         
-        // Log for debugging with both original and accessor values
+        // Log for debugging with both direct DB query and model values
         Log::info('Cancel Sub Event Authorization Check', [
-            'event_id' => $eventId,
+            'route_tournament_id' => $tournamentId,
+            'route_event_id' => $eventId,
+            'request_route_eventId' => $request->route('eventId'),
+            'event_id_from_db' => $eventFromDb->id,
+            'event_created_by_from_db' => $eventFromDb->created_by,
             'event_created_by_original' => $event->getOriginal('created_by'),
             'event_created_by_accessor' => $event->created_by,
-            'event_created_by_raw' => $eventCreatorId,
+            'event_created_by_used' => $eventCreatorId,
             'event_created_by_type' => gettype($eventCreatorId),
             'user_id' => $userId,
             'user_id_type' => gettype($userId),
@@ -805,7 +820,9 @@ class FinalTournamentController extends Controller
                 'status' => 'error', 
                 'message' => 'Forbidden',
                 'debug' => [
-                    'event_id' => $eventId,
+                    'route_event_id' => $eventId,
+                    'event_id_from_db' => $eventFromDb->id,
+                    'event_created_by_from_db' => $eventFromDb->created_by,
                     'event_created_by_original' => $event->getOriginal('created_by'),
                     'event_created_by_accessor' => $event->created_by,
                     'event_created_by_used' => $eventCreatorId,
