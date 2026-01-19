@@ -16,7 +16,6 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\EventGame;
 use App\Models\UserNotification;
 use App\Models\Notification;
-use App\Models\TournamentOrganizer;
 
 class FinalTournamentController extends Controller
 {
@@ -751,25 +750,10 @@ class FinalTournamentController extends Controller
             'reason' => 'nullable|string|max:1000',
         ]);
 
-        // Eager load tournament relationship
-        $event = Event::with(['participants', 'tournament'])->findOrFail($eventId);
-        
-        // Get tournament - try relationship first, then direct lookup
-        $tournament = $event->tournament;
-        if (!$tournament && $event->tournament_id) {
-            $tournament = \App\Models\Tournament::find($event->tournament_id);
-        }
+        $event = Event::with('participants')->findOrFail($eventId);
 
-        // authorization: event creator or tournament creator or tournament organizer
-        $isEventCreator = $event->created_by && (int)$event->created_by === (int)$user->id;
-        $isTournamentCreator = $tournament && $tournament->created_by && (int)$tournament->created_by === (int)$user->id;
-        $isOrganizer = $tournament && TournamentOrganizer::where('tournament_id', $tournament->id)
-            ->where('user_id', $user->id)
-            ->whereIn('role', ['owner', 'organizer'])
-            ->exists();
-            
-        $isAllowed = $isEventCreator || $isTournamentCreator || $isOrganizer;
-        if (! $isAllowed) {
+        // authorization: only the event creator can cancel the event
+        if (!$event->created_by || (int)$event->created_by !== (int)$user->id) {
             return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
         }
 
