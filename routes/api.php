@@ -372,6 +372,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('tournaments/create', [FinalTournamentController::class, 'storeTournament']);
     Route::get('tournaments/{id}', [FinalTournamentController::class, 'showTournament']);
     Route::put('tournaments/{id}', [FinalTournamentController::class, 'updateTournament']);
+    Route::get('tournaments/{tournamentId}/rulebook/download', [FinalTournamentController::class, 'downloadRulebook']);
 
     // Sub-events
     Route::post('tournaments/{tournamentId}/sub-events', [FinalTournamentController::class, 'storeSubEvent']);

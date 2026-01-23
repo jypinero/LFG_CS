@@ -1750,4 +1750,36 @@ class FinalTournamentController extends Controller
             'tournaments' => $tournaments,
         ], 200);
     }
+
+    /**
+     * Download tournament rulebook file
+     */
+    public function downloadRulebook($tournamentId)
+    {
+        $tournament = Tournament::findOrFail($tournamentId);
+
+        if (!$tournament->rulebook_file) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Rulebook not found'
+            ], 404);
+        }
+
+        if (!Storage::disk('public')->exists($tournament->rulebook_file)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'File not found'
+            ], 404);
+        }
+
+        // Generate filename from tournament name
+        $filename = ($tournament->name ?: 'tournament-rulebook') . '.pdf';
+        // Sanitize filename
+        $filename = preg_replace('/[^a-zA-Z0-9\-_\.]/', '-', $filename);
+
+        return Storage::disk('public')->download(
+            $tournament->rulebook_file,
+            $filename
+        );
+    }
 }
