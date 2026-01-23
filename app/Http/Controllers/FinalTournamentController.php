@@ -195,15 +195,35 @@ class FinalTournamentController extends Controller
         }
 
         // Handle uploaded rulebook PDF file
+        \Log::info('Tournament update: Checking for rulebook_file', [
+            'hasFile' => $request->hasFile('rulebook_file'),
+            'allFiles' => array_keys($request->allFiles()),
+            'inputKeys' => array_keys($request->all())
+        ]);
+        
         if ($request->hasFile('rulebook_file')) {
+            $file = $request->file('rulebook_file');
+            \Log::info('Tournament update: Rulebook file found', [
+                'name' => $file->getClientOriginalName(),
+                'size' => $file->getSize(),
+                'mime' => $file->getMimeType()
+            ]);
+            
             // Delete old rulebook if exists
             if (!empty($tournament->rulebook_file)) {
                 try {
                     Storage::disk('public')->delete($tournament->rulebook_file);
-                } catch (\Throwable $ex) {}
+                    \Log::info('Tournament update: Old rulebook deleted', ['old_path' => $tournament->rulebook_file]);
+                } catch (\Throwable $ex) {
+                    \Log::warning('Tournament update: Failed to delete old rulebook', ['error' => $ex->getMessage()]);
+                }
             }
-            $path = $request->file('rulebook_file')->store('tournaments/rulebooks', 'public');
+            
+            $path = $file->store('tournaments/rulebooks', 'public');
             $data['rulebook_file'] = $path;
+            \Log::info('Tournament update: Rulebook saved', ['path' => $path]);
+        } else {
+            \Log::warning('Tournament update: Rulebook file NOT found in request');
         }
 
         $tournament->update($data);
