@@ -2659,9 +2659,10 @@ class VenueController extends Controller
             ];
         })->values();
 
-        // Revenue by facility breakdown (when venue is selected)
+        // Revenue by facility breakdown (always include when venue is selected)
         $revenueByFacility = [];
-        if ($filterVenueId && !$facilityId) {
+        $totalFacilityRevenue = 0;
+        if ($filterVenueId) {
             $venueFacilities = Facilities::where('venue_id', $filterVenueId)->get();
             foreach ($venueFacilities as $facility) {
                 $facilityEventsQuery = DB::table('events')
@@ -2691,12 +2692,16 @@ class VenueController extends Controller
                     $facilityRevenue = 0;
                 }
 
+                $formattedRevenue = number_format($facilityRevenue, 2, '.', '');
+                $totalFacilityRevenue += $facilityRevenue;
+
                 $revenueByFacility[] = [
                     'facility_id' => $facility->id,
                     'facility_name' => $facility->name ?? $facility->type,
                     'facility_type' => $facility->type,
                     'events' => $facilityEvents,
-                    'revenue' => $facilityRevenue,
+                    'revenue' => (float) $formattedRevenue,
+                    'amount' => (float) $formattedRevenue, // Alias for print-friendly format
                 ];
             }
         }
@@ -2722,9 +2727,13 @@ class VenueController extends Controller
             $response['analytics']['facilities'] = $facilities;
         }
 
-        // Add revenue by facility if venue selected but no specific facility
-        if (!empty($revenueByFacility)) {
-            $response['analytics']['revenue_by_facility'] = $revenueByFacility;
+        // Always include revenue by facility with print-friendly formatting when venue is selected
+        if ($filterVenueId) {
+            $response['analytics']['revenue_by_facility'] = [
+                'total' => (float) number_format($totalFacilityRevenue, 2, '.', ''),
+                'breakdown' => $revenueByFacility,
+                'formatted_for_print' => true,
+            ];
         }
 
         return response()->json($response);

@@ -23,6 +23,8 @@ class Kernel extends ConsoleKernel
         $schedule->job(new \App\Jobs\NotifyParticipantsToRateJob)->hourly()->withoutOverlapping();
         // run the completion job every minute (adjust frequency as needed)
         $schedule->job(new \App\Jobs\CompletePastEventsJob)->everyMinute()->withoutOverlapping();
+        // Cleanup old pending participants daily
+        $schedule->command('participants:cleanup')->daily();
     }
 
     protected function commands()

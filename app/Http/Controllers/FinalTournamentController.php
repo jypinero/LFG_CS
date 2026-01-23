@@ -351,6 +351,7 @@ class FinalTournamentController extends Controller
                 'name' => $user->first_name . ' ' . $user->last_name,
                 'tournament_id' => $event->tournament_id,
                 'status' => 'pending',
+                'registration_datetime' => Carbon::now(),
             ];
             if ($storedDocuments && \Schema::hasColumn('event_participants', 'documents')) {
                 $payload['documents'] = json_encode($storedDocuments);
@@ -410,6 +411,7 @@ class FinalTournamentController extends Controller
             'registered_by' => $user->id,
             'tournament_id' => $event->tournament_id,
             'status' => 'pending',
+            'registration_datetime' => Carbon::now(),
         ];
         if ($storedDocuments && \Schema::hasColumn('event_participants', 'documents')) {
             $teamRegistrationPayload['documents'] = json_encode($storedDocuments);
@@ -442,6 +444,7 @@ class FinalTournamentController extends Controller
                 'team_name' => $team->name,
                 'status' => 'pending',
                 'tournament_id' => $event->tournament_id,
+                'registration_datetime' => Carbon::now(),
             ];
             if ($storedDocuments && \Schema::hasColumn('event_participants', 'documents')) {
                 $pPayload['documents'] = json_encode($storedDocuments);
@@ -462,7 +465,7 @@ class FinalTournamentController extends Controller
     }
 
     // Fetch participants for a sub-event (returns full participant / team / member fields)
-    public function participants($eventId)
+    public function participants(Request $request, $eventId)
     {
         $event = Event::with([
             'participants',
@@ -471,6 +474,12 @@ class FinalTournamentController extends Controller
             'participants.team.members.user',
             'tournament'
         ])->findOrFail($eventId);
+
+        // Get sort and search parameters
+        $sortBy = $request->input('sort_by', 'registration_datetime');
+        $sortOrder = $request->input('sort_order', 'desc');
+        $dateFrom = $request->input('search_date_from');
+        $dateTo = $request->input('search_date_to');
 
         // Get tournament type as primary source, fallback to event type
         $tournament = $event->tournament;
@@ -488,48 +497,83 @@ class FinalTournamentController extends Controller
         }
 
         if ($isFreeForAll) {
-            // Filter by approved/confirmed status
-            $users = $event->participants
+            // Build query for participants with sorting and date filtering
+            $participantsQuery = $event->participants()
                 ->whereNotNull('user_id')
-                ->whereIn('status', ['approved', 'confirmed', 'pending'])
-                ->map(function($p){
-                    $u = $p->user;
-                    $result = [
-                        'id' => $p->id,
-                        'user_id' => $u->id ?? null,
-                        'first_name' => $u->first_name ?? null,
-                        'last_name'  => $u->last_name ?? null,
-                        'position'   => $p->position ?? ($u->position ?? null),
-                        'status' => $p->status ?? null,
-                    ];
-                    
-                    // Include documents if column exists and documents are present
-                    if (Schema::hasColumn('event_participants', 'documents') && $p->documents) {
-                        $result['documents'] = json_decode($p->documents, true);
-                    } else {
-                        $result['documents'] = null;
-                    }
-                    
-                    return $result;
-                })->values();
+                ->whereIn('status', ['approved', 'confirmed', 'pending']);
+
+            // Apply date filtering
+            if ($dateFrom) {
+                $participantsQuery->whereDate('registration_datetime', '>=', $dateFrom);
+            }
+            if ($dateTo) {
+                $participantsQuery->whereDate('registration_datetime', '<=', $dateTo);
+            }
+
+            // Apply sorting
+            $validSortFields = ['registration_datetime', 'created_at', 'status'];
+            $sortBy = in_array($sortBy, $validSortFields) ? $sortBy : 'registration_datetime';
+            $sortOrder = strtolower($sortOrder) === 'asc' ? 'asc' : 'desc';
+            $participantsQuery->orderBy($sortBy, $sortOrder);
+
+            $participants = $participantsQuery->with('user')->get();
+
+            // Filter by approved/confirmed status
+            $users = $participants->map(function($p){
+                $u = $p->user;
+                $result = [
+                    'id' => $p->id,
+                    'user_id' => $u->id ?? null,
+                    'first_name' => $u->first_name ?? null,
+                    'last_name'  => $u->last_name ?? null,
+                    'position'   => $p->position ?? ($u->position ?? null),
+                    'status' => $p->status ?? null,
+                    'registration_datetime' => $p->registration_datetime ? $p->registration_datetime->format('Y-m-d H:i:s') : null,
+                ];
+                
+                // Include documents if column exists and documents are present
+                if (Schema::hasColumn('event_participants', 'documents') && $p->documents) {
+                    $result['documents'] = json_decode($p->documents, true);
+                } else {
+                    $result['documents'] = null;
+                }
+                
+                return $result;
+            })->values();
 
             return response()->json([
                 'type' => 'free_for_all',
                 'tournament_type' => $tournamentType ?? 'free for all',
                 'participants' => $users,
                 'participants_count' => $users->count(),
+                'sort_by' => $sortBy,
+                'sort_order' => $sortOrder,
             ]);
         }
 
         // team vs team: return team-level registrations only (team_id but no user_id)
         // These are the registrations that should be approved, not individual member records
         // Filter by approved/confirmed status
-        $teamParticipants = $event->participants()
+        $teamParticipantsQuery = $event->participants()
             ->whereNotNull('team_id')
             ->whereNull('user_id')
-            ->whereIn('status', ['approved', 'confirmed', 'pending'])
-            ->with(['team.members.user'])
-            ->get();
+            ->whereIn('status', ['approved', 'confirmed', 'pending']);
+
+        // Apply date filtering
+        if ($dateFrom) {
+            $teamParticipantsQuery->whereDate('registration_datetime', '>=', $dateFrom);
+        }
+        if ($dateTo) {
+            $teamParticipantsQuery->whereDate('registration_datetime', '<=', $dateTo);
+        }
+
+        // Apply sorting
+        $validSortFields = ['registration_datetime', 'created_at', 'status'];
+        $sortBy = in_array($sortBy, $validSortFields) ? $sortBy : 'registration_datetime';
+        $sortOrder = strtolower($sortOrder) === 'asc' ? 'asc' : 'desc';
+        $teamParticipantsQuery->orderBy($sortBy, $sortOrder);
+
+        $teamParticipants = $teamParticipantsQuery->with(['team.members.user'])->get();
 
         $teams = $teamParticipants->map(function($teamParticipant) {
             $team = $teamParticipant->team;
@@ -549,6 +593,7 @@ class FinalTournamentController extends Controller
                 'team_id' => $team->id ?? null,
                 'team_name' => $team->name ?? null,
                 'status' => $teamParticipant->status ?? null,
+                'registration_datetime' => $teamParticipant->registration_datetime ? $teamParticipant->registration_datetime->format('Y-m-d H:i:s') : null,
                 'members' => $members,
             ];
             
@@ -567,6 +612,8 @@ class FinalTournamentController extends Controller
             'tournament_type' => $tournamentType ?? 'team vs team',
             'teams' => $teams,
             'participants_count' => $teams->count(),
+            'sort_by' => $sortBy,
+            'sort_order' => $sortOrder,
         ]);
     }
 

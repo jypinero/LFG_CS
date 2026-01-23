@@ -15,6 +15,11 @@ class EventParticipant extends Model
         'team_id',
         'status',
         'tournament_id',  // added
+        'registration_datetime',
+    ];
+
+    protected $casts = [
+        'registration_datetime' => 'datetime',
     ];
 
     public function event()
