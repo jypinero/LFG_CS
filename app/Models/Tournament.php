@@ -31,6 +31,7 @@ class Tournament extends Model
         'min_teams',
         'registration_fee',
         'rules',
+        'rulebook_file',
         'prizes',
     ];
 

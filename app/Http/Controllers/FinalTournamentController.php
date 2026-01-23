@@ -41,6 +41,7 @@ class FinalTournamentController extends Controller
             'min_teams' => 'nullable|integer',
             'registration_fee' => 'nullable|numeric',
             'rules' => 'nullable|string',
+            'rulebook_file' => 'nullable|file|mimes:pdf|max:20480',
             'prizes' => 'nullable|string',
         ]);
 
@@ -50,12 +51,19 @@ class FinalTournamentController extends Controller
             $data['photo'] = $path;
         }
 
+        // Handle uploaded rulebook PDF file
+        if ($request->hasFile('rulebook_file')) {
+            $path = $request->file('rulebook_file')->store('tournaments/rulebooks', 'public');
+            $data['rulebook_file'] = $path;
+        }
+
         $data['created_by'] = auth()->id();
 
         $tournament = Tournament::create($data);
 
         $tournamentArray = $tournament->fresh()->toArray();
         $tournamentArray['photo_url'] = $tournament->photo ? Storage::url($tournament->photo) : null;
+        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::url($tournament->rulebook_file) : null;
 
         return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 201);
     }
@@ -98,6 +106,7 @@ class FinalTournamentController extends Controller
             'min_teams' => 'nullable|integer',
             'registration_fee' => 'nullable|numeric',
             'rules' => 'nullable|string',
+            'rulebook_file' => 'nullable|file|mimes:pdf|max:20480',
             'prizes' => 'nullable|string',
         ]);
 
@@ -113,10 +122,23 @@ class FinalTournamentController extends Controller
             $data['photo'] = $path;
         }
 
+        // Handle uploaded rulebook PDF file
+        if ($request->hasFile('rulebook_file')) {
+            // Delete old rulebook if exists
+            if (!empty($tournament->rulebook_file)) {
+                try {
+                    Storage::disk('public')->delete($tournament->rulebook_file);
+                } catch (\Throwable $ex) {}
+            }
+            $path = $request->file('rulebook_file')->store('tournaments/rulebooks', 'public');
+            $data['rulebook_file'] = $path;
+        }
+
         $tournament->update($data);
 
         $tournamentArray = $tournament->fresh()->toArray();
         $tournamentArray['photo_url'] = $tournament->photo ? Storage::url($tournament->photo) : null;
+        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::url($tournament->rulebook_file) : null;
 
         return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 200);
     }
