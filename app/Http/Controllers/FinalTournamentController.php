@@ -77,12 +77,28 @@ class FinalTournamentController extends Controller
         if ($request->hasFile('photo')) {
             $path = $request->file('photo')->store('tournaments', 'public');
             $data['photo'] = $path;
+            \Log::info('Tournament creation: Photo uploaded', ['path' => $path]);
         }
 
         // Handle uploaded rulebook PDF file
+        \Log::info('Tournament creation: Checking for rulebook_file', [
+            'hasFile' => $request->hasFile('rulebook_file'),
+            'allFiles' => array_keys($request->allFiles()),
+            'inputKeys' => array_keys($request->all())
+        ]);
+        
         if ($request->hasFile('rulebook_file')) {
-            $path = $request->file('rulebook_file')->store('tournaments/rulebooks', 'public');
+            $file = $request->file('rulebook_file');
+            \Log::info('Tournament creation: Rulebook file found', [
+                'name' => $file->getClientOriginalName(),
+                'size' => $file->getSize(),
+                'mime' => $file->getMimeType()
+            ]);
+            $path = $file->store('tournaments/rulebooks', 'public');
             $data['rulebook_file'] = $path;
+            \Log::info('Tournament creation: Rulebook saved', ['path' => $path]);
+        } else {
+            \Log::warning('Tournament creation: Rulebook file NOT found in request');
         }
 
         $data['created_by'] = auth()->id();
