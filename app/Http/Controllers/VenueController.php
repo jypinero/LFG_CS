@@ -2489,16 +2489,39 @@ class VenueController extends Controller
         }
 
         $recentEvents = $recentEventsQuery
-            ->select('id', 'venue_id', 'name', 'created_at', 'date', 'facility_id')
+            ->join('facilities', 'events.facility_id', '=', 'facilities.id')
+            ->select(
+                'events.id', 
+                'events.venue_id', 
+                'events.name', 
+                'events.created_at', 
+                'events.date', 
+                'events.facility_id',
+                'events.start_time',
+                'events.end_time',
+                'facilities.price_per_hr'
+            )
             ->limit(20)
             ->get()
-            ->map(fn($e) => [
-                'id' => $e->id,
-                'venue_id' => $e->venue_id,
-                'name' => $e->name,
-                'date' => $e->date ?? \Carbon\Carbon::parse($e->created_at)->toDateString(),
-                'facility_id' => $e->facility_id ?? null,
-            ]);
+            ->map(function($e) {
+                // Calculate hours from start_time and end_time
+                $start = Carbon::parse($e->start_time);
+                $end = Carbon::parse($e->end_time);
+                $hours = $start->diffInMinutes($end) / 60;
+                
+                // Calculate revenue: hours × price_per_hr
+                $revenue = (float) ($hours * ($e->price_per_hr ?? 0));
+                
+                return [
+                    'id' => $e->id,
+                    'venue_id' => $e->venue_id,
+                    'name' => $e->name,
+                    'date' => $e->date ?? Carbon::parse($e->created_at)->toDateString(),
+                    'facility_id' => $e->facility_id ?? null,
+                    'revenue' => $revenue,
+                    'hours' => round($hours, 2),
+                ];
+            });
 
         // weekly revenue calculation - adapt to date range or use current week
         $useDate = Schema::hasColumn('events', 'date');
