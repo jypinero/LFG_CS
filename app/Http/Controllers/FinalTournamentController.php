@@ -106,8 +106,8 @@ class FinalTournamentController extends Controller
         $tournament = Tournament::create($data);
 
         $tournamentArray = $tournament->fresh()->toArray();
-        $tournamentArray['photo_url'] = $tournament->photo ? Storage::url($tournament->photo) : null;
-        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::url($tournament->rulebook_file) : null;
+        $tournamentArray['photo_url'] = $tournament->photo ? Storage::disk('public')->url($tournament->photo) : null;
+        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::disk('public')->url($tournament->rulebook_file) : null;
 
         return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 201);
     }
@@ -229,8 +229,8 @@ class FinalTournamentController extends Controller
         $tournament->update($data);
 
         $tournamentArray = $tournament->fresh()->toArray();
-        $tournamentArray['photo_url'] = $tournament->photo ? Storage::url($tournament->photo) : null;
-        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::url($tournament->rulebook_file) : null;
+        $tournamentArray['photo_url'] = $tournament->photo ? Storage::disk('public')->url($tournament->photo) : null;
+        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::disk('public')->url($tournament->rulebook_file) : null;
 
         return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 200);
     }
@@ -772,8 +772,8 @@ class FinalTournamentController extends Controller
 
         // Build tournament array with URLs
         $tournamentArray = $tournament->toArray();
-        $tournamentArray['photo_url'] = $tournament->photo ? Storage::url($tournament->photo) : null;
-        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::url($tournament->rulebook_file) : null;
+        $tournamentArray['photo_url'] = $tournament->photo ? Storage::disk('public')->url($tournament->photo) : null;
+        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::disk('public')->url($tournament->rulebook_file) : null;
 
         return response()->json([
             'status' => 'success',
