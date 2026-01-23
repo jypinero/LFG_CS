@@ -23,6 +23,34 @@ class FinalTournamentController extends Controller
     // Create Tournament (uses all Tournament fillable fields)
     public function storeTournament(Request $request)
     {
+        // Parse JSON strings from FormData before validation
+        // FormData sends JSON as strings, so we need to decode them
+        if ($request->has('settings') && is_string($request->input('settings'))) {
+            $decoded = json_decode($request->input('settings'), true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $request->merge(['settings' => $decoded]);
+            } else {
+                $request->merge(['settings' => []]);
+            }
+        }
+        
+        if ($request->has('required_documents') && is_string($request->input('required_documents'))) {
+            $decoded = json_decode($request->input('required_documents'), true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $request->merge(['required_documents' => $decoded]);
+            } else {
+                $request->merge(['required_documents' => []]);
+            }
+        }
+        
+        // Convert '1'/'0' strings to boolean for requires_documents (FormData sends strings)
+        if ($request->has('requires_documents')) {
+            $value = $request->input('requires_documents');
+            if (is_string($value)) {
+                $request->merge(['requires_documents' => $value === '1' || $value === 'true']);
+            }
+        }
+
         $data = $request->validate([
             'name' => 'required|string|max:255',
             'photo' => 'nullable|image|mimes:jpeg,png,jpg,gif|max:10240',
@@ -85,6 +113,34 @@ class FinalTournamentController extends Controller
         $isCreator = $tournament->created_by === $user->id;
         if (!$isCreator) {
             return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        // Parse JSON strings from FormData before validation
+        // FormData sends JSON as strings, so we need to decode them
+        if ($request->has('settings') && is_string($request->input('settings'))) {
+            $decoded = json_decode($request->input('settings'), true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $request->merge(['settings' => $decoded]);
+            } else {
+                $request->merge(['settings' => []]);
+            }
+        }
+        
+        if ($request->has('required_documents') && is_string($request->input('required_documents'))) {
+            $decoded = json_decode($request->input('required_documents'), true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+                $request->merge(['required_documents' => $decoded]);
+            } else {
+                $request->merge(['required_documents' => []]);
+            }
+        }
+        
+        // Convert '1'/'0' strings to boolean for requires_documents (FormData sends strings)
+        if ($request->has('requires_documents')) {
+            $value = $request->input('requires_documents');
+            if (is_string($value)) {
+                $request->merge(['requires_documents' => $value === '1' || $value === 'true']);
+            }
         }
 
         // Use same validation as storeTournament, but name is 'sometimes' instead of 'required'
