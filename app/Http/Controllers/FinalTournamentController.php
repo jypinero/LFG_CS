@@ -770,9 +770,14 @@ class FinalTournamentController extends Controller
 
         $subEvents = $paginatedEvents->getCollection()->map(fn($e) => $e->toArray())->values();
 
+        // Build tournament array with URLs
+        $tournamentArray = $tournament->toArray();
+        $tournamentArray['photo_url'] = $tournament->photo ? Storage::url($tournament->photo) : null;
+        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::url($tournament->rulebook_file) : null;
+
         return response()->json([
             'status' => 'success',
-            'tournament' => $tournament->toArray(),
+            'tournament' => $tournamentArray,
             'sub_events' => $subEvents,
             'pagination' => [
                 'current_page' => $paginatedEvents->currentPage(),
