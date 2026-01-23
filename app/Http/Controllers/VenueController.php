@@ -2465,31 +2465,31 @@ class VenueController extends Controller
 
         // recent events - use date range if specified, otherwise last 7 days
         $recentEventsQuery = DB::table('events')
-            ->whereIn('venue_id', $venueIds)
-            ->whereNull('cancelled_at');
+            ->join('facilities', 'events.facility_id', '=', 'facilities.id')
+            ->whereIn('events.venue_id', $venueIds)
+            ->whereNull('events.cancelled_at');
 
         if ($facilityId) {
-            $recentEventsQuery->where('facility_id', $facilityId);
+            $recentEventsQuery->where('events.facility_id', $facilityId);
         }
 
         if ($dateRange['start'] && $dateRange['end']) {
             $useDate = Schema::hasColumn('events', 'date');
             if ($useDate) {
-                $recentEventsQuery->whereBetween('date', [$dateRange['start'], $dateRange['end']])
-                    ->orderBy('date', 'desc');
+                $recentEventsQuery->whereBetween('events.date', [$dateRange['start'], $dateRange['end']])
+                    ->orderBy('events.date', 'desc');
             } else {
-                $recentEventsQuery->whereBetween('created_at', [
+                $recentEventsQuery->whereBetween('events.created_at', [
                     $dateRange['start'] . ' 00:00:00',
                     $dateRange['end'] . ' 23:59:59'
-                ])->orderBy('created_at', 'desc');
+                ])->orderBy('events.created_at', 'desc');
             }
         } else {
-            $recentEventsQuery->where('created_at', '>=', now()->subDays(7))
-                ->orderBy('created_at', 'desc');
+            $recentEventsQuery->where('events.created_at', '>=', now()->subDays(7))
+                ->orderBy('events.created_at', 'desc');
         }
 
         $recentEvents = $recentEventsQuery
-            ->join('facilities', 'events.facility_id', '=', 'facilities.id')
             ->select(
                 'events.id', 
                 'events.venue_id', 
