@@ -2266,7 +2266,8 @@ class TournamentController extends Controller
             'max_teams' => $tournament->max_teams,
             'min_teams' => $tournament->min_teams,
             'rulebook_file' => $tournament->rulebook_file,
-            'rulebook_url' => $tournament->rulebook_file ? Storage::disk('public')->url($tournament->rulebook_file) : null,
+            // Don't generate rulebook_url - let frontend handle it like photos
+            // Just return rulebook_file path
             'photo_url' => $tournament->photo ? Storage::disk('public')->url($tournament->photo) : null,
             'created_at' => $tournament->created_at,
             'events' => $tournament->events->map(function($event) {

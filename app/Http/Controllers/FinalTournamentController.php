@@ -107,7 +107,8 @@ class FinalTournamentController extends Controller
 
         $tournamentArray = $tournament->fresh()->toArray();
         $tournamentArray['photo_url'] = $tournament->photo ? Storage::disk('public')->url($tournament->photo) : null;
-        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::disk('public')->url($tournament->rulebook_file) : null;
+        // Don't generate rulebook_url - let frontend handle it like photos
+        // Just return rulebook_file path
 
         return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 201);
     }
@@ -230,7 +231,8 @@ class FinalTournamentController extends Controller
 
         $tournamentArray = $tournament->fresh()->toArray();
         $tournamentArray['photo_url'] = $tournament->photo ? Storage::disk('public')->url($tournament->photo) : null;
-        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::disk('public')->url($tournament->rulebook_file) : null;
+        // Don't generate rulebook_url - let frontend handle it like photos
+        // Just return rulebook_file path
 
         return response()->json(['status' => 'success', 'tournament' => $tournamentArray], 200);
     }
@@ -773,7 +775,8 @@ class FinalTournamentController extends Controller
         // Build tournament array with URLs
         $tournamentArray = $tournament->toArray();
         $tournamentArray['photo_url'] = $tournament->photo ? Storage::disk('public')->url($tournament->photo) : null;
-        $tournamentArray['rulebook_url'] = $tournament->rulebook_file ? Storage::disk('public')->url($tournament->rulebook_file) : null;
+        // Don't generate rulebook_url - let frontend handle it like photos
+        // Just return rulebook_file path
 
         return response()->json([
             'status' => 'success',
