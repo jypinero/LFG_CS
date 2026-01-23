@@ -183,6 +183,7 @@ Route::middleware('auth:api')->group(function () {
     Route::prefix('entity-documents')->group(function () {
         Route::post('/', [\App\Http\Controllers\EntityDocumentController::class, 'store']);
         Route::get('/', [\App\Http\Controllers\EntityDocumentController::class, 'index']);
+        Route::get('/{id}/download', [\App\Http\Controllers\EntityDocumentController::class, 'download']);
         Route::delete('/{id}', [\App\Http\Controllers\EntityDocumentController::class, 'destroy']);
     });
 

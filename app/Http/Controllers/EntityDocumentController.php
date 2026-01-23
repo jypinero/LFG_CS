@@ -237,6 +237,62 @@ class EntityDocumentController extends Controller
         ]);
     }
 
+    /**
+     * Download document file
+     */
+    public function download($id)
+    {
+        $user = auth()->user();
+        
+        $document = EntityDocument::find($id);
+        
+        if (!$document) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Document not found'
+            ], 404);
+        }
+        
+        // Get the entity to check permissions
+        $entity = $document->documentable;
+        if (!$entity) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Associated entity not found'
+            ], 404);
+        }
+        
+        // Determine entity type for permission check
+        $entityType = $this->getEntityTypeFromModel($document->documentable_type);
+        
+        if (!$entityType) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid entity type'
+            ], 400);
+        }
+        
+        // Check if user has permission to download document for this entity
+        if (!$this->canUploadDocument($user, $entity, $entityType)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You do not have permission to download this document'
+            ], 403);
+        }
+
+        if (!Storage::disk('public')->exists($document->file_path)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'File not found'
+            ], 404);
+        }
+
+        return Storage::disk('public')->download(
+            $document->file_path,
+            $document->document_name . '.' . pathinfo($document->file_path, PATHINFO_EXTENSION)
+        );
+    }
+
     protected function canUploadDocument($user, $entity, $entityType)
     {
         switch ($entityType) {
