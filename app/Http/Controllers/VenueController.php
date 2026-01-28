@@ -62,27 +62,30 @@ class VenueController extends Controller
                 'created_by' => $venue->created_by,
                 'created_at' => $venue->created_at,
                 'updated_at' => $venue->updated_at,
-                'facilities' => $venue->facilities->map(function ($facility) {
-                    return [
-                        'id' => $facility->id,
-                        'venue_id' => $facility->venue_id,
-                        'price_per_hr' => $facility->price_per_hr,
-                        'type' => $facility->type,
-                        'name' => $facility->name,
-                        'capacity' => $facility->capacity,
-                        'covered' => $facility->covered,
-                        // Show all facility photos
-                        'photos' => $facility->photos->map(function ($photo) {
-                            return [
-                                'id' => $photo->id,
-                                'image_url' => Storage::url($photo->image_path),
-                                'uploaded_at' => $photo->uploaded_at,
-                            ];
-                        }),
-                        'created_at' => $facility->created_at,
-                        'updated_at' => $facility->updated_at,
-                    ];
-                }),
+                'facilities' => $venue->facilities()
+                    ->where('is_closed', false)
+                    ->get()
+                    ->map(function ($facility) {
+                        return [
+                            'id' => $facility->id,
+                            'venue_id' => $facility->venue_id,
+                            'price_per_hr' => $facility->price_per_hr,
+                            'type' => $facility->type,
+                            'name' => $facility->name,
+                            'capacity' => $facility->capacity,
+                            'covered' => $facility->covered,
+                            // Show all facility photos
+                            'photos' => $facility->photos->map(function ($photo) {
+                                return [
+                                    'id' => $photo->id,
+                                    'image_url' => Storage::url($photo->image_path),
+                                    'uploaded_at' => $photo->uploaded_at,
+                                ];
+                            }),
+                            'created_at' => $facility->created_at,
+                            'updated_at' => $facility->updated_at,
+                        ];
+                    }),
             ];
         });
 
@@ -123,26 +126,29 @@ class VenueController extends Controller
                 'created_by' => $venue->created_by,
                 'created_at' => $venue->created_at,
                 'updated_at' => $venue->updated_at,
-                'facilities' => $venue->facilities->map(function ($facility) {
-                    return [
-                        'id' => $facility->id,
-                        'venue_id' => $facility->venue_id,
-                        'price_per_hr' => $facility->price_per_hr,
-                        'type' => $facility->type,
-                        'name' => $facility->name,
-                        'capacity' => $facility->capacity,
-                        'covered' => $facility->covered,
-                        'photos' => $facility->photos->map(function ($photo) {
-                            return [
-                                'id' => $photo->id,
-                                'image_url' => Storage::url($photo->image_path),
-                                'uploaded_at' => $photo->uploaded_at,
-                            ];
-                        }),
-                        'created_at' => $facility->created_at,
-                        'updated_at' => $facility->updated_at,
-                    ];
-                }),
+                'facilities' => $venue->facilities()
+                    ->where('is_closed', false)
+                    ->get()
+                    ->map(function ($facility) {
+                        return [
+                            'id' => $facility->id,
+                            'venue_id' => $facility->venue_id,
+                            'price_per_hr' => $facility->price_per_hr,
+                            'type' => $facility->type,
+                            'name' => $facility->name,
+                            'capacity' => $facility->capacity,
+                            'covered' => $facility->covered,
+                            'photos' => $facility->photos->map(function ($photo) {
+                                return [
+                                    'id' => $photo->id,
+                                    'image_url' => Storage::url($photo->image_path),
+                                    'uploaded_at' => $photo->uploaded_at,
+                                ];
+                            }),
+                            'created_at' => $facility->created_at,
+                            'updated_at' => $facility->updated_at,
+                        ];
+                    }),
             ];
         });
 
@@ -192,26 +198,29 @@ class VenueController extends Controller
                 'created_by' => $venue->created_by,
                 'created_at' => $venue->created_at,
                 'updated_at' => $venue->updated_at,
-                'facilities' => $venue->facilities->map(function ($facility) {
-                    return [
-                        'id' => $facility->id,
-                        'venue_id' => $facility->venue_id,
-                        'price_per_hr' => $facility->price_per_hr,
-                        'type' => $facility->type,
-                        'name' => $facility->name,
-                        'capacity' => $facility->capacity,
-                        'covered' => $facility->covered,
-                        'photos' => $facility->photos->map(function ($photo) {
-                            return [
-                                'id' => $photo->id,
-                                'image_url' => Storage::url($photo->image_path),
-                                'uploaded_at' => $photo->uploaded_at,
-                            ];
-                        }),
-                        'created_at' => $facility->created_at,
-                        'updated_at' => $facility->updated_at,
-                    ];
-                }),
+                'facilities' => $venue->facilities()
+                    ->where('is_closed', false)
+                    ->get()
+                    ->map(function ($facility) {
+                        return [
+                            'id' => $facility->id,
+                            'venue_id' => $facility->venue_id,
+                            'price_per_hr' => $facility->price_per_hr,
+                            'type' => $facility->type,
+                            'name' => $facility->name,
+                            'capacity' => $facility->capacity,
+                            'covered' => $facility->covered,
+                            'photos' => $facility->photos->map(function ($photo) {
+                                return [
+                                    'id' => $photo->id,
+                                    'image_url' => Storage::url($photo->image_path),
+                                    'uploaded_at' => $photo->uploaded_at,
+                                ];
+                            }),
+                            'created_at' => $facility->created_at,
+                            'updated_at' => $facility->updated_at,
+                        ];
+                    }),
             ];
         })->values();
 
@@ -290,8 +299,8 @@ class VenueController extends Controller
             'longitude' => 'nullable|numeric',
             'verified_at' => 'nullable|date',
             'verification_expires_at' => 'nullable|date',
-            'phone_number' => 'nullable|string|max:20',
-            'email' => 'nullable|email|max:255',
+            'phone_number' => 'required|string|max:20',
+            'email' => 'required|email|max:255',
             'facebook_url' => 'nullable|url|max:255',
             'instagram_url' => 'nullable|url|max:255',
             'website' => 'nullable|url|max:255',
@@ -486,26 +495,29 @@ class VenueController extends Controller
             'created_by' => $venue->created_by,
             'created_at' => $venue->created_at,
             'updated_at' => $venue->updated_at,
-            'facilities' => $venue->facilities->map(function ($facility) {
-                return [
-                    'id' => $facility->id,
-                    'venue_id' => $facility->venue_id,
-                    'name' => $facility->name,
-                    'price_per_hr' => $facility->price_per_hr,
-                    'type' => $facility->type,
-                    'capacity' => $facility->capacity,
-                    'covered' => $facility->covered,
-                    'photos' => $facility->photos->map(function ($photo) {
-                        return [
-                            'id' => $photo->id,
-                            'image_url' => Storage::url($photo->image_path),
-                            'uploaded_at' => $photo->uploaded_at,
-                        ];
-                    }),
-                    'created_at' => $facility->created_at,
-                    'updated_at' => $facility->updated_at,
-                ];
-            }),
+            'facilities' => $venue->facilities()
+                ->where('is_closed', false)
+                ->get()
+                ->map(function ($facility) {
+                    return [
+                        'id' => $facility->id,
+                        'venue_id' => $facility->venue_id,
+                        'name' => $facility->name,
+                        'price_per_hr' => $facility->price_per_hr,
+                        'type' => $facility->type,
+                        'capacity' => $facility->capacity,
+                        'covered' => $facility->covered,
+                        'photos' => $facility->photos->map(function ($photo) {
+                            return [
+                                'id' => $photo->id,
+                                'image_url' => Storage::url($photo->image_path),
+                                'uploaded_at' => $photo->uploaded_at,
+                            ];
+                        }),
+                        'created_at' => $facility->created_at,
+                        'updated_at' => $facility->updated_at,
+                    ];
+                }),
             'operating_hours' => $venue->operatingHours,
             'amenities' => $venue->amenities,
             'closure_dates' => $venue->closureDates,
@@ -701,18 +713,21 @@ class VenueController extends Controller
                     'latitude' => $venue->latitude,
                     'longitude' => $venue->longitude,
                     'photos' => $venue->photos->map(fn($p) => ['id'=>$p->id,'image_url'=>Storage::url($p->image_path),'uploaded_at'=>$p->uploaded_at]),
-                    'facilities' => $venue->facilities->map(function ($facility) {
-                        return [
-                            'id' => $facility->id,
-                            'venue_id' => $facility->venue_id,
-                            'price_per_hr' => $facility->price_per_hr,
-                            'type' => $facility->type,
-                            'name' => $facility->name,
-                            'capacity' => $facility->capacity,
-                            'covered' => $facility->covered,
-                            'photos' => $facility->photos->map(fn($p) => ['id'=>$p->id,'image_url'=>Storage::url($p->image_path),'uploaded_at'=>$p->uploaded_at]),
-                        ];
-                    }),
+                    'facilities' => $venue->facilities()
+                        ->where('is_closed', false)
+                        ->get()
+                        ->map(function ($facility) {
+                            return [
+                                'id' => $facility->id,
+                                'venue_id' => $facility->venue_id,
+                                'price_per_hr' => $facility->price_per_hr,
+                                'type' => $facility->type,
+                                'name' => $facility->name,
+                                'capacity' => $facility->capacity,
+                                'covered' => $facility->covered,
+                                'photos' => $facility->photos->map(fn($p) => ['id'=>$p->id,'image_url'=>Storage::url($p->image_path),'uploaded_at'=>$p->uploaded_at]),
+                            ];
+                        }),
                     'verified_at' => $venue->verified_at,
                     'verification_expires_at' => $venue->verification_expires_at,
                     'created_by' => $venue->created_by,
@@ -981,6 +996,72 @@ class VenueController extends Controller
         ]);
 
         return response()->json(['status' => 'success', 'message' => 'Venue reopened']);
+    }
+
+    /**
+     * Mark facility as closed
+     */
+    public function closeFacility(Request $request, $venueId, $facilityId)
+    {
+        $facility = Facilities::where('id', $facilityId)
+            ->where('venue_id', $venueId)
+            ->firstOrFail();
+        
+        $venue = $facility->venue;
+        $user = auth()->user();
+
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->where(function ($q) { $q->where('role', 'owner')->orWhere('is_primary_owner', true); })
+            ->exists();
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $validated = $request->validate([
+            'reason' => 'nullable|string|max:255',
+        ]);
+
+        $facility->update([
+            'is_closed' => true,
+            'closed_at' => now(),
+            'closed_reason' => $validated['reason'] ?? null,
+        ]);
+
+        return response()->json(['status' => 'success', 'message' => 'Facility marked as closed']);
+    }
+
+    /**
+     * Reopen a closed facility
+     */
+    public function reopenFacility(Request $request, $venueId, $facilityId)
+    {
+        $facility = Facilities::where('id', $facilityId)
+            ->where('venue_id', $venueId)
+            ->firstOrFail();
+        
+        $venue = $facility->venue;
+        $user = auth()->user();
+
+        $isCreator = $user && $venue && $user->id === $venue->created_by;
+        $isVenueUserOwner = VenueUser::where('venue_id', $venue->id)
+            ->where('user_id', $user->id)
+            ->where(function ($q) { $q->where('role', 'owner')->orWhere('is_primary_owner', true); })
+            ->exists();
+
+        if (! $isCreator && ! $isVenueUserOwner) {
+            return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
+        }
+
+        $facility->update([
+            'is_closed' => false,
+            'closed_at' => null,
+            'closed_reason' => null,
+        ]);
+
+        return response()->json(['status' => 'success', 'message' => 'Facility reopened']);
     }
 
     /**
@@ -2353,14 +2434,17 @@ class VenueController extends Controller
         if ($filterVenueId) {
             $venue = Venue::with('facilities')->find($filterVenueId);
             if ($venue) {
-                $facilities = $venue->facilities->map(function ($facility) {
-                    return [
-                        'id' => $facility->id,
-                        'name' => $facility->name ?? $facility->type,
-                        'type' => $facility->type,
-                        'price_per_hr' => $facility->price_per_hr,
-                    ];
-                });
+                $facilities = $venue->facilities()
+                    ->where('is_closed', false)
+                    ->get()
+                    ->map(function ($facility) {
+                        return [
+                            'id' => $facility->id,
+                            'name' => $facility->name ?? $facility->type,
+                            'type' => $facility->type,
+                            'price_per_hr' => $facility->price_per_hr,
+                        ];
+                    });
             }
         }
 
@@ -3400,22 +3484,25 @@ class VenueController extends Controller
                         'uploaded_at' => $p->uploaded_at,
                     ];
                 }),
-                'facilities' => $venue->facilities->map(function ($facility) {
-                    return [
-                        'id' => $facility->id,
-                        'venue_id' => $facility->venue_id,
-                        'name' => $facility->name,
-                        'price_per_hr' => $facility->price_per_hr,
-                        'type' => $facility->type,
-                        'capacity' => $facility->capacity,
-                        'covered' => $facility->covered,
-                        'photos' => $facility->photos->map(function ($p) {
-                            return [
-                                'id' => $p->id,
-                                'image_url' => Storage::url($p->image_path),
-                                'uploaded_at' => $p->uploaded_at,
-                            ];
-                        }),
+                'facilities' => $venue->facilities()
+                    ->where('is_closed', false)
+                    ->get()
+                    ->map(function ($facility) {
+                        return [
+                            'id' => $facility->id,
+                            'venue_id' => $facility->venue_id,
+                            'name' => $facility->name,
+                            'price_per_hr' => $facility->price_per_hr,
+                            'type' => $facility->type,
+                            'capacity' => $facility->capacity,
+                            'covered' => $facility->covered,
+                            'photos' => $facility->photos->map(function ($p) {
+                                return [
+                                    'id' => $p->id,
+                                    'image_url' => Storage::url($p->image_path),
+                                    'uploaded_at' => $p->uploaded_at,
+                                ];
+                            }),
                         'created_at' => $facility->created_at,
                         'updated_at' => $facility->updated_at,
                     ];
@@ -3467,6 +3554,28 @@ class VenueController extends Controller
             'start_time' => 'required|date_format:H:i:s',
             'end_time' => 'required|date_format:H:i:s|after:start_time',
         ]);
+
+        // Check if facility is closed
+        $facility = Facilities::where('id', $facilityId)
+            ->where('venue_id', $venueId)
+            ->first();
+        
+        if (!$facility) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Facility not found'
+            ], 404);
+        }
+
+        if ($facility->is_closed) {
+            return response()->json([
+                'status' => 'success',
+                'is_booked' => true,
+                'conflicts' => [],
+                'requested' => ['date' => $v['date'], 'start_time' => $v['start_time'], 'end_time' => $v['end_time']],
+                'reason' => 'Facility is closed'
+            ], 200);
+        }
 
         $date = $v['date'];
         $start = $v['start_time'];

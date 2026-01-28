@@ -1316,6 +1316,15 @@ class EventController extends Controller
             ], 403);
         }
 
+        // Block creation if facility is closed
+        $facility = \App\Models\Facilities::find($request->facility_id);
+        if ($facility && $facility->is_closed) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'This facility is closed and not accepting new bookings.'
+            ], 403);
+        }
+
         // Prevent double booking: same venue + facility, same date, overlapping times
         $conflict = Event::where('venue_id', $request->venue_id)
             ->where('facility_id', $request->facility_id)

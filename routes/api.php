@@ -275,6 +275,8 @@ Route::middleware('auth:api')->group(function () {
 
     Route::post('/venues/{venueId}/facilities/{facilityId}/photos', [\App\Http\Controllers\VenueController::class, 'addFacilityPhoto'])->name('venues.facilities.photos.store');
     Route::delete('/venues/{venueId}/facilities/{facilityId}/photos/{photoId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityPhoto'])->name('venues.facilities.photos.destroy');
+    Route::post('/venues/{venueId}/facilities/{facilityId}/close', [VenueController::class, 'closeFacility']);
+    Route::post('/venues/{venueId}/facilities/{facilityId}/reopen', [VenueController::class, 'reopenFacility']);
     Route::post('/venues/{venueId}/addmembers', [\App\Http\Controllers\VenueController::class, 'addMember']);
     Route::get('venues/{venueId}/members', [VenueController::class, 'staff']);
 

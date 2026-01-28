@@ -16,10 +16,15 @@ class Facilities extends Model
         'name',
         'capacity',
         'covered',
+        'is_closed',
+        'closed_at',
+        'closed_reason',
     ];
 
     protected $casts = [
         'covered' => 'boolean',
+        'is_closed' => 'boolean',
+        'closed_at' => 'datetime',
     ];
 
     public function venue()

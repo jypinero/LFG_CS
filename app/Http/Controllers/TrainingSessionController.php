@@ -8,6 +8,7 @@ use App\Models\CoachProfile;
 use App\Models\CoachMatch;
 use App\Models\Booking;
 use App\Models\Venue;
+use App\Models\Facilities;
 use App\Models\Event;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
@@ -140,6 +141,15 @@ class TrainingSessionController extends Controller
                 return response()->json([
                     'status' => 'error',
                     'message' => 'This venue is closed and not accepting bookings'
+                ], 403);
+            }
+
+            // Check if facility is closed
+            $facility = Facilities::find($data['facility_id']);
+            if ($facility && $facility->is_closed) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'This facility is closed and not accepting bookings'
                 ], 403);
             }
 

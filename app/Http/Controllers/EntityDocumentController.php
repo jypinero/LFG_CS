@@ -31,6 +31,7 @@ class EntityDocumentController extends Controller
                 'business_license',
                 'certification',
                 'registration',
+                'permit',
                 'other'
             ])],
             'custom_type' => 'required_if:document_type,other|nullable|string|max:100',
