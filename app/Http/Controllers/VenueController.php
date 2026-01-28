@@ -2345,6 +2345,7 @@ class VenueController extends Controller
             'facility_id' => $facilityId,
             'period' => $period,
             'date_range' => $dateRange,
+            'show_all_venues' => !$filterVenueId,
         ];
 
         // Get facilities list if venue is selected
@@ -2466,6 +2467,7 @@ class VenueController extends Controller
         // recent events - use date range if specified, otherwise last 7 days
         $recentEventsQuery = DB::table('events')
             ->join('facilities', 'events.facility_id', '=', 'facilities.id')
+            ->join('venues', 'events.venue_id', '=', 'venues.id')
             ->whereIn('events.venue_id', $venueIds)
             ->whereNull('events.cancelled_at');
 
@@ -2499,7 +2501,10 @@ class VenueController extends Controller
                 'events.facility_id',
                 'events.start_time',
                 'events.end_time',
-                'facilities.price_per_hr'
+                'facilities.price_per_hr',
+                'facilities.name as facility_name',
+                'facilities.type as facility_type',
+                'venues.name as venue_name'
             )
             ->limit(20)
             ->get()
@@ -2515,9 +2520,12 @@ class VenueController extends Controller
                 return [
                     'id' => $e->id,
                     'venue_id' => $e->venue_id,
+                    'venue_name' => $e->venue_name ?? null,
                     'name' => $e->name,
                     'date' => $e->date ?? Carbon::parse($e->created_at)->toDateString(),
                     'facility_id' => $e->facility_id ?? null,
+                    'facility_name' => $e->facility_name ?? $e->facility_type ?? null,
+                    'facility_type' => $e->facility_type ?? null,
                     'revenue' => $revenue,
                     'hours' => round($hours, 2),
                 ];
@@ -2731,6 +2739,7 @@ class VenueController extends Controller
 
         $response = [
             'status' => 'success',
+            'report_generated_at' => now()->toIso8601String(),
             'analytics' => [
                 'filters_applied' => $filtersApplied,
                 'summary' => [
