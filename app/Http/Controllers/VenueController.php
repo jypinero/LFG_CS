@@ -438,15 +438,23 @@ class VenueController extends Controller
         $user = auth()->user();
         $isCreator = $user && $user->id === $venue->created_by;
         $isVenueUserOwner = false;
+        $isVenueUserManager = false;
         if (class_exists(\App\Models\VenueUser::class) && $user) {
             $isVenueUserOwner = \App\Models\VenueUser::where('venue_id', $venue->id)
                 ->where('user_id', $user->id)
                 ->where(function($q){ $q->where('role', 'owner')->orWhere('is_primary_owner', true); })
                 ->exists();
+            $isVenueUserManager = \App\Models\VenueUser::where('venue_id', $venue->id)
+                ->where('user_id', $user->id)
+                ->whereIn('role', ['manager', 'Manager', 'staff', 'Staff'])
+                ->exists();
         }
         if ($venue->is_closed && ! $isCreator && ! $isVenueUserOwner) {
             return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
         }
+        
+        // For owners/managers, include closed facilities for management purposes
+        $isOwnerOrManager = $isCreator || $isVenueUserOwner || $isVenueUserManager;
 
         // venue reviews
         $reviewsQuery = \App\Models\VenueReview::where('venue_id', $venue->id);
@@ -496,7 +504,6 @@ class VenueController extends Controller
             'created_at' => $venue->created_at,
             'updated_at' => $venue->updated_at,
             'facilities' => $venue->facilities()
-                ->where('is_closed', false)
                 ->get()
                 ->map(function ($facility) {
                     return [
@@ -507,6 +514,9 @@ class VenueController extends Controller
                         'type' => $facility->type,
                         'capacity' => $facility->capacity,
                         'covered' => $facility->covered,
+                        'is_closed' => $facility->is_closed,
+                        'closed_at' => $facility->closed_at,
+                        'closed_reason' => $facility->closed_reason,
                         'photos' => $facility->photos->map(function ($photo) {
                             return [
                                 'id' => $photo->id,
