@@ -2404,7 +2404,7 @@ class VenueController extends Controller
         // total events (exclude cancelled)
         $totalEvents = $baseQuery()->count();
 
-        // totalRevenue: prefer events.{revenueColumn} else join facilities.price_per_hr
+        // totalRevenue: prefer events.{revenueColumn} else calculate hours × price_per_hr
         if ($revenueColumn) {
             $totalRevenue = (float) $baseQuery()->sum($revenueColumn);
         } elseif (Schema::hasTable('facilities') && Schema::hasColumn('facilities', 'price_per_hr')) {
@@ -2429,7 +2429,19 @@ class VenueController extends Controller
                 }
             }
 
-            $totalRevenue = (float) $revenueQuery->sum('facilities.price_per_hr');
+            // Calculate revenue properly: hours × price_per_hr (same as recent_events calculation)
+            $revenueQuery->select('events.start_time', 'events.end_time', 'facilities.price_per_hr');
+            $events = $revenueQuery->get();
+            
+            $totalRevenue = 0;
+            foreach ($events as $event) {
+                if ($event->start_time && $event->end_time) {
+                    $start = Carbon::parse($event->start_time);
+                    $end = Carbon::parse($event->end_time);
+                    $hours = $start->diffInMinutes($end) / 60;
+                    $totalRevenue += (float) ($hours * ($event->price_per_hr ?? 0));
+                }
+            }
         } else {
             $totalRevenue = 0;
         }
@@ -2650,7 +2662,19 @@ class VenueController extends Controller
                         ]);
                     }
                 }
-                $earnings = (float) $earningsQuery->sum('facilities.price_per_hr');
+                // Calculate revenue properly: hours × price_per_hr
+                $earningsQuery->select('events.start_time', 'events.end_time', 'facilities.price_per_hr');
+                $venueEvents = $earningsQuery->get();
+                
+                $earnings = 0;
+                foreach ($venueEvents as $event) {
+                    if ($event->start_time && $event->end_time) {
+                        $start = Carbon::parse($event->start_time);
+                        $end = Carbon::parse($event->end_time);
+                        $hours = $start->diffInMinutes($end) / 60;
+                        $earnings += (float) ($hours * ($event->price_per_hr ?? 0));
+                    }
+                }
             } else {
                 $earnings = 0;
             }
@@ -2718,7 +2742,38 @@ class VenueController extends Controller
                 if ($revenueColumn) {
                     $facilityRevenue = (float) $facilityEventsQuery->sum($revenueColumn);
                 } elseif (Schema::hasColumn('facilities', 'price_per_hr')) {
-                    $facilityRevenue = (float) $facilityEvents * $facility->price_per_hr;
+                    // Calculate revenue properly: hours × price_per_hr for each event
+                    // Create a new query with facilities join to get price_per_hr
+                    $facilityRevenueQuery = DB::table('events')
+                        ->join('facilities', 'events.facility_id', '=', 'facilities.id')
+                        ->where('events.venue_id', $filterVenueId)
+                        ->where('events.facility_id', $facility->id)
+                        ->whereNull('events.cancelled_at');
+
+                    if ($dateRange['start'] && $dateRange['end']) {
+                        $useDate = Schema::hasColumn('events', 'date');
+                        if ($useDate) {
+                            $facilityRevenueQuery->whereBetween('events.date', [$dateRange['start'], $dateRange['end']]);
+                        } else {
+                            $facilityRevenueQuery->whereBetween('events.created_at', [
+                                $dateRange['start'] . ' 00:00:00',
+                                $dateRange['end'] . ' 23:59:59'
+                            ]);
+                        }
+                    }
+                    
+                    $facilityRevenueQuery->select('events.start_time', 'events.end_time', 'facilities.price_per_hr');
+                    $facilityEventsList = $facilityRevenueQuery->get();
+                    
+                    $facilityRevenue = 0;
+                    foreach ($facilityEventsList as $event) {
+                        if ($event->start_time && $event->end_time) {
+                            $start = Carbon::parse($event->start_time);
+                            $end = Carbon::parse($event->end_time);
+                            $hours = $start->diffInMinutes($end) / 60;
+                            $facilityRevenue += (float) ($hours * ($event->price_per_hr ?? 0));
+                        }
+                    }
                 } else {
                     $facilityRevenue = 0;
                 }
