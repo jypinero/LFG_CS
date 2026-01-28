@@ -434,7 +434,7 @@ class VenueController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
         }
         
-        // If closed, hide from non-owners (return 404 to appear non-existent)
+        // Check user permissions - allow owners/managers to see closed venues, and public to see closed venues with info
         $user = auth()->user();
         $isCreator = $user && $user->id === $venue->created_by;
         $isVenueUserOwner = false;
@@ -449,12 +449,12 @@ class VenueController extends Controller
                 ->whereIn('role', ['manager', 'Manager', 'staff', 'Staff'])
                 ->exists();
         }
-        if ($venue->is_closed && ! $isCreator && ! $isVenueUserOwner) {
-            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
-        }
         
         // For owners/managers, include closed facilities for management purposes
         $isOwnerOrManager = $isCreator || $isVenueUserOwner || $isVenueUserManager;
+        
+        // Note: We now allow closed venues to be visible to everyone (public can see closure info)
+        // Previously: if ($venue->is_closed && ! $isCreator && ! $isVenueUserOwner) { return 404; }
 
         // venue reviews
         $reviewsQuery = \App\Models\VenueReview::where('venue_id', $venue->id);
