@@ -233,4 +233,22 @@ class User extends Authenticatable implements JWTSubject
     {
         return $this->belongsTo(Sport::class, 'main_sport_id');
     }
+
+
+    public function hasActiveSubscription()
+    {
+        // Example logic: check if user has a subscription that is active (not expired)
+        $subscription = $this->venueSubscriptions()
+            ->where('status', 'active')
+            ->where('ends_at', '>', now())
+            ->first();
+
+        return $subscription !== null;
+    }
+
+    // Assuming relation in User model:
+    public function venueSubscriptions()
+    {
+        return $this->hasMany(VenueSubscription::class);
+    }
 }

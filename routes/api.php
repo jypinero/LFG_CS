@@ -31,6 +31,10 @@ use App\Http\Controllers\TeamAnalyticsController;
 use App\Http\Controllers\ChallongeAuthController;
 use App\Http\Controllers\ImageProxyController;
 use App\Http\Controllers\EmailVerificationController;
+use App\Http\Controllers\VenueSubscriptionController;
+use App\Http\Controllers\PayMongoWebhookController;
+use App\Http\Controllers\SubscriptionController;
+use App\Http\Controllers\WebhookController;
 
 /*
 |--------------------------------------------------------------------------
@@ -45,6 +49,17 @@ use App\Http\Controllers\EmailVerificationController;
 
 // Support contact form route
 Route::post('/support/contact', [SupportController::class, 'submitContact']);
+
+// Route::post('/webhook/paymongo', [WebhookController::class, 'handlePaymongoWebhook']);
+// // Route::post('/subscription/create', [SubscriptionController::class, 'createSubscriptionIntent']);
+// // Route::post('/webhook', [SubscriptionController::class, 'handleWebhook']); // webhook can be public or secured with secret header
+// // Route::post('/retry-payment', [SubscriptionController::class, 'retryPaymentIntent']);
+// // Route::post('/confirm-payment', [SubscriptionController::class, 'confirmPayment']);
+
+Route::middleware(['auth:api'])->group(function () {
+    Route::post('/subscriptions/start', [VenueSubscriptionController::class, 'start']);
+});
+
 
 // Public routes
 Route::post('/register', [AuthController::class, 'register']);
@@ -93,8 +108,20 @@ Route::post('tournaments/{tournament}/push-challonge', [NewTournamentController:
 // Session validation route (before auth middleware to avoid loop)
 Route::get('/auth/validate-session', [AuthController::class, 'validateSession'])->middleware('auth:api');
 
+
+Route::post('/webhooks/paymongo', [PayMongoWebhookController::class, 'handle']);
+Route::post('/subscription/webhook', [SubscriptionController::class, 'handleWebhook']);
+
+
 // Protected routes
 Route::middleware('auth:api')->group(function () {
+
+    Route::post('/subscriptions/start', [VenueSubscriptionController::class, 'start']);
+
+    Route::post('/subscription/create-intent', [SubscriptionController::class, 'createSubscriptionIntent']);
+
+
+    
 
     Route::post('/logout', [AuthController::class, 'logout']);
     Route::post('/refresh', [AuthController::class, 'refresh']);
@@ -249,74 +276,148 @@ Route::middleware('auth:api')->group(function () {
 
 
     Route::get('/venues', [VenueController::class, 'index']);
-    Route::post('/venues/create', [VenueController::class, 'store']);
-    Route::post('/venues/{venueId}/facilities', [VenueController::class, 'storeFacility']);
     Route::get('/venues/show/{venueId}', [VenueController::class, 'show']);
-    Route::post('/venues/edit/{venueId}', [VenueController::class, 'update']);
-    Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
-    Route::post('/venues/{venueId}/photos', [VenueController::class, 'addVenuePhoto'])->name('venues.photos.store');
-    Route::delete('/venues/{venueId}/photos/{photoId}', [VenueController::class, 'destroyVenuePhoto'])->name('venues.photos.destroy');
-    Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
-    Route::get('/venues/created', [VenueController::class, 'CreatedVenues']);
-    Route::get('/venues/owner/archived', [VenueController::class, 'OwnerArchivedVenues']);
-    Route::post('/venues/{venueId}/close', [VenueController::class, 'closeVenue']);
-    Route::post('/venues/{venueId}/reopen', [VenueController::class, 'reopenVenue']);
-    Route::post('/venues/{venueId}/transfer-ownership', [VenueController::class, 'transferOwnership']);
-
-    Route::get('/venues/member', [VenueController::class, 'memberVenues']);
-    
-    // Facilities list route must come before the {facilityId} route to avoid route conflict
+    Route::get('/venues/search', [VenueController::class, 'search']);
     Route::get('/venues/{venueId}/facilities/list', [VenueController::class, 'getFacilitiesList']);
-    
-    Route::get('/venues/{venueId}/facilities/{facilityId}', [\App\Http\Controllers\VenueController::class, 'showFacilityByVenue']);
-    Route::get('/venues/{venueId}/facilities/{facilityId}/booked-slots', [VenueController::class, 'getBookedSlots']);
-    Route::post('/venues/{venueId}/facilities/edit/{facilityId}', [\App\Http\Controllers\VenueController::class, 'updateFacilityByVenue']);
-    Route::delete('/venues/{venueId}/facilities/delete/{facilityId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityByVenue']);
-
-    Route::post('/venues/{venueId}/facilities/{facilityId}/photos', [\App\Http\Controllers\VenueController::class, 'addFacilityPhoto'])->name('venues.facilities.photos.store');
-    Route::delete('/venues/{venueId}/facilities/{facilityId}/photos/{photoId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityPhoto'])->name('venues.facilities.photos.destroy');
-    Route::post('/venues/{venueId}/facilities/{facilityId}/close', [VenueController::class, 'closeFacility']);
-    Route::post('/venues/{venueId}/facilities/{facilityId}/reopen', [VenueController::class, 'reopenFacility']);
-    Route::post('/venues/{venueId}/addmembers', [\App\Http\Controllers\VenueController::class, 'addMember']);
-    Route::get('venues/{venueId}/members', [VenueController::class, 'staff']);
-
-    // Booking management routes
-    Route::get('/venues/bookings', [VenueController::class, 'getBookings']);
-    Route::put('/venues/bookings/{id}/status', [VenueController::class, 'updateBookingStatus']);
-    Route::post('/venues/bookings/{id}/cancel', [VenueController::class, 'cancelEventBooking']);
-    Route::patch('/venues/bookings/{id}/reschedule', [VenueController::class, 'rescheduleEventBooking']);
-
-    Route::post('/venues/{venueId}/post-reviews', [\App\Http\Controllers\VenueController::class, 'PostReview']);
-    Route::get('/venues/{venueId}/reviews', [\App\Http\Controllers\VenueController::class, 'venueReviews']);
-
-    Route::get('/venues/search', [\App\Http\Controllers\VenueController::class, 'search']);
-
-    Route::get('/venues/analytics/{venueId?}', [VenueController::class, 'getAnalytics']);
-
-    // Operating Hours Management
+    Route::get('/venues/{venueId}/reviews', [VenueController::class, 'venueReviews']);
     Route::get('/venues/{venueId}/operating-hours', [VenueController::class, 'getOperatingHours']);
-    Route::post('/venues/{venueId}/operating-hours', [VenueController::class, 'addOperatingHours']);
-    Route::put('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'updateOperatingHours']);
-    Route::delete('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'deleteOperatingHours']);
-
-    // Amenities Management
     Route::get('/venues/{venueId}/amenities', [VenueController::class, 'getAmenities']);
-    Route::post('/venues/{venueId}/amenities', [VenueController::class, 'addAmenity']);
-    Route::put('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'updateAmenity']);
-    Route::delete('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'deleteAmenity']);
-
-    // Closure Dates Management
     Route::get('/venues/{venueId}/closure-dates', [VenueController::class, 'getClosureDates']);
-    Route::post('/venues/{venueId}/closure-dates', [VenueController::class, 'addClosureDate']);
-    Route::put('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'updateClosureDate']);
-    Route::delete('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'deleteClosureDate']);
-
-
+    Route::get('/venues/{venueId}/facilities/{facilityId}', [VenueController::class, 'showFacilityByVenue']);
+    Route::get('/venues/{venueId}/facilities/{facilityId}/booked-slots', [VenueController::class, 'getBookedSlots']);
     Route::get('venues/{venueId}/facilities/{facilityId}/is-booked', [VenueController::class, 'isBooked']);
 
-    // Marketing Controller Routes
+    // Marketing posts (assuming public)
     Route::post('/marketing/posts/create', [MarketingController::class, 'createpost']);
     Route::get('/marketing/posts', [MarketingController::class, 'index']);
+
+    Route::middleware(['active.subscription'])->group(function () {
+        // Venue management
+        Route::post('/venues/create', [VenueController::class, 'store']);
+        Route::post('/venues/edit/{venueId}', [VenueController::class, 'update']);
+        Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
+        Route::post('/venues/{venueId}/photos', [VenueController::class, 'addVenuePhoto'])->name('venues.photos.store');
+        Route::delete('/venues/{venueId}/photos/{photoId}', [VenueController::class, 'destroyVenuePhoto'])->name('venues.photos.destroy');
+
+        Route::post('/venues/{venueId}/close', [VenueController::class, 'closeVenue']);
+        Route::post('/venues/{venueId}/reopen', [VenueController::class, 'reopenVenue']);
+        Route::post('/venues/{venueId}/transfer-ownership', [VenueController::class, 'transferOwnership']);
+
+        // Facilities management
+        Route::post('/venues/{venueId}/facilities', [VenueController::class, 'storeFacility']);
+        Route::post('/venues/{venueId}/facilities/edit/{facilityId}', [VenueController::class, 'updateFacilityByVenue']);
+        Route::delete('/venues/{venueId}/facilities/delete/{facilityId}', [VenueController::class, 'destroyFacilityByVenue']);
+        Route::post('/venues/{venueId}/facilities/{facilityId}/photos', [VenueController::class, 'addFacilityPhoto'])->name('venues.facilities.photos.store');
+        Route::delete('/venues/{venueId}/facilities/{facilityId}/photos/{photoId}', [VenueController::class, 'destroyFacilityPhoto'])->name('venues.facilities.photos.destroy');
+        Route::post('/venues/{venueId}/facilities/{facilityId}/close', [VenueController::class, 'closeFacility']);
+        Route::post('/venues/{venueId}/facilities/{facilityId}/reopen', [VenueController::class, 'reopenFacility']);
+
+        // Members / Staff management
+        Route::post('/venues/{venueId}/addmembers', [VenueController::class, 'addMember']);
+        Route::get('/venues/{venueId}/members', [VenueController::class, 'staff']);
+
+        // Booking management
+        Route::get('/venues/bookings', [VenueController::class, 'getBookings']);
+        Route::put('/venues/bookings/{id}/status', [VenueController::class, 'updateBookingStatus']);
+        Route::post('/venues/bookings/{id}/cancel', [VenueController::class, 'cancelEventBooking']);
+        Route::patch('/venues/bookings/{id}/reschedule', [VenueController::class, 'rescheduleEventBooking']);
+
+        // Reviews
+        Route::post('/venues/{venueId}/post-reviews', [VenueController::class, 'PostReview']);
+
+        // Owner-specific listings
+        Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
+        Route::get('/venues/created', [VenueController::class, 'CreatedVenues']);
+        Route::get('/venues/owner/archived', [VenueController::class, 'OwnerArchivedVenues']);
+
+        // Analytics
+        Route::get('/venues/analytics/{venueId?}', [VenueController::class, 'getAnalytics']);
+
+        // Operating Hours Management
+        Route::post('/venues/{venueId}/operating-hours', [VenueController::class, 'addOperatingHours']);
+        Route::put('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'updateOperatingHours']);
+        Route::delete('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'deleteOperatingHours']);
+
+        // Amenities Management
+        Route::post('/venues/{venueId}/amenities', [VenueController::class, 'addAmenity']);
+        Route::put('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'updateAmenity']);
+        Route::delete('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'deleteAmenity']);
+
+        // Closure Dates Management
+        Route::post('/venues/{venueId}/closure-dates', [VenueController::class, 'addClosureDate']);
+        Route::put('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'updateClosureDate']);
+        Route::delete('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'deleteClosureDate']);
+    });
+
+    // Route::get('/venues', [VenueController::class, 'index']);
+    // Route::post('/venues/create', [VenueController::class, 'store']);
+    // Route::post('/venues/{venueId}/facilities', [VenueController::class, 'storeFacility']);
+    // Route::get('/venues/show/{venueId}', [VenueController::class, 'show']);
+    // Route::post('/venues/edit/{venueId}', [VenueController::class, 'update']);
+    // Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
+    // Route::post('/venues/{venueId}/photos', [VenueController::class, 'addVenuePhoto'])->name('venues.photos.store');
+    // Route::delete('/venues/{venueId}/photos/{photoId}', [VenueController::class, 'destroyVenuePhoto'])->name('venues.photos.destroy');
+    // Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
+    // Route::get('/venues/created', [VenueController::class, 'CreatedVenues']);
+    // Route::get('/venues/owner/archived', [VenueController::class, 'OwnerArchivedVenues']);
+    // Route::post('/venues/{venueId}/close', [VenueController::class, 'closeVenue']);
+    // Route::post('/venues/{venueId}/reopen', [VenueController::class, 'reopenVenue']);
+    // Route::post('/venues/{venueId}/transfer-ownership', [VenueController::class, 'transferOwnership']);
+
+    // Route::get('/venues/member', [VenueController::class, 'memberVenues']);
+    
+    // // Facilities list route must come before the {facilityId} route to avoid route conflict
+    // Route::get('/venues/{venueId}/facilities/list', [VenueController::class, 'getFacilitiesList']);
+    
+    // Route::get('/venues/{venueId}/facilities/{facilityId}', [\App\Http\Controllers\VenueController::class, 'showFacilityByVenue']);
+    // Route::get('/venues/{venueId}/facilities/{facilityId}/booked-slots', [VenueController::class, 'getBookedSlots']);
+    // Route::post('/venues/{venueId}/facilities/edit/{facilityId}', [\App\Http\Controllers\VenueController::class, 'updateFacilityByVenue']);
+    // Route::delete('/venues/{venueId}/facilities/delete/{facilityId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityByVenue']);
+
+    // Route::post('/venues/{venueId}/facilities/{facilityId}/photos', [\App\Http\Controllers\VenueController::class, 'addFacilityPhoto'])->name('venues.facilities.photos.store');
+    // Route::delete('/venues/{venueId}/facilities/{facilityId}/photos/{photoId}', [\App\Http\Controllers\VenueController::class, 'destroyFacilityPhoto'])->name('venues.facilities.photos.destroy');
+    // Route::post('/venues/{venueId}/facilities/{facilityId}/close', [VenueController::class, 'closeFacility']);
+    // Route::post('/venues/{venueId}/facilities/{facilityId}/reopen', [VenueController::class, 'reopenFacility']);
+    // Route::post('/venues/{venueId}/addmembers', [\App\Http\Controllers\VenueController::class, 'addMember']);
+    // Route::get('venues/{venueId}/members', [VenueController::class, 'staff']);
+
+    // // Booking management routes
+    // Route::get('/venues/bookings', [VenueController::class, 'getBookings']);
+    // Route::put('/venues/bookings/{id}/status', [VenueController::class, 'updateBookingStatus']);
+    // Route::post('/venues/bookings/{id}/cancel', [VenueController::class, 'cancelEventBooking']);
+    // Route::patch('/venues/bookings/{id}/reschedule', [VenueController::class, 'rescheduleEventBooking']);
+
+    // Route::post('/venues/{venueId}/post-reviews', [\App\Http\Controllers\VenueController::class, 'PostReview']);
+    // Route::get('/venues/{venueId}/reviews', [\App\Http\Controllers\VenueController::class, 'venueReviews']);
+
+    // Route::get('/venues/search', [\App\Http\Controllers\VenueController::class, 'search']);
+
+    // Route::get('/venues/analytics/{venueId?}', [VenueController::class, 'getAnalytics']);
+
+    // // Operating Hours Management
+    // Route::get('/venues/{venueId}/operating-hours', [VenueController::class, 'getOperatingHours']);
+    // Route::post('/venues/{venueId}/operating-hours', [VenueController::class, 'addOperatingHours']);
+    // Route::put('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'updateOperatingHours']);
+    // Route::delete('/venues/{venueId}/operating-hours/{hoursId}', [VenueController::class, 'deleteOperatingHours']);
+
+    // // Amenities Management
+    // Route::get('/venues/{venueId}/amenities', [VenueController::class, 'getAmenities']);
+    // Route::post('/venues/{venueId}/amenities', [VenueController::class, 'addAmenity']);
+    // Route::put('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'updateAmenity']);
+    // Route::delete('/venues/{venueId}/amenities/{amenityId}', [VenueController::class, 'deleteAmenity']);
+
+    // // Closure Dates Management
+    // Route::get('/venues/{venueId}/closure-dates', [VenueController::class, 'getClosureDates']);
+    // Route::post('/venues/{venueId}/closure-dates', [VenueController::class, 'addClosureDate']);
+    // Route::put('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'updateClosureDate']);
+    // Route::delete('/venues/{venueId}/closure-dates/{closureId}', [VenueController::class, 'deleteClosureDate']);
+
+
+    // Route::get('venues/{venueId}/facilities/{facilityId}/is-booked', [VenueController::class, 'isBooked']);
+
+    // // Marketing Controller Routes
+    // Route::post('/marketing/posts/create', [MarketingController::class, 'createpost']);
+    // Route::get('/marketing/posts', [MarketingController::class, 'index']);
 
 
     // Team Management Routes
@@ -652,7 +753,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/events/{event}/ratings',[RatingController::class, 'submit']);
     Route::get('/profile/rating/{userId}', [App\Http\Controllers\ProfileController::class, 'show']);
 
-
+    
 }); 
 
 // Admin routes (JWT protected + admin-only)

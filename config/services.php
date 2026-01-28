@@ -47,4 +47,11 @@ return [
         'username'      => env('CHALLONGE_USERNAME'),
         'api_key'       => env('CHALLONGE_API_KEY'),
     ],
+
+    'paymongo' => [
+        'public' => env('PAYMONGO_PUBLIC_KEY'),
+        'secret' => env('PAYMONGO_SECRET_KEY'),
+        'base_url' => env('PAYMONGO_BASE_URL'),
+        'webhook_secret' => env('PAYMONGO_WEBHOOK_SECRET'),
+    ],
 ];

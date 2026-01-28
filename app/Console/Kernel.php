@@ -25,7 +25,16 @@ class Kernel extends ConsoleKernel
         $schedule->job(new \App\Jobs\CompletePastEventsJob)->everyMinute()->withoutOverlapping();
         // Cleanup old pending participants daily
         $schedule->command('participants:cleanup')->daily();
+
+        $schedule->command('subscriptions:expire')->daily();
     }
+
+    protected $routeMiddleware = [
+        // existing middleware...
+        'active.subscription' => \App\Http\Middleware\EnsureActiveVenueSubscription::class,
+        'active.subscription' => \App\Http\Middleware\CheckActiveSubscription::class,
+
+    ];
 
     protected function commands()
     {
