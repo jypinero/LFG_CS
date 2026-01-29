@@ -25,25 +25,58 @@ class SubscriptionController extends Controller
             return response()->json(['status' => 'error', 'message' => 'plan_amount_not_configured'], 500);
         }
 
-        // call service with correct param order: amount, description, currency
-        $intent = $paymongo->createPaymentIntent($amount, $plan['name'] ?? $data['plan_key'], 'PHP');
-
-        $intentId = data_get($intent, 'data.id') ?? data_get($intent, 'id');
-        if (! $intentId) {
-            return response()->json(['status' => 'error', 'message' => 'paymongo_error', 'payment_intent' => $intent], 422);
-        }
-
+        // Create subscription record first
         $subscription = \App\Models\VenueSubscription::create([
             'user_id' => auth()->id(),
             'plan' => $data['plan_key'],
             'amount' => $amount,
-            'paymongo_intent_id' => $intentId,
             'status' => 'pending',
             'starts_at' => now(),
             'ends_at' => now()->addDays($plan['duration_days'] ?? 30),
         ]);
 
-        return response()->json(['status' => 'success', 'subscription' => $subscription, 'payment_intent' => $intent], 200);
+        // Create PayMongo Payment Link (provides checkout_url for redirect)
+        $successUrl = url('/management/venues?subscription=success&subscription_id=' . $subscription->id);
+        $failedUrl = url('/subscription/checkout?plan=' . $data['plan_key'] . '&payment=failed');
+        
+        $paymentLink = $paymongo->createPaymentLink(
+            $amount, 
+            $plan['name'] ?? $data['plan_key'], 
+            'PHP',
+            $successUrl,
+            $failedUrl
+        );
+
+        $linkId = data_get($paymentLink, 'data.id') ?? data_get($paymentLink, 'id');
+        $checkoutUrl = data_get($paymentLink, 'data.attributes.checkout_url');
+        
+        if (! $linkId) {
+            // Fallback to Payment Intent if Payment Link fails
+            $intent = $paymongo->createPaymentIntent($amount, $plan['name'] ?? $data['plan_key'], 'PHP');
+            $intentId = data_get($intent, 'data.id') ?? data_get($intent, 'id');
+            
+            if ($intentId) {
+                $subscription->update(['paymongo_intent_id' => $intentId]);
+                return response()->json([
+                    'status' => 'success', 
+                    'subscription' => $subscription, 
+                    'payment_intent' => $intent,
+                    'checkout_url' => null, // Will need to use SDK
+                ], 200);
+            }
+            
+            return response()->json(['status' => 'error', 'message' => 'paymongo_error', 'details' => $paymentLink], 422);
+        }
+
+        // Update subscription with payment link ID
+        $subscription->update(['paymongo_intent_id' => $linkId]);
+
+        return response()->json([
+            'status' => 'success', 
+            'subscription' => $subscription, 
+            'payment_link' => $paymentLink,
+            'checkout_url' => $checkoutUrl,
+        ], 200);
     }
 
     public function getSubscriptionStatus(Request $request)
