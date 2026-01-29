@@ -57,6 +57,48 @@ class PayMongoWebhookController extends Controller
                 }
             }
         }
+        // Handle Checkout Session payment success
+        // PayMongo Checkout Sessions can also trigger payment events
+        if ($event === 'checkout_session.payment.paid') {
+            $sessionData = $payload['data'] ?? [];
+            $sessionId = $sessionData['id'] ?? null;
+            $paymentId = $sessionData['attributes']['payments'][0]['id'] ?? null;
+            
+            Log::info('Checkout Session Payment Paid', [
+                'event' => $event,
+                'session_id' => $sessionId,
+                'payment_id' => $paymentId,
+                'session_data' => $sessionData,
+            ]);
+            
+            // Try to find subscription by session ID or payment ID
+            if ($sessionId) {
+                $subscription = VenueSubscription::where('paymongo_intent_id', $sessionId)
+                    ->where('status', 'pending')
+                    ->first();
+                
+                if ($subscription) {
+                    $planDuration = config("subscriptions.{$subscription->plan}.duration_days");
+                    
+                    $subscription->update([
+                        'status' => 'active',
+                        'starts_at' => now(),
+                        'ends_at' => now()->addDays($planDuration),
+                        'paymongo_payment_id' => $paymentId,
+                    ]);
+                    
+                    Log::info('Subscription activated via Checkout Session', [
+                        'subscription_id' => $subscription->id,
+                        'session_id' => $sessionId,
+                    ]);
+                    
+                    $user = $subscription->user;
+                    if ($user) {
+                        $user->notify(new SubscriptionActivatedNotification($subscription));
+                    }
+                }
+            }
+        }
         // Handle Payment Link payment success
         // PayMongo Payment Links trigger: link.payment.paid
         elseif ($event === 'link.payment.paid') {
@@ -133,20 +175,25 @@ class PayMongoWebhookController extends Controller
             $paymentData = $payload['data'] ?? [];
             $paymentId = $paymentData['id'] ?? null;
             
-            // Try to find link ID from payment attributes
+            // Try to find link ID from payment attributes - check multiple possible locations
             $linkId = $paymentData['attributes']['source']['id'] ?? 
-                     $paymentData['attributes']['link_id'] ?? null;
+                     $paymentData['attributes']['link_id'] ??
+                     $paymentData['attributes']['source']['data']['id'] ??
+                     $paymentData['attributes']['data']['attributes']['link_id'] ?? null;
             
             Log::info('Payment Paid Webhook (Generic)', [
                 'event' => $event,
                 'payment_id' => $paymentId,
                 'link_id' => $linkId,
+                'payment_attributes' => $paymentData['attributes'] ?? null,
             ]);
             
             if ($linkId) {
-                $subscription = VenueSubscription::where('paymongo_intent_id', $linkId)->first();
+                $subscription = VenueSubscription::where('paymongo_intent_id', $linkId)
+                    ->where('status', 'pending')
+                    ->first();
                 
-                if ($subscription && $subscription->status === 'pending') {
+                if ($subscription) {
                     $planDuration = config("subscriptions.{$subscription->plan}.duration_days");
                     
                     $subscription->update([
@@ -156,22 +203,56 @@ class PayMongoWebhookController extends Controller
                         'paymongo_payment_id' => $paymentId,
                     ]);
                     
+                    Log::info('Subscription activated via Payment Paid event', [
+                        'subscription_id' => $subscription->id,
+                        'link_id' => $linkId,
+                        'payment_id' => $paymentId,
+                    ]);
+                    
                     $user = $subscription->user;
                     if ($user) {
                         $user->notify(new SubscriptionActivatedNotification($subscription));
                     }
+                } else {
+                    Log::warning('Subscription not found for payment.paid event', [
+                        'link_id' => $linkId,
+                        'payment_id' => $paymentId,
+                    ]);
                 }
+            } else {
+                Log::warning('No link_id found in payment.paid event', [
+                    'payment_data' => $paymentData,
+                ]);
             }
         }
-        // Handle Payment Intent failure
-        elseif ($event === 'payment_intent.payment_failed') {
+        // Handle Payment failures
+        elseif (in_array($event, ['payment_intent.payment_failed', 'payment.failed'])) {
             $intentId = $payload['data']['id'] ?? null;
+            $linkId = $payload['data']['attributes']['source']['id'] ?? 
+                     $payload['data']['attributes']['link_id'] ?? null;
 
-            $subscription = VenueSubscription::where('paymongo_intent_id', $intentId)->first();
+            Log::info('Payment Failed Webhook', [
+                'event' => $event,
+                'intent_id' => $intentId,
+                'link_id' => $linkId,
+            ]);
+
+            // Try to find subscription by intent ID or link ID
+            $subscription = null;
+            if ($intentId) {
+                $subscription = VenueSubscription::where('paymongo_intent_id', $intentId)->first();
+            }
+            if (!$subscription && $linkId) {
+                $subscription = VenueSubscription::where('paymongo_intent_id', $linkId)->first();
+            }
 
             if ($subscription) {
                 $subscription->update([
                     'status' => 'failed',
+                ]);
+
+                Log::info('Subscription marked as failed', [
+                    'subscription_id' => $subscription->id,
                 ]);
 
                 // Send payment failure email notification
