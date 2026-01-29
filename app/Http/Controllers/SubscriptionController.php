@@ -41,6 +41,13 @@ class SubscriptionController extends Controller
         $successUrl = rtrim($frontendUrl, '/') . '/management/venues?subscription=success&subscription_id=' . $subscription->id;
         $failedUrl = rtrim($frontendUrl, '/') . '/subscription/checkout?plan=' . $data['plan_key'] . '&payment=failed';
         
+        \Illuminate\Support\Facades\Log::info('Creating Payment Link', [
+            'subscription_id' => $subscription->id,
+            'frontend_url' => $frontendUrl,
+            'success_url' => $successUrl,
+            'failed_url' => $failedUrl,
+        ]);
+        
         $paymentLink = $paymongo->createPaymentLink(
             $amount, 
             $plan['name'] ?? $data['plan_key'], 
@@ -51,6 +58,13 @@ class SubscriptionController extends Controller
 
         $linkId = data_get($paymentLink, 'data.id') ?? data_get($paymentLink, 'id');
         $checkoutUrl = data_get($paymentLink, 'data.attributes.checkout_url');
+        
+        \Illuminate\Support\Facades\Log::info('Payment Link Created', [
+            'subscription_id' => $subscription->id,
+            'link_id' => $linkId,
+            'checkout_url' => $checkoutUrl,
+            'payment_link_response' => $paymentLink,
+        ]);
         
         if (! $linkId) {
             // Fallback to Payment Intent if Payment Link fails

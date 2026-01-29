@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use GuzzleHttp\Client;
+use Illuminate\Support\Facades\Log;
 
 class PayMongoService
 {
@@ -93,7 +94,20 @@ class PayMongoService
             }
         }
 
+        Log::info('PayMongo Payment Link Request', [
+            'payload' => $payload,
+            'success_url' => $successUrl,
+            'failed_url' => $failedUrl,
+        ]);
+
         $resp = $this->client->post('links', ['json' => $payload]);
-        return json_decode($resp->getBody()->getContents(), true);
+        $responseBody = json_decode($resp->getBody()->getContents(), true);
+        
+        Log::info('PayMongo Payment Link Response', [
+            'status_code' => $resp->getStatusCode(),
+            'response' => $responseBody,
+        ]);
+        
+        return $responseBody;
     }
 }

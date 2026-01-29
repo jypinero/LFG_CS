@@ -12,12 +12,22 @@ class PayMongoWebhookController extends Controller
 {
     public function handle(Request $request)
     {
+        // Log raw request for debugging
+        Log::info('=== PAYMONGO WEBHOOK RECEIVED ===', [
+            'method' => $request->method(),
+            'url' => $request->fullUrl(),
+            'ip' => $request->ip(),
+            'user_agent' => $request->userAgent(),
+            'raw_body' => $request->getContent(),
+        ]);
+        
         $payload = $request->all();
 
         // Log webhook for debugging
         Log::info('PayMongo Webhook Received', [
             'type' => $payload['type'] ?? 'unknown',
             'data' => $payload['data'] ?? null,
+            'full_payload' => $payload,
         ]);
 
         // Optionally, verify signature here for security
@@ -53,23 +63,31 @@ class PayMongoWebhookController extends Controller
             $linkData = $payload['data'] ?? [];
             $linkId = $linkData['id'] ?? null;
             
-            // Get payment ID from attributes
-            $paymentId = $linkData['attributes']['payments'][0]['id'] ?? null;
+            // Get payment ID from attributes - try multiple possible locations
+            $paymentId = $linkData['attributes']['payments'][0]['id'] ?? 
+                        $linkData['attributes']['payment']['id'] ?? 
+                        $linkData['attributes']['payment_id'] ?? null;
             
             Log::info('Payment Link Webhook Processing', [
                 'event' => $event,
                 'link_id' => $linkId,
                 'payment_id' => $paymentId,
                 'link_data' => $linkData,
+                'link_attributes' => $linkData['attributes'] ?? null,
             ]);
             
             if (!$linkId) {
-                Log::warning('Payment Link ID not found in webhook payload', ['payload' => $payload]);
+                Log::warning('Payment Link ID not found in webhook payload', [
+                    'payload' => $payload,
+                    'data_keys' => array_keys($payload['data'] ?? []),
+                ]);
                 return response()->json(['status' => 'error', 'message' => 'link_id_not_found'], 400);
             }
             
             // Find subscription by payment link ID (stored in paymongo_intent_id)
-            $subscription = VenueSubscription::where('paymongo_intent_id', $linkId)->first();
+            $subscription = VenueSubscription::where('paymongo_intent_id', $linkId)
+                ->where('status', 'pending')
+                ->first();
 
             if ($subscription) {
                 $planDuration = config("subscriptions.{$subscription->plan}.duration_days");
@@ -86,6 +104,8 @@ class PayMongoWebhookController extends Controller
                     'user_id' => $subscription->user_id,
                     'plan' => $subscription->plan,
                     'link_id' => $linkId,
+                    'payment_id' => $paymentId,
+                    'status' => 'active',
                 ]);
 
                 // Send activation email notification
@@ -94,10 +114,17 @@ class PayMongoWebhookController extends Controller
                     $user->notify(new SubscriptionActivatedNotification($subscription));
                 }
             } else {
+                // Try to find by any status
+                $anySubscription = VenueSubscription::where('paymongo_intent_id', $linkId)->first();
                 Log::warning('Subscription not found for Payment Link', [
                     'link_id' => $linkId,
                     'payment_id' => $paymentId,
-                    'all_subscriptions' => VenueSubscription::where('status', 'pending')->pluck('paymongo_intent_id'),
+                    'found_subscription' => $anySubscription ? [
+                        'id' => $anySubscription->id,
+                        'status' => $anySubscription->status,
+                    ] : null,
+                    'all_pending_subscriptions' => VenueSubscription::where('status', 'pending')
+                        ->get(['id', 'paymongo_intent_id', 'user_id', 'plan'])->toArray(),
                 ]);
             }
         }
