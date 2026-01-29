@@ -17,6 +17,11 @@ return Application::configure(basePath: dirname(__DIR__))
             \Illuminate\Http\Middleware\HandleCors::class,
         ]);
         
+        // Register middleware aliases
+        $middleware->alias([
+            'active.subscription' => \App\Http\Middleware\EnsureActiveVenueSubscription::class,
+        ]);
+        
         // Return JSON 401 response for API auth failures instead of redirect
         $middleware->redirectGuestsTo(function (Request $request) {
             if ($request->is('api/*') || $request->expectsJson()) {

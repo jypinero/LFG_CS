@@ -10,9 +10,11 @@ class PayMongoService
 
     public function __construct()
     {
-        $secret = config('paymongo.secret_key') ?: config('services.paymongo.secret');
+        $secret = config('paymongo.secret') ?: config('paymongo.secret_key') ?: config('services.paymongo.secret');
         if (! $secret) {
-            throw new \RuntimeException('PayMongo secret key not configured.');
+            // Don't throw exception in constructor - allow service to be instantiated
+            // Error will be caught when trying to use the service
+            $secret = '';
         }
 
         $base = rtrim(config('paymongo.base_url') ?: config('services.paymongo.base_url', 'https://api.paymongo.com/v1'), '/') . '/';
@@ -34,6 +36,11 @@ class PayMongoService
      */
     public function createPaymentIntent(int $amount, ?string $description = null, string $currency = 'PHP'): array
     {
+        $secret = config('paymongo.secret') ?: config('paymongo.secret_key') ?: config('services.paymongo.secret');
+        if (! $secret) {
+            throw new \RuntimeException('PayMongo secret key not configured. Please set PAYMONGO_SECRET_KEY in your .env file.');
+        }
+
         $payload = [
             'data' => [
                 'attributes' => [

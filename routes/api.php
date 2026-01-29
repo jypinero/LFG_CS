@@ -297,8 +297,17 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/marketing/posts/create', [MarketingController::class, 'createpost']);
     Route::get('/marketing/posts', [MarketingController::class, 'index']);
 
+    // Read-only venue endpoints (accessible without subscription)
+    Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
+    Route::get('/venues/created', [VenueController::class, 'CreatedVenues']);
+    Route::get('/venues/owner/archived', [VenueController::class, 'OwnerArchivedVenues']);
+    Route::get('/venues/member', [VenueController::class, 'memberVenues']);
+    Route::get('/venues/analytics/{venueId?}', [VenueController::class, 'getAnalytics']);
+    Route::get('/venues/bookings', [VenueController::class, 'getBookings']);
+    Route::get('/venues/{venueId}/members', [VenueController::class, 'staff']);
+
     Route::middleware(['active.subscription'])->group(function () {
-        // Venue management
+        // Venue management (write operations require subscription)
         Route::post('/venues/create', [VenueController::class, 'store']);
         Route::post('/venues/edit/{venueId}', [VenueController::class, 'update']);
         Route::delete('/venues/delete/{venueId}', [VenueController::class, 'destroy']);
@@ -318,26 +327,16 @@ Route::middleware('auth:api')->group(function () {
         Route::post('/venues/{venueId}/facilities/{facilityId}/close', [VenueController::class, 'closeFacility']);
         Route::post('/venues/{venueId}/facilities/{facilityId}/reopen', [VenueController::class, 'reopenFacility']);
 
-        // Members / Staff management
+        // Members / Staff management (write operations)
         Route::post('/venues/{venueId}/addmembers', [VenueController::class, 'addMember']);
-        Route::get('/venues/{venueId}/members', [VenueController::class, 'staff']);
 
-        // Booking management
-        Route::get('/venues/bookings', [VenueController::class, 'getBookings']);
+        // Booking management (write operations)
         Route::put('/venues/bookings/{id}/status', [VenueController::class, 'updateBookingStatus']);
         Route::post('/venues/bookings/{id}/cancel', [VenueController::class, 'cancelEventBooking']);
         Route::patch('/venues/bookings/{id}/reschedule', [VenueController::class, 'rescheduleEventBooking']);
 
         // Reviews
         Route::post('/venues/{venueId}/post-reviews', [VenueController::class, 'PostReview']);
-
-        // Owner-specific listings
-        Route::get('/venues/owner', [VenueController::class, 'OwnerVenues']);
-        Route::get('/venues/created', [VenueController::class, 'CreatedVenues']);
-        Route::get('/venues/owner/archived', [VenueController::class, 'OwnerArchivedVenues']);
-
-        // Analytics
-        Route::get('/venues/analytics/{venueId?}', [VenueController::class, 'getAnalytics']);
 
         // Operating Hours Management
         Route::post('/venues/{venueId}/operating-hours', [VenueController::class, 'addOperatingHours']);
