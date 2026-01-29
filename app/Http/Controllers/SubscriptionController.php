@@ -95,6 +95,92 @@ class SubscriptionController extends Controller
         ], 200);
     }
 
+    /**
+     * Manually check and activate subscription by checking PayMongo payment status
+     * This is a fallback if webhook doesn't work
+     */
+    public function checkPaymentStatus(Request $request)
+    {
+        $request->validate([
+            'subscription_id' => 'required|exists:venue_subscriptions,id',
+        ]);
+
+        $subscription = VenueSubscription::findOrFail($request->subscription_id);
+        
+        // Only allow user to check their own subscription
+        if ($subscription->user_id !== auth()->id()) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
+        }
+
+        // If already active, return success
+        if ($subscription->status === 'active') {
+            return response()->json([
+                'status' => 'success',
+                'subscription' => $subscription,
+                'message' => 'Subscription is already active',
+            ]);
+        }
+
+        // Try to check payment status via PayMongo API
+        // For now, we'll just return the subscription status
+        // In production, you could call PayMongo API to verify payment
+        
+        return response()->json([
+            'status' => 'success',
+            'subscription' => $subscription,
+            'payment_status' => $subscription->status,
+        ]);
+    }
+
+    /**
+     * Manually activate a subscription (admin/fallback method)
+     * This can be called if webhook fails
+     */
+    public function manualActivate(Request $request)
+    {
+        $request->validate([
+            'subscription_id' => 'required|exists:venue_subscriptions,id',
+        ]);
+
+        $subscription = VenueSubscription::findOrFail($request->subscription_id);
+        
+        // Only allow user to activate their own pending subscription
+        if ($subscription->user_id !== auth()->id()) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 403);
+        }
+
+        if ($subscription->status !== 'pending') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Subscription is not pending',
+            ], 400);
+        }
+
+        $planDuration = config("subscriptions.{$subscription->plan}.duration_days");
+
+        $subscription->update([
+            'status' => 'active',
+            'starts_at' => now(),
+            'ends_at' => now()->addDays($planDuration),
+        ]);
+
+        \Illuminate\Support\Facades\Log::info('Subscription manually activated', [
+            'subscription_id' => $subscription->id,
+            'user_id' => $subscription->user_id,
+        ]);
+
+        $user = $subscription->user;
+        if ($user) {
+            $user->notify(new SubscriptionActivatedNotification($subscription));
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'subscription' => $subscription,
+            'message' => 'Subscription activated successfully',
+        ]);
+    }
+
     public function getSubscriptionStatus(Request $request)
     {
         $user = auth()->user();

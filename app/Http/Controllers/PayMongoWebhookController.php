@@ -33,12 +33,15 @@ class PayMongoWebhookController extends Controller
         // Optionally, verify signature here for security
 
         $event = $payload['type'] ?? null;
+        $subscriptionActivated = false; // Track if subscription was found and activated
 
         // Handle Payment Intent success
         if ($event === 'payment_intent.succeeded') {
             $intentId = $payload['data']['id'] ?? null;
 
-            $subscription = VenueSubscription::where('paymongo_intent_id', $intentId)->first();
+            $subscription = VenueSubscription::where('paymongo_intent_id', $intentId)
+                ->where('status', 'pending')
+                ->first();
 
             if ($subscription) {
                 $planDuration = config("subscriptions.{$subscription->plan}.duration_days");
@@ -50,16 +53,22 @@ class PayMongoWebhookController extends Controller
                     'paymongo_payment_id' => $payload['data']['attributes']['payments'][0]['id'] ?? null,
                 ]);
 
+                Log::info('Subscription activated via Payment Intent', [
+                    'subscription_id' => $subscription->id,
+                    'intent_id' => $intentId,
+                ]);
+
                 // Send activation email notification
                 $user = $subscription->user;
                 if ($user) {
                     $user->notify(new SubscriptionActivatedNotification($subscription));
                 }
+                $subscriptionActivated = true;
             }
         }
         // Handle Checkout Session payment success
         // PayMongo Checkout Sessions can also trigger payment events
-        if ($event === 'checkout_session.payment.paid') {
+        elseif ($event === 'checkout_session.payment.paid') {
             $sessionData = $payload['data'] ?? [];
             $sessionId = $sessionData['id'] ?? null;
             $paymentId = $sessionData['attributes']['payments'][0]['id'] ?? null;
@@ -96,6 +105,7 @@ class PayMongoWebhookController extends Controller
                     if ($user) {
                         $user->notify(new SubscriptionActivatedNotification($subscription));
                     }
+                    $subscriptionActivated = true;
                 }
             }
         }
@@ -155,6 +165,7 @@ class PayMongoWebhookController extends Controller
                 if ($user) {
                     $user->notify(new SubscriptionActivatedNotification($subscription));
                 }
+                $subscriptionActivated = true;
             } else {
                 // Try to find by any status
                 $anySubscription = VenueSubscription::where('paymongo_intent_id', $linkId)->first();
@@ -213,6 +224,7 @@ class PayMongoWebhookController extends Controller
                     if ($user) {
                         $user->notify(new SubscriptionActivatedNotification($subscription));
                     }
+                    $subscriptionActivated = true;
                 } else {
                     Log::warning('Subscription not found for payment.paid event', [
                         'link_id' => $linkId,
@@ -263,7 +275,75 @@ class PayMongoWebhookController extends Controller
             }
         }
 
-        // Handle other events if needed
+        // Catch-all: Try to find subscription by any ID in the payload
+        // This handles cases where event structure might be different
+        if (!$subscriptionActivated) {
+            Log::info('Trying catch-all subscription lookup', [
+                'event' => $event,
+                'payload_structure' => array_keys($payload),
+            ]);
+            
+            // Try to extract any ID from the payload
+            $possibleIds = [];
+            if (isset($payload['data']['id'])) {
+                $possibleIds[] = $payload['data']['id'];
+            }
+            if (isset($payload['data']['attributes']['source']['id'])) {
+                $possibleIds[] = $payload['data']['attributes']['source']['id'];
+            }
+            if (isset($payload['data']['attributes']['link_id'])) {
+                $possibleIds[] = $payload['data']['attributes']['link_id'];
+            }
+            if (isset($payload['data']['attributes']['payments'][0]['id'])) {
+                $possibleIds[] = $payload['data']['attributes']['payments'][0]['id'];
+            }
+            
+            // Try to find subscription by any of these IDs
+            foreach ($possibleIds as $id) {
+                if (is_string($id) && (strpos($id, 'link_') === 0 || strpos($id, 'pi_') === 0)) {
+                    $subscription = VenueSubscription::where('paymongo_intent_id', $id)
+                        ->where('status', 'pending')
+                        ->first();
+                    
+                    if ($subscription) {
+                        $planDuration = config("subscriptions.{$subscription->plan}.duration_days");
+                        
+                        // Get payment ID
+                        $paymentId = $payload['data']['attributes']['payments'][0]['id'] ?? 
+                                   $payload['data']['id'] ?? null;
+                        
+                        $subscription->update([
+                            'status' => 'active',
+                            'starts_at' => now(),
+                            'ends_at' => now()->addDays($planDuration),
+                            'paymongo_payment_id' => $paymentId,
+                        ]);
+                        
+                        Log::info('Subscription activated via catch-all handler', [
+                            'subscription_id' => $subscription->id,
+                            'found_by_id' => $id,
+                            'event' => $event,
+                        ]);
+                        
+                        $user = $subscription->user;
+                        if ($user) {
+                            $user->notify(new SubscriptionActivatedNotification($subscription));
+                        }
+                        $subscriptionActivated = true;
+                        break;
+                    }
+                }
+            }
+            
+            if (!$subscriptionActivated) {
+                Log::warning('No subscription activated from webhook', [
+                    'event' => $event,
+                    'possible_ids' => $possibleIds,
+                    'all_pending' => VenueSubscription::where('status', 'pending')
+                        ->get(['id', 'paymongo_intent_id', 'user_id', 'plan'])->toArray(),
+                ]);
+            }
+        }
 
         return response()->json(['status' => 'success']);
     }

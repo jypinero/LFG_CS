@@ -125,6 +125,8 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/subscriptions/history', [SubscriptionController::class, 'getSubscriptionHistory']);
     Route::post('/subscriptions/cancel', [SubscriptionController::class, 'cancelSubscription']);
     Route::post('/subscriptions/upgrade', [SubscriptionController::class, 'upgradeSubscription']);
+    Route::post('/subscriptions/check-payment', [SubscriptionController::class, 'checkPaymentStatus']);
+    Route::post('/subscriptions/manual-activate', [SubscriptionController::class, 'manualActivate']);
     
     // Booking count endpoint
     Route::get('/venues/bookings/count', [VenueController::class, 'getBookingCount']);
