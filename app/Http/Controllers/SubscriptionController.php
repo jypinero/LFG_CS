@@ -36,8 +36,10 @@ class SubscriptionController extends Controller
         ]);
 
         // Create PayMongo Payment Link (provides checkout_url for redirect)
-        $successUrl = url('/management/venues?subscription=success&subscription_id=' . $subscription->id);
-        $failedUrl = url('/subscription/checkout?plan=' . $data['plan_key'] . '&payment=failed');
+        // Use frontend URL from env or default
+        $frontendUrl = env('FRONTEND_URL', env('APP_URL', 'http://localhost:3000'));
+        $successUrl = rtrim($frontendUrl, '/') . '/management/venues?subscription=success&subscription_id=' . $subscription->id;
+        $failedUrl = rtrim($frontendUrl, '/') . '/subscription/checkout?plan=' . $data['plan_key'] . '&payment=failed';
         
         $paymentLink = $paymongo->createPaymentLink(
             $amount, 
