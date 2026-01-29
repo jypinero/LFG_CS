@@ -5,6 +5,8 @@ namespace App\Http\Controllers;
 use Illuminate\Http\Request;
 use App\Services\PayMongoService;
 use App\Models\VenueSubscription;
+use App\Notifications\SubscriptionCancelledNotification;
+use App\Notifications\SubscriptionUpgradedNotification;
 
 class SubscriptionController extends Controller
 {
@@ -42,5 +44,173 @@ class SubscriptionController extends Controller
         ]);
 
         return response()->json(['status' => 'success', 'subscription' => $subscription, 'payment_intent' => $intent], 200);
+    }
+
+    public function getSubscriptionStatus(Request $request)
+    {
+        $user = auth()->user();
+        
+        $subscription = VenueSubscription::where('user_id', $user->id)
+            ->where('status', 'active')
+            ->where('ends_at', '>', now())
+            ->latest()
+            ->first();
+
+        if (!$subscription) {
+            return response()->json([
+                'status' => 'success',
+                'subscription' => null,
+                'has_active_subscription' => false,
+            ], 200);
+        }
+
+        $plan = config("subscriptions.{$subscription->plan}", []);
+
+        return response()->json([
+            'status' => 'success',
+            'subscription' => [
+                'id' => $subscription->id,
+                'plan' => $subscription->plan,
+                'plan_name' => $plan['name'] ?? $subscription->plan,
+                'amount' => $subscription->amount,
+                'status' => $subscription->status,
+                'starts_at' => $subscription->starts_at,
+                'ends_at' => $subscription->ends_at,
+                'created_at' => $subscription->created_at,
+            ],
+            'has_active_subscription' => true,
+        ], 200);
+    }
+
+    public function getSubscriptionHistory(Request $request)
+    {
+        $user = auth()->user();
+        
+        $subscriptions = VenueSubscription::where('user_id', $user->id)
+            ->orderBy('created_at', 'desc')
+            ->get()
+            ->map(function ($subscription) {
+                $plan = config("subscriptions.{$subscription->plan}", []);
+                return [
+                    'id' => $subscription->id,
+                    'plan' => $subscription->plan,
+                    'plan_name' => $plan['name'] ?? $subscription->plan,
+                    'amount' => $subscription->amount,
+                    'status' => $subscription->status,
+                    'starts_at' => $subscription->starts_at,
+                    'ends_at' => $subscription->ends_at,
+                    'created_at' => $subscription->created_at,
+                    'cancelled_at' => $subscription->cancelled_at ?? null,
+                ];
+            });
+
+        return response()->json([
+            'status' => 'success',
+            'subscriptions' => $subscriptions,
+        ], 200);
+    }
+
+    public function cancelSubscription(Request $request)
+    {
+        $user = auth()->user();
+        
+        $subscription = VenueSubscription::where('user_id', $user->id)
+            ->where('status', 'active')
+            ->where('ends_at', '>', now())
+            ->latest()
+            ->first();
+
+        if (!$subscription) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No active subscription found',
+            ], 404);
+        }
+
+        $subscription->update([
+            'status' => 'cancelled',
+            'cancelled_at' => now(),
+        ]);
+
+        // Send cancellation email notification
+        $user->notify(new SubscriptionCancelledNotification($subscription));
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Subscription cancelled successfully',
+            'subscription' => $subscription,
+        ], 200);
+    }
+
+    public function upgradeSubscription(Request $request)
+    {
+        $request->validate([
+            'new_plan' => 'required|in:monthly,yearly,promo',
+        ]);
+
+        $user = auth()->user();
+        $newPlanKey = $request->input('new_plan');
+        
+        // Get current active subscription
+        $currentSubscription = VenueSubscription::where('user_id', $user->id)
+            ->where('status', 'active')
+            ->where('ends_at', '>', now())
+            ->latest()
+            ->first();
+
+        if (!$currentSubscription) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No active subscription found',
+            ], 404);
+        }
+
+        // Validate upgrade path
+        $upgradePaths = [
+            'monthly' => ['yearly', 'promo'],
+            'yearly' => ['promo'],
+            'promo' => [], // No upgrades available
+        ];
+
+        $currentPlan = $currentSubscription->plan;
+        if (!in_array($newPlanKey, $upgradePaths[$currentPlan] ?? [])) {
+            return response()->json([
+                'status' => 'error',
+                'message' => "Cannot upgrade from {$currentPlan} to {$newPlanKey}",
+            ], 422);
+        }
+
+        $newPlan = config("subscriptions.{$newPlanKey}", []);
+        if (!$newPlan) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Invalid plan selected',
+            ], 400);
+        }
+
+        // Create new subscription with upgrade plan
+        $newSubscription = VenueSubscription::create([
+            'user_id' => $user->id,
+            'plan' => $newPlanKey,
+            'amount' => $newPlan['amount'],
+            'status' => 'pending', // Will be activated after payment
+            'starts_at' => now(),
+            'ends_at' => now()->addDays($newPlan['duration_days'] ?? 365),
+        ]);
+
+        // Mark old subscription as upgraded (but keep it active until expiration)
+        $currentSubscription->update([
+            'status' => 'upgraded',
+        ]);
+
+        // Send upgrade email notification
+        $user->notify(new SubscriptionUpgradedNotification($currentSubscription, $newSubscription));
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Subscription upgrade initiated',
+            'old_subscription' => $currentSubscription,
+            'new_subscription' => $newSubscription,
+        ], 200);
     }
 }

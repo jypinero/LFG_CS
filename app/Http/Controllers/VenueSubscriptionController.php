@@ -11,7 +11,7 @@ class VenueSubscriptionController extends Controller
     public function start(Request $request, PayMongoService $paymongo)
     {
         $request->validate([
-            'plan' => 'required|in:basic,pro',
+            'plan' => 'required|in:monthly,yearly,promo',
         ]);
 
         $planKey = $request->plan;

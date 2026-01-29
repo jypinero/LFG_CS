@@ -2,19 +2,19 @@
 
 
 return [
-    'basic' => [
-        'name' => 'Basic Plan',
-        'amount' => 100000, // in centavos = ₱1000.00
+    'monthly' => [
+        'name' => 'Monthly Plan',
+        'amount' => 34900, // in centavos = ₱349.00
         'duration_days' => 30,
     ],
-    'premium' => [
-        'name' => 'Premium Plan',
-        'amount' => 200000,
-        'duration_days' => 90,
+    'yearly' => [
+        'name' => 'Yearly Plan',
+        'amount' => 389900, // in centavos = ₱3899.00
+        'duration_days' => 365,
     ],
-    'vip' => [
-        'name' => 'VIP Plan',
-        'amount' => 500000,
+    'promo' => [
+        'name' => 'Promo Plan',
+        'amount' => 299900, // in centavos = ₱2999.00
         'duration_days' => 365,
     ],
 ];

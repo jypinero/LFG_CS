@@ -15,5 +15,12 @@ class VenueSubscription extends Model
         'paymongo_payment_id',
         'starts_at',
         'ends_at',
+        'cancelled_at',
+    ];
+
+    protected $casts = [
+        'starts_at' => 'datetime',
+        'ends_at' => 'datetime',
+        'cancelled_at' => 'datetime',
     ];
 }

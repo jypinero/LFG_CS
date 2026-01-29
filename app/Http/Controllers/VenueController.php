@@ -1858,6 +1858,29 @@ class VenueController extends Controller
     }
 
     /**
+     * Get total booking count for user's venues
+     */
+    public function getBookingCount()
+    {
+        $user = auth()->user();
+        
+        // Get venues where user is owner/manager
+        $venueIds = VenueUser::where('user_id', $user->id)
+            ->whereIn('role', ['owner', 'manager'])
+            ->pluck('venue_id');
+        
+        // Count all bookings for these venues
+        $bookingCount = Booking::whereIn('venue_id', $venueIds)
+            ->count();
+        
+        return response()->json([
+            'status' => 'success',
+            'count' => $bookingCount,
+            'limit' => 50,
+        ], 200);
+    }
+
+    /**
      * Update booking status (approve/deny)
      */
     public function updateBookingStatus(Request $request, $id)
