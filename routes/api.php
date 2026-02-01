@@ -86,6 +86,7 @@ Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicT
 Route::get('/tournaments/events/{eventId}/bracket/public', [FinalTournamentController::class, 'getPublicBracket']);
 
 // Public event share routes (no authentication required) - matching frontend routes
+Route::get('/events/share/{token}', [EventController::class, 'viewByShareToken']);
 Route::get('/games/friendlygames/{token}', [EventController::class, 'viewByShareToken']);
 Route::get('/games/tune-ups/{token}', [EventController::class, 'viewByShareToken']);
 
