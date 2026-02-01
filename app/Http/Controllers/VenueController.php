@@ -2088,6 +2088,18 @@ class VenueController extends Controller
         $validated = $request->validate([
             'reason' => 'required|string|max:500'
         ]);
+
+        // Prevent cancellation on the day of the booking
+        if ($booking->event) {
+            $eventDate = Carbon::parse($booking->event->date)->format('Y-m-d');
+            $today = Carbon::today()->format('Y-m-d');
+            if ($eventDate === $today) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'Cannot cancel events on the day of the booking'
+                ], 400);
+            }
+        }
         
         // Update booking and event, record who cancelled
         DB::transaction(function() use ($booking, $user, $validated) {
@@ -2337,6 +2349,8 @@ class VenueController extends Controller
                 'u.email',
                 'vr.rating',
                 'vr.comment',
+                'vr.owner_reply',
+                'vr.owner_replied_at',
                 'vr.reviewed_at',
                 'vr.created_at',
                 'vr.updated_at'
@@ -2360,6 +2374,55 @@ class VenueController extends Controller
                 'per_page' => $paginated->perPage(),
                 'total' => $paginated->total(),
             ],
+        ], 200);
+    }
+
+    public function replyToReview(Request $request, string $venueId, string $reviewId)
+    {
+        $user = auth()->user();
+        if (! $user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthenticated'], 401);
+        }
+
+        $venue = Venue::find($venueId);
+        if (! $venue) {
+            return response()->json(['status' => 'error', 'message' => 'Venue not found'], 404);
+        }
+
+        // Check if user is owner/manager of the venue
+        $isAuthorized = VenueUser::where('user_id', $user->id)
+            ->where('venue_id', $venue->id)
+            ->whereIn('role', ['owner', 'manager'])
+            ->exists();
+
+        if (! $isAuthorized) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not authorized to reply to reviews for this venue'
+            ], 403);
+        }
+
+        $review = VenueReview::where('id', $reviewId)
+            ->where('venue_id', $venueId)
+            ->first();
+
+        if (! $review) {
+            return response()->json(['status' => 'error', 'message' => 'Review not found'], 404);
+        }
+
+        $validated = $request->validate([
+            'reply' => 'required|string|max:2000',
+        ]);
+
+        $review->update([
+            'owner_reply' => $validated['reply'],
+            'owner_replied_at' => now(),
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Reply added successfully',
+            'review' => $review->fresh(),
         ], 200);
     }
 

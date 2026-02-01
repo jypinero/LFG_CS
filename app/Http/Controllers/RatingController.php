@@ -9,8 +9,12 @@ use App\Models\PlayerRating;
 use App\Models\Event;
 use App\Models\Notification;
 use App\Models\UserNotification;
+use App\Models\TeamRating;
+use App\Models\EventTeam;
+use App\Models\TeamMember;
 use App\Services\RatingService;
 use Illuminate\Support\Facades\DB;
+use Carbon\Carbon;
 
 class RatingController extends Controller
 {
@@ -101,5 +105,88 @@ class RatingController extends Controller
         \Log::info('Ratings created', ['created_count' => count($created ?? []), 'created' => $created ?? []]);
 
         return response()->json(['message'=>'Ratings submitted','created'=>$created], 201);
+    }
+
+    public function submitTeamRating(Request $request, Event $event)
+    {
+        $user = auth()->user();
+        
+        // Validate event is team vs team
+        if ($event->event_type !== 'team vs team') {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Team ratings are only available for team vs team events'
+            ], 422);
+        }
+
+        // Validate event is completed
+        $eventEnd = Carbon::parse($event->date . ' ' . $event->end_time);
+        if ($eventEnd->isFuture()) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not finished yet'
+            ], 403);
+        }
+
+        $request->validate([
+            'rater_team_id' => 'required|exists:teams,id',
+            'rated_team_id' => 'required|exists:teams,id',
+            'rating' => 'required|integer|min:1|max:5',
+            'comment' => 'nullable|string|max:500',
+        ]);
+
+        // Validate rater team cannot rate itself
+        if ($request->rater_team_id === $request->rated_team_id) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'A team cannot rate itself'
+            ], 422);
+        }
+
+        // Validate user is a member of the rater team
+        $isTeamMember = TeamMember::where('team_id', $request->rater_team_id)
+            ->where('user_id', $user->id)
+            ->where('is_active', true)
+            ->where('roster_status', 'active')
+            ->exists();
+
+        if (! $isTeamMember) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You must be an active member of the rating team'
+            ], 403);
+        }
+
+        // Validate both teams are participants in the event
+        $eventTeams = EventTeam::where('event_id', $event->id)
+            ->whereIn('team_id', [$request->rater_team_id, $request->rated_team_id])
+            ->pluck('team_id')
+            ->toArray();
+
+        if (count($eventTeams) !== 2 || !in_array($request->rater_team_id, $eventTeams) || !in_array($request->rated_team_id, $eventTeams)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Both teams must be participants in this event'
+            ], 403);
+        }
+
+        // Create or update team rating
+        $teamRating = TeamRating::updateOrCreate(
+            [
+                'event_id' => $event->id,
+                'rater_team_id' => $request->rater_team_id,
+                'rated_team_id' => $request->rated_team_id,
+            ],
+            [
+                'rating' => $request->rating,
+                'comment' => $request->comment ?? null,
+            ]
+        );
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Team rating submitted successfully',
+            'rating' => $teamRating->fresh()->load('raterTeam', 'ratedTeam'),
+        ], 201);
     }
 }

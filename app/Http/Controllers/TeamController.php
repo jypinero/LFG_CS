@@ -11,6 +11,8 @@ use App\Models\TeamInvite;
 use App\Models\User; // ADDED
 use App\Models\EventParticipant;
 use App\Models\EventTeam;
+use App\Models\Notification;
+use App\Models\UserNotification;
 use Illuminate\Support\Facades\DB; // ADDED
 use App\Traits\HandlesImageCompression;
 
@@ -533,10 +535,17 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'User not found'], 404);
         }
 
-        // avoid duplicate membership
-        if (TeamMember::where('team_id', $team->id)->where('user_id', $newUser->id)->exists()) {
+        // Check if user was previously a member (removed or inactive)
+        $previousMember = TeamMember::where('team_id', $team->id)
+            ->where('user_id', $newUser->id)
+            ->first();
+
+        // If user is already an active member, return error
+        if ($previousMember && $previousMember->is_active && $previousMember->roster_status === 'active') {
             return response()->json(['status'=>'error','message'=>'User is already a member'], 409);
         }
+
+        $isReAdding = $previousMember && ($previousMember->roster_status === 'removed' || !$previousMember->is_active);
 
         // Check roster size limit
         $activeCount = TeamMember::where('team_id', $team->id)
@@ -554,14 +563,50 @@ class TeamController extends Controller
         $role = $request->role ? substr($request->role, 0, 50) : 'member';
 
         try {
-            $member = TeamMember::create([
-                'team_id' => $team->id,
-                'user_id' => $newUser->id,
-                'role' => $role,
-                'joined_at' => now(),
-                'is_active' => true,
-                'roster_status' => 'active',
-            ]);
+            if ($previousMember && $isReAdding) {
+                // Re-activate existing member
+                $previousMember->update([
+                    'role' => $role,
+                    'joined_at' => now(),
+                    'is_active' => true,
+                    'roster_status' => 'active',
+                    'removed_at' => null,
+                ]);
+                $member = $previousMember->fresh();
+            } else {
+                // Create new member
+                $member = TeamMember::create([
+                    'team_id' => $team->id,
+                    'user_id' => $newUser->id,
+                    'role' => $role,
+                    'joined_at' => now(),
+                    'is_active' => true,
+                    'roster_status' => 'active',
+                ]);
+            }
+
+            // Send notification if re-adding a previously removed member
+            if ($isReAdding) {
+                $notification = Notification::create([
+                    'type' => 'team_member_re_added',
+                    'data' => [
+                        'message' => "You have been re-added to the team: {$team->name}",
+                        'team_id' => $team->id,
+                        'team_name' => $team->name,
+                        'user_id' => $newUser->id,
+                    ],
+                    'created_by' => $user->id,
+                ]);
+
+                UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $newUser->id,
+                    'pinned' => false,
+                    'is_read' => false,
+                    'action_state' => 'completed',
+                    'created_at' => now(),
+                ]);
+            }
         } catch (\Illuminate\Database\QueryException $e) {
             return response()->json([
                 'status' => 'error',

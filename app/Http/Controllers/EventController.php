@@ -13,10 +13,12 @@ use App\Models\EventParticipant;
 use App\Models\EventCheckin;
 use App\Models\EventScore;
 use App\Models\EventTeam;
+use App\Models\EventGame;
 use App\Models\VenueReview;
 use App\Models\Notification;
 use App\Models\UserNotification;
 use App\Models\TeamMember; // ADDED
+use App\Models\TeamRating;
 use App\Models\Booking;
 use App\Models\VenueUser;
 use App\Models\MessageThread;
@@ -38,6 +40,18 @@ class EventController extends Controller
         } while (Event::where('checkin_code', $code)->exists());
         
         return $code;
+    }
+
+    /**
+     * Generate a unique share token for events
+     */
+    private function generateShareToken()
+    {
+        do {
+            $token = bin2hex(random_bytes(16)); // 32 character hex string
+        } while (Event::where('share_token', $token)->exists());
+        
+        return $token;
     }
 
     private function userManagesVenue(Event $event, ?int $userId): bool
@@ -360,9 +374,11 @@ class EventController extends Controller
                     'team_name' => $eventTeam->team->name ?? 'Unknown Team',
                     'members' => $teamMembers->map(function($member) {
                         return $member->user ? [
+                            'user_id' => $member->user->id,
                             'username' => $member->user->username,
                             'profile_photo' => $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
                         ] : [
+                            'user_id' => null,
                             'username' => 'Unknown User',
                             'profile_photo' => null,
                         ];
@@ -374,11 +390,15 @@ class EventController extends Controller
             $eventData['participants'] = [
                 'name' => $participants->map(function($participant) {
                     return $participant->user ? [
+                        'user_id' => $participant->user->id,
                         'username' => $participant->user->username,
                         'profile_photo' => $participant->user->profile_photo ? Storage::url($participant->user->profile_photo) : null,
+                        'team_id' => $participant->team_id,
                     ] : [
+                        'user_id' => null,
                         'username' => 'Unknown User',
                         'profile_photo' => null,
+                        'team_id' => $participant->team_id,
                     ];
                 })
             ];
@@ -600,9 +620,9 @@ class EventController extends Controller
     /**
      * Helper method to process events and categorize them
      */
-    private function processEventGroup($events, $user, $today, $tomorrow, $now, $userRatingsByEvent)
+    private function processEventGroup($events, $user, $today, $tomorrow, $now, $userRatingsByEvent, $teamRatingsByEvent = [], $userTeamIds = [])
     {
-        $processed = $events->map(function($event) use ($user, $today, $tomorrow, $now, $userRatingsByEvent) {
+        $processed = $events->map(function($event) use ($user, $today, $tomorrow, $now, $userRatingsByEvent, $teamRatingsByEvent, $userTeamIds) {
             // Get current user's check-in status if they're a participant
             $userCheckin = $event->checkins->where('user_id', $user->id)->first();
             
@@ -707,6 +727,11 @@ class EventController extends Controller
                 'priority' => $priority, // Keep for backwards compatibility
                 'priority_24h' => $priority24h, // For sorting upcoming by proximity
                 'hours_until_start' => $hoursUntilStart, // Hours until event start for "happening soon" display
+                // Team rating information for team vs team events
+                'team_ratings' => ($event->event_type === 'team vs team' && isset($teamRatingsByEvent[$event->id])) ? $teamRatingsByEvent[$event->id] : null,
+                'user_team_has_rated' => ($event->event_type === 'team vs team' && isset($teamRatingsByEvent[$event->id]) && !empty($teamRatingsByEvent[$event->id])) ? true : false,
+                'is_team_rating_pending' => ($event->event_type === 'team vs team' && $isPast && (!isset($teamRatingsByEvent[$event->id]) || empty($teamRatingsByEvent[$event->id]))) ? true : false,
+                'user_team_ids' => ($event->event_type === 'team vs team') ? $userTeamIds : [],
             ];
         })
         ->sortBy(function($event) {
@@ -792,9 +817,36 @@ class EventController extends Controller
             ->unique()
             ->toArray();
 
+        // Get user's active teams for team rating checks
+        $userTeamIds = TeamMember::where('user_id', $user->id)
+            ->where('is_active', true)
+            ->where('roster_status', 'active')
+            ->pluck('team_id')
+            ->toArray();
+
+        // Get team ratings for team vs team events
+        $teamRatingsByEvent = [];
+        if (!empty($userTeamIds)) {
+            $teamRatings = TeamRating::whereIn('event_id', $allEventIds)
+                ->whereIn('rater_team_id', $userTeamIds)
+                ->get()
+                ->groupBy('event_id');
+            
+            foreach ($teamRatings as $eventId => $ratings) {
+                $teamRatingsByEvent[$eventId] = $ratings->map(function($rating) {
+                    return [
+                        'rater_team_id' => $rating->rater_team_id,
+                        'rated_team_id' => $rating->rated_team_id,
+                        'rating' => $rating->rating,
+                        'comment' => $rating->comment,
+                    ];
+                })->toArray();
+            }
+        }
+
         // Process both groups using the helper method
-        $processedRegularEvents = $this->processEventGroup($regularEvents, $user, $today, $tomorrow, $now, $userRatingsByEvent);
-        $processedTournamentEvents = $this->processEventGroup($tournamentEvents, $user, $today, $tomorrow, $now, $userRatingsByEvent);
+        $processedRegularEvents = $this->processEventGroup($regularEvents, $user, $today, $tomorrow, $now, $userRatingsByEvent, $teamRatingsByEvent, $userTeamIds);
+        $processedTournamentEvents = $this->processEventGroup($tournamentEvents, $user, $today, $tomorrow, $now, $userRatingsByEvent, $teamRatingsByEvent, $userTeamIds);
 
         // Helper function to categorize events
         $categorizeEvents = function($events) {
@@ -833,10 +885,85 @@ class EventController extends Controller
         $eventsCategory = $categorizeEvents($processedRegularEvents);
         $tournamentsCategory = $categorizeEvents($processedTournamentEvents);
 
+        // Get tournament schedules for participants
+        $tournamentSchedules = [];
+        if (!empty($tournamentEvents)) {
+            $tournamentEventIds = $tournamentEvents->pluck('id')->toArray();
+            $tournamentIds = $tournamentEvents->pluck('tournament_id')->filter()->unique()->toArray();
+
+            if (!empty($tournamentIds)) {
+                // Get EventGame records for tournaments where user is a participant
+                $eventGames = EventGame::whereIn('tournament_id', $tournamentIds)
+                    ->whereIn('event_id', $tournamentEventIds)
+                    ->with(['event', 'team_a', 'team_b', 'user_a', 'user_b'])
+                    ->orderBy('game_date')
+                    ->orderBy('start_time')
+                    ->get();
+
+                // Group by tournament and event
+                $schedulesByTournament = [];
+                foreach ($eventGames as $game) {
+                    $tournamentId = $game->tournament_id;
+                    $eventId = $game->event_id;
+
+                    if (!isset($schedulesByTournament[$tournamentId])) {
+                        $schedulesByTournament[$tournamentId] = [];
+                    }
+                    if (!isset($schedulesByTournament[$tournamentId][$eventId])) {
+                        $schedulesByTournament[$tournamentId][$eventId] = [];
+                    }
+
+                    $schedulesByTournament[$tournamentId][$eventId][] = [
+                        'id' => $game->id,
+                        'round_number' => $game->round_number,
+                        'match_number' => $game->match_number,
+                        'match_stage' => $game->match_stage,
+                        'team_a' => $game->team_a ? [
+                            'id' => $game->team_a->id,
+                            'name' => $game->team_a->name,
+                        ] : null,
+                        'team_b' => $game->team_b ? [
+                            'id' => $game->team_b->id,
+                            'name' => $game->team_b->name,
+                        ] : null,
+                        'user_a' => $game->user_a ? [
+                            'id' => $game->user_a->id,
+                            'username' => $game->user_a->username,
+                        ] : null,
+                        'user_b' => $game->user_b ? [
+                            'id' => $game->user_b->id,
+                            'username' => $game->user_b->username,
+                        ] : null,
+                        'score_a' => $game->score_a,
+                        'score_b' => $game->score_b,
+                        'winner_team_id' => $game->winner_team_id,
+                        'winner_user_id' => $game->winner_user_id,
+                        'game_date' => $game->game_date,
+                        'start_time' => $game->start_time,
+                        'end_time' => $game->end_time,
+                        'status' => $game->status,
+                    ];
+                }
+
+                // Format for response
+                foreach ($schedulesByTournament as $tournamentId => $events) {
+                    foreach ($events as $eventId => $games) {
+                        $tournamentSchedules[] = [
+                            'tournament_id' => $tournamentId,
+                            'event_id' => $eventId,
+                            'games' => $games,
+                            'total_matches' => count($games),
+                        ];
+                    }
+                }
+            }
+        }
+
         return response()->json([
             'status' => 'success',
             'events' => $eventsCategory,
             'tournaments' => $tournamentsCategory,
+            'tournament_schedules' => $tournamentSchedules,
         ]);
     }
 
@@ -1361,6 +1488,7 @@ class EventController extends Controller
             'end_time' => $request->end_time,
             'created_by' => $user->id,
             'checkin_code' => $this->generateCheckinCode(),
+            'share_token' => $this->generateShareToken(),
             'is_approved' => false,
             'approved_at' => null,
         ]);
@@ -1391,8 +1519,11 @@ class EventController extends Controller
                     'team_id' => $teamId,
                 ]);
                 
-                // Get all team members and auto-enroll them
-                $teamMembers = TeamMember::where('team_id', $teamId)->get();
+                // Get all active team members and auto-enroll them
+                $teamMembers = TeamMember::where('team_id', $teamId)
+                    ->where('is_active', true)
+                    ->where('roster_status', 'active')
+                    ->get();
                 foreach ($teamMembers as $member) {
                     $participant = EventParticipant::create([
                         'event_id' => $event->id,
@@ -1698,6 +1829,16 @@ class EventController extends Controller
             return response()->json([
                 'status' => 'error',
                 'message' => 'Event is already cancelled'
+            ], 400);
+        }
+
+        // Prevent cancellation on the day of the booking
+        $eventDate = Carbon::parse($event->date)->format('Y-m-d');
+        $today = Carbon::today()->format('Y-m-d');
+        if ($eventDate === $today) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot cancel events on the day of the booking'
             ], 400);
         }
 
@@ -3146,5 +3287,105 @@ class EventController extends Controller
         }
     }
 
-    
+    /**
+     * Get shareable link for an event
+     */
+    public function getShareableLink(string $id)
+    {
+        $user = auth()->user();
+        $event = Event::find($id);
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found'
+            ], 404);
+        }
+
+        // Check if user is creator or participant
+        $isCreator = $event->created_by === $user->id;
+        $isParticipant = EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $user->id)
+            ->exists();
+
+        if (!$isCreator && !$isParticipant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You do not have permission to share this event'
+            ], 403);
+        }
+
+        // Generate share token if it doesn't exist
+        if (!$event->share_token) {
+            $event->update(['share_token' => $this->generateShareToken()]);
+            $event->refresh();
+        }
+
+        $baseUrl = config('app.frontend_url', env('FRONTEND_URL', 'http://localhost:3000'));
+        
+        // Determine route based on event type
+        if ($event->event_type === 'tune-up' || $event->event_type === 'tune up') {
+            $shareUrl = "{$baseUrl}/games/tune-ups/{$event->share_token}";
+        } else {
+            $shareUrl = "{$baseUrl}/games/friendlygames/{$event->share_token}";
+        }
+
+        return response()->json([
+            'status' => 'success',
+            'share_token' => $event->share_token,
+            'share_url' => $shareUrl,
+        ], 200);
+    }
+
+    /**
+     * Public view of event by share token (no authentication required)
+     */
+    public function viewByShareToken(string $token)
+    {
+        $event = Event::with(['venue.photos', 'facility', 'participants.user', 'teams.team'])
+            ->where('share_token', $token)
+            ->first();
+
+        if (!$event) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Event not found or invalid share link'
+            ], 404);
+        }
+
+        // Return public event data (limited information)
+        return response()->json([
+            'status' => 'success',
+            'event' => [
+                'id' => $event->id,
+                'name' => $event->name,
+                'description' => $event->description,
+                'event_type' => $event->event_type,
+                'sport' => $event->sport,
+                'date' => $event->date,
+                'start_time' => $event->start_time,
+                'end_time' => $event->end_time,
+                'slots' => $event->slots,
+                'venue' => $event->venue ? [
+                    'id' => $event->venue->id,
+                    'name' => $event->venue->name,
+                    'address' => $event->venue->address,
+                    'photos' => $event->venue->photos->map(function($photo) {
+                        return Storage::url($photo->image_path);
+                    }),
+                ] : null,
+                'facility' => $event->facility ? [
+                    'id' => $event->facility->id,
+                    'type' => $event->facility->type,
+                ] : null,
+                'participants_count' => $event->participants->count(),
+                'teams' => $event->teams->map(function($eventTeam) {
+                    return [
+                        'team_id' => $eventTeam->team_id,
+                        'team_name' => $eventTeam->team->name ?? null,
+                    ];
+                }),
+            ],
+        ], 200);
+    }
 }

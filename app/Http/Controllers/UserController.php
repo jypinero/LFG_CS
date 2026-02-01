@@ -20,12 +20,14 @@ class UserController extends Controller
             return response()->json(['status' => 'error', 'message' => 'User not found'], 404);
         }
 
-        // Load all memberships with team relation (fallback to loading team if relation missing)
-        $memberships = TeamMember::with('team')->where('user_id', $user->id)->get();
+        // Load active memberships with team relation
+        $currentMemberships = TeamMember::with('team')
+            ->where('user_id', $user->id)
+            ->where('is_active', true)
+            ->where('roster_status', 'active')
+            ->get();
 
-        $current = $memberships->filter(function ($m) {
-            return ($m->is_active === true) || ($m->roster_status === 'active');
-        })->values()->map(function ($m) {
+        $current = $currentMemberships->map(function ($m) {
             return [
                 'team_id' => $m->team_id,
                 'team' => $m->team ? [
@@ -40,9 +42,20 @@ class UserController extends Controller
             ];
         });
 
-        $past = $memberships->filter(function ($m) {
-            return ($m->roster_status === 'left') || ($m->roster_status === 'removed') || ($m->is_active === false && $m->roster_status !== 'active');
-        })->values()->map(function ($m) {
+        // Load past memberships separately
+        $pastMemberships = TeamMember::with('team')
+            ->where('user_id', $user->id)
+            ->where(function($q) {
+                $q->where('roster_status', 'left')
+                  ->orWhere('roster_status', 'removed')
+                  ->orWhere(function($inner) {
+                      $inner->where('is_active', false)
+                            ->where('roster_status', '!=', 'active');
+                  });
+            })
+            ->get();
+
+        $past = $pastMemberships->map(function ($m) {
             return [
                 'team_id' => $m->team_id,
                 'team' => $m->team ? [

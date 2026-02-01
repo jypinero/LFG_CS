@@ -28,6 +28,7 @@ class Event extends Model
         'end_date_end_time',
         'created_by',
         'checkin_code',
+        'share_token',
         'cancelled_at',
         'is_approved',
         'approved_at',

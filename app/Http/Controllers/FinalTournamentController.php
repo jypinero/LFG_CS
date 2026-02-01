@@ -1004,6 +1004,16 @@ class FinalTournamentController extends Controller
             ], 403);
         }
 
+        // Prevent cancellation on the day of the booking
+        $eventDate = Carbon::parse($event->date)->format('Y-m-d');
+        $today = Carbon::today()->format('Y-m-d');
+        if ($eventDate === $today) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot cancel events on the day of the booking'
+            ], 400);
+        }
+
         DB::transaction(function() use ($event, $data, $user) {
             $now = Carbon::now();
 

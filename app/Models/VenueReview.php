@@ -10,7 +10,7 @@ class VenueReview extends Model
     use HasFactory;
 
     protected $fillable = [
-        'venue_id', 'user_id', 'rating', 'comment', 'reviewed_at'
+        'venue_id', 'user_id', 'rating', 'comment', 'reviewed_at', 'owner_reply', 'owner_replied_at'
     ];
 
     public function venue()

@@ -85,6 +85,10 @@ Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicT
 // Public bracket route (no authentication required)
 Route::get('/tournaments/events/{eventId}/bracket/public', [FinalTournamentController::class, 'getPublicBracket']);
 
+// Public event share routes (no authentication required) - matching frontend routes
+Route::get('/games/friendlygames/{token}', [EventController::class, 'viewByShareToken']);
+Route::get('/games/tune-ups/{token}', [EventController::class, 'viewByShareToken']);
+
 Route::get('auth/challonge/redirect', [ChallongeAuthController::class, 'redirect'])->middleware('auth:api');
 Route::get('auth/challonge/callback', [\App\Http\Controllers\ChallongeAuthController::class, 'callback']);
 Route::post('auth/challonge/save-tokens', [\App\Http\Controllers\ChallongeAuthController::class, 'saveTokens'])->middleware('auth:api');
@@ -241,6 +245,7 @@ Route::middleware('auth:api')->group(function () {
     Route::get('/events',[EventController::class, 'index']);
     Route::get('/events/suggested-tournaments', [EventController::class, 'getSuggestedTournamentGames']);
     Route::post('/events/create', [EventController::class, 'store']);
+    Route::get('/events/{id}/share-link', [EventController::class, 'getShareableLink']);
     Route::get('/events/{id}', [EventController::class, 'show']);
     Route::put('/events/{id}', [EventController::class, 'update']);
     Route::delete('/events/{id}', [EventController::class, 'destroy']);
@@ -339,6 +344,7 @@ Route::middleware('auth:api')->group(function () {
 
         // Reviews
         Route::post('/venues/{venueId}/post-reviews', [VenueController::class, 'PostReview']);
+        Route::post('/venues/{venueId}/reviews/{reviewId}/reply', [VenueController::class, 'replyToReview']);
 
         // Operating Hours Management
         Route::post('/venues/{venueId}/operating-hours', [VenueController::class, 'addOperatingHours']);
@@ -758,6 +764,7 @@ Route::middleware('auth:api')->group(function () {
 
 
     Route::post('/events/{event}/ratings',[RatingController::class, 'submit']);
+    Route::post('/events/{event}/team-ratings',[RatingController::class, 'submitTeamRating']);
     Route::get('/profile/rating/{userId}', [App\Http\Controllers\ProfileController::class, 'show']);
 
     
