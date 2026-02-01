@@ -297,6 +297,7 @@ class PushNotificationService
             'document_manual_review_needed' => 'Document Review Needed',
             'tournament_announcement' => 'Tournament Announcement',
             'team_join_request' => 'Team Join Request',
+            'team_member_re_added' => 'Team Member Re-added',
             'coach_match' => 'Coach Match',
             'coach_match_response' => 'Coach Match Response',
             'welcome_back' => 'Welcome Back!',

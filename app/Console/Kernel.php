@@ -27,6 +27,9 @@ class Kernel extends ConsoleKernel
         $schedule->command('participants:cleanup')->daily();
 
         $schedule->command('subscriptions:expire')->daily();
+
+        // Cleanup old notifications (older than 30 days) daily
+        $schedule->command('notifications:cleanup --days=30')->daily();
     }
 
     protected $routeMiddleware = [

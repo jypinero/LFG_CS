@@ -594,6 +594,8 @@ class TeamController extends Controller
                         'team_id' => $team->id,
                         'team_name' => $team->name,
                         'user_id' => $newUser->id,
+                        'added_by_user_id' => $user->id,
+                        'added_by_username' => $user->username,
                     ],
                     'created_by' => $user->id,
                 ]);
@@ -603,7 +605,7 @@ class TeamController extends Controller
                     'user_id' => $newUser->id,
                     'pinned' => false,
                     'is_read' => false,
-                    'action_state' => 'completed',
+                    'action_state' => 'none',
                     'created_at' => now(),
                 ]);
             }
