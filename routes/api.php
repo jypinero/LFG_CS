@@ -155,6 +155,7 @@ Route::middleware('auth:api')->group(function () {
     Route::post('/users/notifications/{id}/read', [NotifController::class, 'markAsRead']);
     Route::post('/users/notifications/{id}/unread', [NotifController::class, 'markAsUnread']);
     Route::post('/users/notifications/readall', [NotifController::class, 'markAllRead']);
+    Route::post('/users/notifications/clear-old', [NotifController::class, 'clearOldNotifications']);
 
     // Home route - sends welcome notification
     Route::get('/home', [NotifController::class, 'sendHomeWelcome']);

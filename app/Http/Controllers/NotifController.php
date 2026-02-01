@@ -189,6 +189,77 @@ class NotifController extends Controller
     }
 
     /**
+     * Clear old notifications (older than 30 days) for the authenticated user
+     * POST /api/users/notifications/clear-old
+     */
+    public function clearOldNotifications()
+    {
+        try {
+            $userId = auth()->id();
+            
+            if (!$userId) {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'User not authenticated'
+                ], 401);
+            }
+
+            $thresholdDate = \Carbon\Carbon::now()->subDays(30);
+
+            // Get UserNotification IDs that are older than 30 days
+            $oldUserNotificationIds = UserNotification::where('user_id', $userId)
+                ->where('created_at', '<', $thresholdDate)
+                ->pluck('id');
+
+            if ($oldUserNotificationIds->isEmpty()) {
+                return response()->json([
+                    'status' => 'success',
+                    'message' => 'No old notifications to clear',
+                    'deleted_count' => 0
+                ], 200);
+            }
+
+            // Get the corresponding Notification IDs
+            $oldNotificationIds = UserNotification::whereIn('id', $oldUserNotificationIds)
+                ->pluck('notification_id')
+                ->unique();
+
+            // Delete old UserNotifications
+            $deletedUserNotifsCount = UserNotification::whereIn('id', $oldUserNotificationIds)->delete();
+
+            // Delete parent Notifications if they are no longer referenced by any UserNotification
+            $deletedNotificationsCount = 0;
+            foreach ($oldNotificationIds as $notificationId) {
+                $stillReferenced = UserNotification::where('notification_id', $notificationId)->exists();
+                if (!$stillReferenced) {
+                    Notification::where('id', $notificationId)->delete();
+                    $deletedNotificationsCount++;
+                }
+            }
+
+            \Log::info("User {$userId} cleared old notifications", [
+                'user_notifications_deleted' => $deletedUserNotifsCount,
+                'notifications_deleted' => $deletedNotificationsCount,
+                'threshold_date' => $thresholdDate
+            ]);
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Old notifications cleared successfully',
+                'deleted_count' => $deletedUserNotifsCount
+            ], 200);
+
+        } catch (\Exception $e) {
+            \Log::error('Error clearing old notifications: ' . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to clear old notifications',
+                'error' => config('app.debug') ? $e->getMessage() : 'Internal server error'
+            ], 500);
+        }
+    }
+
+    /**
      * Get redirect path for a notification based on its type and data
      */
     private function getRedirectPath($notification)
