@@ -298,6 +298,8 @@ class PushNotificationService
             'tournament_announcement' => 'Tournament Announcement',
             'team_join_request' => 'Team Join Request',
             'team_member_re_added' => 'Team Member Re-added',
+            'team_member_removed' => 'Team Member Removed',
+            'team_member_restored' => 'Team Member Restored',
             'coach_match' => 'Coach Match',
             'coach_match_response' => 'Coach Match Response',
             'welcome_back' => 'Welcome Back!',

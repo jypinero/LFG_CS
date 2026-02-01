@@ -237,6 +237,8 @@ class NotifController extends Controller
             // Team notifications
             'team_join_request' => isset($data['team_id']) ? "/teams/{$data['team_id']}/requests" : null,
             'team_member_re_added' => isset($data['team_id']) ? "/teams/{$data['team_id']}" : null,
+            'team_member_removed' => isset($data['team_id']) ? "/teams/{$data['team_id']}" : null,
+            'team_member_restored' => isset($data['team_id']) ? "/teams/{$data['team_id']}" : null,
             
             // Post notifications
             'post_liked' => isset($data['post_id']) ? "/posts/{$data['post_id']}" : null,

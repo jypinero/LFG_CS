@@ -575,14 +575,14 @@ class TeamController extends Controller
                 $member = $previousMember->fresh();
             } else {
                 // Create new member
-                $member = TeamMember::create([
-                    'team_id' => $team->id,
-                    'user_id' => $newUser->id,
-                    'role' => $role,
-                    'joined_at' => now(),
-                    'is_active' => true,
-                    'roster_status' => 'active',
-                ]);
+            $member = TeamMember::create([
+                'team_id' => $team->id,
+                'user_id' => $newUser->id,
+                'role' => $role,
+                'joined_at' => now(),
+                'is_active' => true,
+                'roster_status' => 'active',
+            ]);
             }
 
             // Send notification if re-adding a previously removed member
@@ -754,6 +754,31 @@ class TeamController extends Controller
             $member->removed_at = now();
             $member->save();
 
+            // Send notification to the removed member
+            $removedUser = User::find($member->user_id);
+            if ($removedUser) {
+                $notification = Notification::create([
+                    'type' => 'team_member_removed',
+                    'data' => [
+                        'message' => "You have been removed from the team: {$team->name}",
+                        'team_id' => $team->id,
+                        'team_name' => $team->name,
+                        'removed_by_user_id' => $user->id,
+                        'removed_by_username' => $user->username,
+                    ],
+                    'created_by' => $user->id,
+                ]);
+
+                UserNotification::create([
+                    'notification_id' => $notification->id,
+                    'user_id' => $removedUser->id,
+                    'pinned' => false,
+                    'is_read' => false,
+                    'action_state' => 'none',
+                    'created_at' => now(),
+                ]);
+            }
+
             // Clean up event participants for this user/team combination
             // Regular events (non-tournament)
             $eventParticipants = EventParticipant::where('team_id', $team->id)
@@ -864,6 +889,31 @@ class TeamController extends Controller
         $member->roster_status = 'active';
         $member->removed_at = null;
         $member->save();
+
+        // Send notification to the restored member
+        $restoredUser = User::find($member->user_id);
+        if ($restoredUser) {
+            $notification = Notification::create([
+                'type' => 'team_member_restored',
+                'data' => [
+                    'message' => "You have been restored to the team: {$team->name}",
+                    'team_id' => $team->id,
+                    'team_name' => $team->name,
+                    'restored_by_user_id' => $user->id,
+                    'restored_by_username' => $user->username,
+                ],
+                'created_by' => $user->id,
+            ]);
+
+            UserNotification::create([
+                'notification_id' => $notification->id,
+                'user_id' => $restoredUser->id,
+                'pinned' => false,
+                'is_read' => false,
+                'action_state' => 'none',
+                'created_at' => now(),
+            ]);
+        }
 
         return response()->json([
             'status'=>'success',

@@ -2088,7 +2088,7 @@ class VenueController extends Controller
         $validated = $request->validate([
             'reason' => 'required|string|max:500'
         ]);
-
+        
         // Prevent cancellation on the day of the booking
         if ($booking->event) {
             $eventDate = Carbon::parse($booking->event->date)->format('Y-m-d');
