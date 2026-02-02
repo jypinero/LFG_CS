@@ -15,21 +15,8 @@ class Kernel extends ConsoleKernel
 
     protected function schedule(Schedule $schedule)
     {
-        // Run your custom command every minute (adjust as needed)
-        $schedule->command('tournaments:close-registration')->everyMinute();
-        $schedule->command('notify:players_to_rate')->dailyAt('08:00');
-        // run daily; adjust as needed
-        $schedule->command('challonge:refresh-tokens --days=1')->daily();
-        $schedule->job(new \App\Jobs\NotifyParticipantsToRateJob)->hourly()->withoutOverlapping();
-        // run the completion job every minute (adjust frequency as needed)
-        $schedule->job(new \App\Jobs\CompletePastEventsJob)->everyMinute()->withoutOverlapping();
-        // Cleanup old pending participants daily
-        $schedule->command('participants:cleanup')->daily();
-
-        $schedule->command('subscriptions:expire')->daily();
-
-        // Cleanup old notifications (older than 30 days) daily
-        $schedule->command('notifications:cleanup --days=30')->daily();
+        // All schedules have been moved to routes/console.php
+        // This method is kept for Laravel compatibility but is now empty
     }
 
     protected $routeMiddleware = [
