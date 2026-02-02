@@ -1680,7 +1680,7 @@ class EventController extends Controller
             $eventData['teams'] = $event->teams->map(function($eventTeam) {
                 return [
                     'team_id' => $eventTeam->team_id,
-                    'team_name' => $eventTeam->team->name ?? 'Unknown Team',
+                    'team_name' => $eventTeam->team ? ($eventTeam->team->name ?? 'Unknown Team') : 'Unknown Team',
                     'group' => $eventTeam->group,
                 ];
             });
@@ -1693,8 +1693,8 @@ class EventController extends Controller
                 ->first();
             return [
                 'user_id' => $participant->user_id,
-                'username' => $participant->user->username,
-                'profile_photo' => $participant->user->profile_photo ? Storage::url($participant->user->profile_photo) : null,
+                'username' => $participant->user ? ($participant->user->username ?? 'Unknown User') : 'Unknown User',
+                'profile_photo' => $participant->user && $participant->user->profile_photo ? Storage::url($participant->user->profile_photo) : null,
                 'status' => $participant->status,
                 'checked_in' => $checkin ? true : false,
                 'checkin_time' => $checkin ? $checkin->checkin_time : null,

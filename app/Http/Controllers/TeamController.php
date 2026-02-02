@@ -968,6 +968,11 @@ class TeamController extends Controller
             ];
         })->values();
 
+        // Load sport relationship if not already loaded
+        if (!$team->relationLoaded('sport')) {
+            $team->load('sport');
+        }
+
         $teamInfo = [
             'id' => $team->id,
             'name' => $team->name,
@@ -976,6 +981,14 @@ class TeamController extends Controller
             'certification' => $team->certification,
             'certified' => $team->certified,
             'team_type' => $team->team_type,
+            'sport_id' => $team->sport_id,
+            'sport' => $team->sport ? [
+                'id' => $team->sport->id,
+                'name' => $team->sport->name,
+                'category' => $team->sport->category,
+            ] : null,
+            'bio' => $team->bio,
+            'roster_size_limit' => $team->roster_size_limit,
             'address_line' => $team->address_line,
             'latitude' => $team->latitude,
             'longitude' => $team->longitude,
@@ -999,8 +1012,7 @@ class TeamController extends Controller
     /**
      * Allow a user to request to join a team.
      * Validations:
-     * - User can't join if already in any team.
-     * - User can't join if already in the requested team.
+     * - User can't join if already in the requested team (prevents duplicates).
      */
     public function requestJoinTeam(Request $request, string $teamId)
     {
@@ -1012,24 +1024,6 @@ class TeamController extends Controller
                 'status' => 'error',
                 'message' => 'Team not found'
             ], 404);
-        }
-
-        /**
-         * Check existing ACTIVE memberships
-         */
-        $activeTeams = TeamMember::where('user_id', $user->id)
-            ->where('is_active', true)
-            ->with('team:id,team_type')
-            ->get();
-
-        $hasCollegiate = $activeTeams->contains(fn ($m) => $m->team->team_type  === 'collegiate');
-        $hasProfessional = $activeTeams->contains(fn ($m) => $m->team->team_type  === 'professional');
-
-        if ($hasCollegiate && $hasProfessional) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'You cannot join more teams because you are already part of both collegiate and professional teams.'
-            ], 409);
         }
 
         /**
@@ -1780,12 +1774,6 @@ class TeamController extends Controller
             if ($invite->isExpired()) {
                 return response()->json(['status' => 'error', 'message' => 'Invite token has expired'], 409);
             }
-        }
-
-        // Check if user is already in any team
-        $existingMembership = TeamMember::where('user_id', $user->id)->first();
-        if ($existingMembership) {
-            return response()->json(['status' => 'error', 'message' => 'You are already a member of another team'], 409);
         }
 
         // Check if user is already in this team
