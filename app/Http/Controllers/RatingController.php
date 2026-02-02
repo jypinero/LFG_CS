@@ -42,7 +42,9 @@ class RatingController extends Controller
 
         $user = auth()->user();
 
-        if (strtotime($event->date.' '.$event->end_time) > time()) {
+        // Ensure we only use the date part (not datetime) before concatenating with end_time
+        $eventDate = Carbon::parse($event->date)->format('Y-m-d');
+        if (strtotime($eventDate . ' ' . $event->end_time) > time()) {
             return response()->json(['error' => 'Event not finished yet'], 403);
         }
 
@@ -120,7 +122,9 @@ class RatingController extends Controller
         }
 
         // Validate event is completed
-        $eventEnd = Carbon::parse($event->date . ' ' . $event->end_time);
+        // Ensure we only use the date part (not datetime) before concatenating with end_time
+        $eventDate = Carbon::parse($event->date)->format('Y-m-d');
+        $eventEnd = Carbon::parse($eventDate . ' ' . $event->end_time);
         if ($eventEnd->isFuture()) {
             return response()->json([
                 'status' => 'error',

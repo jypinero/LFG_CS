@@ -25,6 +25,7 @@ use App\Models\MessageThread;
 use App\Models\ThreadParticipant;
 use App\Models\PlayerRating;
 use App\Mail\EventCancelledMail;
+use App\Mail\EventJoinConfirmationMail;
 use Endroid\QrCode\QrCode;
 use Endroid\QrCode\Writer\SvgWriter;
 
@@ -93,6 +94,44 @@ class EventController extends Controller
             'status' => 'error',
             'message' => 'Event is pending venue approval.'
         ], 403);
+    }
+
+    /**
+     * Calculate the required fee per participant for an event
+     */
+    private function calculateRequiredFee(Event $event): float
+    {
+        // If no facility or price per hour, return 0
+        if (!$event->facility || !$event->facility->price_per_hr) {
+            return 0.0;
+        }
+
+        // Calculate hours
+        try {
+            $start = Carbon::parse($event->start_time);
+            $end = Carbon::parse($event->end_time);
+            $hours = $start->diffInMinutes($end) / 60;
+        } catch (\Exception $e) {
+            \Log::warning('Failed to parse event times for fee calculation', [
+                'event_id' => $event->id,
+                'error' => $e->getMessage()
+            ]);
+            return 0.0;
+        }
+
+        // Calculate total cost
+        $pricePerHour = $event->facility->price_per_hr;
+        $totalCost = $hours * $pricePerHour;
+
+        // Get current participant count (including the new participant)
+        $participantsCount = EventParticipant::where('event_id', $event->id)->count();
+
+        // Calculate cost per person
+        if ($participantsCount > 0) {
+            return round($totalCost / $participantsCount, 2);
+        }
+
+        return round($totalCost, 2);
     }
     /**
      * Display a listing of the resource.
@@ -1139,6 +1178,21 @@ class EventController extends Controller
             'action_state' => 'none',
         ]);
 
+        // Calculate and send email with required fee to participant
+        try {
+            $requiredFee = $this->calculateRequiredFee($event);
+            $user = \App\Models\User::find($userId);
+            if ($user && $user->email) {
+                \Mail::to($user->email)->send(new EventJoinConfirmationMail($event, $user, $requiredFee));
+            }
+        } catch (\Exception $e) {
+            \Log::error('Failed to send event join confirmation email', [
+                'user_id' => $userId,
+                'event_id' => $event->id,
+                'error' => $e->getMessage()
+            ]);
+        }
+
         // Auto-join participant to event group chat if it exists
         $this->addParticipantToEventChat($event->id, $userId);
 
@@ -1286,6 +1340,23 @@ class EventController extends Controller
             'is_read' => false,
             'action_state' => 'none',
         ]);
+
+        // Calculate required fee and send emails to all team members
+        try {
+            $requiredFee = $this->calculateRequiredFee($event);
+            foreach ($enrolledParticipants as $participant) {
+                $user = \App\Models\User::find($participant->user_id);
+                if ($user && $user->email) {
+                    \Mail::to($user->email)->send(new EventJoinConfirmationMail($event, $user, $requiredFee));
+                }
+            }
+        } catch (\Exception $e) {
+            \Log::error('Failed to send event join confirmation emails to team members', [
+                'team_id' => $teamId,
+                'event_id' => $event->id,
+                'error' => $e->getMessage()
+            ]);
+        }
 
         // Auto-join all team members to event group chat
         foreach ($enrolledParticipants as $participant) {
@@ -3378,6 +3449,23 @@ class EventController extends Controller
             ], 404);
         }
 
+        // Calculate hours and costs
+        $totalCost = 0;
+        if ($event->facility && $event->facility->price_per_hr) {
+            try {
+                $start = Carbon::parse($event->start_time);
+                $end = Carbon::parse($event->end_time);
+                $hours = $start->diffInMinutes($end) / 60;
+                $pricePerHour = $event->facility->price_per_hr;
+                $totalCost = $hours * $pricePerHour;
+            } catch (\Exception $e) {
+                \Log::warning('Failed to calculate event cost for share token view', [
+                    'event_id' => $event->id,
+                    'error' => $e->getMessage()
+                ]);
+            }
+        }
+
         // Return public event data (limited information)
         return response()->json([
             'status' => 'success',
@@ -3402,8 +3490,10 @@ class EventController extends Controller
                 'facility' => $event->facility ? [
                     'id' => $event->facility->id,
                     'type' => $event->facility->type,
+                    'price_per_hr' => $event->facility->price_per_hr,
                 ] : null,
                 'participants_count' => $event->participants->count(),
+                'total_cost' => round($totalCost, 2),
                 'teams' => $event->teams->map(function($eventTeam) {
                     return [
                         'team_id' => $eventTeam->team_id,
