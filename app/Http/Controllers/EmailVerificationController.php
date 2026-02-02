@@ -50,8 +50,17 @@ class EmailVerificationController extends Controller
             'user_agent' => $request->userAgent(),
         ]);
 
-        // Send email
-        Mail::to($user->email)->send(new OtpCodeMail($code, 5));
+        // Send email with error handling
+        try {
+            Mail::to($user->email)->send(new OtpCodeMail($code, 5));
+            \Log::info("Email verification OTP sent successfully to user {$user->id} ({$user->email})");
+        } catch (\Exception $e) {
+            \Log::error("Failed to send email verification OTP to user {$user->id}: " . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to send verification email. Please try again later.',
+            ], 500);
+        }
 
         return response()->json([
             'status' => 'success',
@@ -156,8 +165,17 @@ class EmailVerificationController extends Controller
             'user_agent' => $request->userAgent(),
         ]);
 
-        // Send email
-        Mail::to($user->email)->send(new OtpCodeMail($code, 5));
+        // Send email with error handling
+        try {
+            Mail::to($user->email)->send(new OtpCodeMail($code, 5));
+            \Log::info("Email verification OTP resent successfully to user {$user->id} ({$user->email})");
+        } catch (\Exception $e) {
+            \Log::error("Failed to send email verification OTP to user {$user->id}: " . $e->getMessage());
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Failed to send verification email. Please try again later.',
+            ], 500);
+        }
 
         return response()->json([
             'status' => 'success',
