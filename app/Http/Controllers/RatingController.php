@@ -143,6 +143,18 @@ class RatingController extends Controller
             ], 422);
         }
 
+        // First, check if user is a participant in the event (for my-games context)
+        $isParticipant = \App\Models\EventParticipant::where('event_id', $event->id)
+            ->where('user_id', $user->id)
+            ->exists();
+
+        if (! $isParticipant) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'You are not a participant in this event'
+            ], 403);
+        }
+
         // Validate user is a member of the rater team
         $isTeamMember = TeamMember::where('team_id', $request->rater_team_id)
             ->where('user_id', $user->id)
@@ -151,10 +163,20 @@ class RatingController extends Controller
             ->exists();
 
         if (! $isTeamMember) {
-            return response()->json([
-                'status' => 'error',
-                'message' => 'You must be an active member of the rating team'
-            ], 403);
+            // Check if user's participant record has the team_id matching rater_team_id
+            $userParticipant = \App\Models\EventParticipant::where('event_id', $event->id)
+                ->where('user_id', $user->id)
+                ->first();
+            
+            if ($userParticipant && $userParticipant->team_id == $request->rater_team_id) {
+                // User is participant with this team_id, allow rating even if team membership check fails
+                // (handles edge cases where team structure might be inconsistent)
+            } else {
+                return response()->json([
+                    'status' => 'error',
+                    'message' => 'You must be an active member of the rating team'
+                ], 403);
+            }
         }
 
         // Validate both teams are participants in the event

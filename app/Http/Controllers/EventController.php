@@ -885,6 +885,10 @@ class EventController extends Controller
         $eventsCategory = $categorizeEvents($processedRegularEvents);
         $tournamentsCategory = $categorizeEvents($processedTournamentEvents);
 
+        // Combine events and tournaments for unified rendering
+        $allGames = $processedRegularEvents->merge($processedTournamentEvents);
+        $allGamesCategory = $categorizeEvents($allGames);
+
         // Get tournament schedules for participants
         $tournamentSchedules = [];
         if (!empty($tournamentEvents)) {
@@ -963,6 +967,24 @@ class EventController extends Controller
             'status' => 'success',
             'events' => $eventsCategory,
             'tournaments' => $tournamentsCategory,
+            'games' => $allGamesCategory['games'], // Combined games array for unified rendering
+            'today' => $allGamesCategory['today'],
+            'tomorrow' => $allGamesCategory['tomorrow'],
+            'upcoming' => $allGamesCategory['upcoming'],
+            'upcoming_24h' => $allGamesCategory['upcoming_24h'],
+            'past' => $allGamesCategory['past'],
+            'cancelled' => $allGamesCategory['cancelled'],
+            'summary' => [
+                'total' => $allGamesCategory['summary']['total'],
+                'events_count' => $eventsCategory['summary']['total'],
+                'tournaments_count' => $tournamentsCategory['summary']['total'],
+                'today_count' => $allGamesCategory['summary']['today_count'],
+                'tomorrow_count' => $allGamesCategory['summary']['tomorrow_count'],
+                'upcoming_count' => $allGamesCategory['summary']['upcoming_count'],
+                'upcoming_24h_count' => $allGamesCategory['summary']['upcoming_24h_count'],
+                'past_count' => $allGamesCategory['summary']['past_count'],
+                'cancelled_count' => $allGamesCategory['summary']['cancelled_count'],
+            ],
             'tournament_schedules' => $tournamentSchedules,
         ]);
     }

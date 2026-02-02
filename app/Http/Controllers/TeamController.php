@@ -1669,14 +1669,17 @@ class TeamController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'roster_size_limit' => 'required|integer|min:1',
+            'roster_size_limit' => 'nullable|integer|min:1',
         ]);
 
         if ($validator->fails()) {
             return response()->json(['status'=>'error','message'=>'Validation failed','errors'=>$validator->errors()], 422);
         }
 
-        $team->roster_size_limit = $request->roster_size_limit;
+        // Allow setting to null to clear the limit
+        $team->roster_size_limit = $request->has('roster_size_limit') 
+            ? ($request->roster_size_limit ? (int)$request->roster_size_limit : null)
+            : $team->roster_size_limit;
         $team->save();
 
         $activeCount = TeamMember::where('team_id', $team->id)
@@ -1739,6 +1742,10 @@ class TeamController extends Controller
             'expires_at' => $request->expires_at ? \Carbon\Carbon::parse($request->expires_at) : null,
         ]);
 
+        // Use frontend URL for invite link
+        $frontendUrl = env('FRONTEND_URL', env('APP_URL', 'http://localhost:3000'));
+        $inviteUrl = rtrim($frontendUrl, '/') . "/teams/invite/{$invite->token}";
+
         return response()->json([
             'status' => 'success',
             'message' => 'Invite link generated',
@@ -1747,7 +1754,7 @@ class TeamController extends Controller
                 'team_id' => $invite->team_id,
                 'token' => $invite->token,
                 'role' => $invite->role,
-                'invite_url' => url("/teams/invite/{$invite->token}"),
+                'invite_url' => $inviteUrl,
                 'expires_at' => $invite->expires_at,
                 'created_at' => $invite->created_at,
             ],
@@ -1845,16 +1852,20 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Forbidden'], 403);
         }
 
+        // Use frontend URL for invite links
+        $frontendUrl = env('FRONTEND_URL', env('APP_URL', 'http://localhost:3000'));
+
         $invites = \App\Models\TeamInvite::where('team_id', $team->id)
             ->with('creator:id,username')
             ->orderBy('created_at', 'desc')
             ->get()
-            ->map(function ($invite) {
+            ->map(function ($invite) use ($frontendUrl) {
+                $inviteUrl = rtrim($frontendUrl, '/') . "/teams/invite/{$invite->token}";
                 return [
                     'id' => $invite->id,
                     'token' => $invite->token,
                     'role' => $invite->role,
-                    'invite_url' => url("/teams/invite/{$invite->token}"),
+                    'invite_url' => $inviteUrl,
                     'expires_at' => $invite->expires_at,
                     'created_by' => [
                         'id' => $invite->creator->id ?? null,

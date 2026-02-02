@@ -18,23 +18,53 @@ class CompletePastEventsJob implements ShouldQueue
 
     public function handle()
     {
-        $now = now()->format('Y-m-d H:i:s');
+        $now = now();
 
+        // Get all events that should be marked as completed
+        // This includes: free for all, team vs team, tournament events, and is_tournament_game = 1
         Event::whereNull('cancelled_at')
             ->where(function($q) {
                 $q->whereNull('game_status')->orWhere('game_status', '!=', 'completed');
             })
-            ->whereRaw("CONCAT(date,' ',end_time) < ?", [$now])
-            ->chunkById(100, function($events) {
+            ->chunkById(100, function($events) use ($now) {
                 foreach ($events as $event) {
-                    $event->update([
-                        'game_status' => 'completed',
-                        'completed_at' => now(),
-                    ]);
+                    // Determine the event end datetime
+                    $eventEndDateTime = $this->getEventEndDateTime($event);
+                    
+                    // If event end time has passed, mark as completed
+                    if ($eventEndDateTime && $eventEndDateTime->lt($now)) {
+                        $event->update([
+                            'game_status' => 'completed',
+                        ]);
+                    }
                 }
             });
 
         // Dispatch notification job (it will only notify events not already marked notified)
         NotifyParticipantsToRateJob::dispatch();
+    }
+
+    /**
+     * Get the end datetime for an event, handling multi-day events
+     * 
+     * @param Event $event
+     * @return Carbon|null
+     */
+    private function getEventEndDateTime($event)
+    {
+        try {
+            // For multi-day events, use end_date and end_date_end_time
+            if ($event->end_date && $event->end_date_end_time) {
+                return Carbon::parse($event->end_date . ' ' . $event->end_date_end_time);
+            }
+            
+            // For single-day events, use date and end_time (end_time is always required)
+            return Carbon::parse($event->date . ' ' . $event->end_time);
+            
+        } catch (\Exception $e) {
+            // Log error but don't break the job
+            \Log::warning("Error parsing event end datetime for event {$event->id}: " . $e->getMessage());
+            return null;
+        }
     }
 }
