@@ -13,6 +13,7 @@ use App\Models\EventParticipant;
 use App\Models\EventTeam;
 use App\Models\Notification;
 use App\Models\UserNotification;
+use App\Models\TeamRating;
 use Illuminate\Support\Facades\DB; // ADDED
 use App\Traits\HandlesImageCompression;
 
@@ -107,7 +108,19 @@ class TeamController extends Controller
 
         $paginated = $teams->paginate($perPage);
 
-        $data = $paginated->getCollection()->map(function ($team) {
+        // Get all team IDs for batch rating calculation
+        $teamIds = $paginated->getCollection()->pluck('id')->toArray();
+        
+        // Batch calculate ratings for all teams
+        $ratingsByTeam = TeamRating::whereIn('rated_team_id', $teamIds)
+            ->selectRaw('rated_team_id, AVG(rating) as avg_rating, COUNT(*) as rating_count')
+            ->groupBy('rated_team_id')
+            ->get()
+            ->keyBy('rated_team_id');
+
+        $data = $paginated->getCollection()->map(function ($team) use ($ratingsByTeam) {
+            $ratingData = $ratingsByTeam->get($team->id);
+            
             return [
                 'id' => $team->id,
                 'name' => $team->name,
@@ -137,6 +150,10 @@ class TeamController extends Controller
                     'name' => $team->creator->username,
                     'email' => $team->creator->email,
                 ] : null,
+                'average_rating' => $ratingData && $ratingData->avg_rating !== null 
+                    ? round((float)$ratingData->avg_rating, 2) 
+                    : null,
+                'rating_count' => $ratingData ? (int)($ratingData->rating_count ?? 0) : 0,
             ];
         })->values();
 
@@ -973,6 +990,11 @@ class TeamController extends Controller
             $team->load('sport');
         }
 
+        // Calculate average team rating
+        $avgRating = TeamRating::where('rated_team_id', $team->id)
+            ->selectRaw('AVG(rating) as avg_rating, COUNT(*) as rating_count')
+            ->first();
+
         $teamInfo = [
             'id' => $team->id,
             'name' => $team->name,
@@ -999,6 +1021,10 @@ class TeamController extends Controller
                 'username' => $team->creator->username,
                 'email' => $team->creator->email,
             ] : null,
+            'average_rating' => $avgRating && $avgRating->avg_rating !== null 
+                ? round((float)$avgRating->avg_rating, 2) 
+                : null,
+            'rating_count' => (int)($avgRating->rating_count ?? 0),
         ];
 
         return response()->json([
