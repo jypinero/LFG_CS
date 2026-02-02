@@ -82,6 +82,9 @@ Route::get('/sports', [AuthController::class, 'getSports']);
 // Public tournament route (no authentication required)
 Route::get('/tournaments/public/{id}', [TournamentController::class, 'getPublicTournament']);
 
+// Public tournament participants route (no authentication required for viewing)
+Route::get('tournaments/events/{eventId}/participants', [FinalTournamentController::class, 'participants']);
+
 // Public bracket route (no authentication required)
 Route::get('/tournaments/events/{eventId}/bracket/public', [FinalTournamentController::class, 'getPublicBracket']);
 
@@ -501,7 +504,7 @@ Route::middleware('auth:api')->group(function () {
 
     // Events / registration / participants
     Route::post('tournaments/events/{eventId}/register', [FinalTournamentController::class, 'register']);
-    Route::get('tournaments/events/{eventId}/participants', [FinalTournamentController::class, 'participants']);
+    // Note: GET participants route moved to public routes above for viewing by anyone
 
     // Participant status (approve/decline)
     Route::patch('tournaments/event-participants/{participantId}/status', [FinalTournamentController::class, 'updateParticipantStatus']);

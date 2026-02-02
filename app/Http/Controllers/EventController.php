@@ -813,12 +813,15 @@ class EventController extends Controller
         return $processed;
     }
 
-    public function myGames()
+    public function myGames(Request $request)
     {
         $user = auth()->user();
         $today = Carbon::today()->format('Y-m-d');
         $tomorrow = Carbon::tomorrow()->format('Y-m-d');
         $now = Carbon::now();
+
+        // Optional date filter from query parameter
+        $requestedDate = $request->input('date'); // Format: YYYY-MM-DD
 
         // Base query condition for events where user is a participant or creator
         $baseCondition = function($q) use ($user) {
@@ -831,21 +834,35 @@ class EventController extends Controller
               });
         };
 
-        // Get regular events (non-tournament)
-        $regularEvents = Event::with(['venue', 'facility', 'participants', 'checkins', 'teams.team'])
+        // Build query for regular events (non-tournament)
+        $regularEventsQuery = Event::with(['venue', 'facility', 'participants', 'checkins', 'teams.team'])
             ->where($baseCondition)
             ->where(function($q) {
                 $q->whereNull('is_tournament_game')
                   ->orWhere('is_tournament_game', false);
-            })
+            });
+
+        // Apply date filter if provided
+        if ($requestedDate) {
+            $regularEventsQuery->whereDate('date', $requestedDate);
+        }
+
+        $regularEvents = $regularEventsQuery
             ->orderBy('date')
             ->orderBy('start_time')
             ->get();
 
-        // Get tournament events
-        $tournamentEvents = Event::with(['venue', 'facility', 'participants', 'checkins', 'teams.team'])
+        // Build query for tournament events
+        $tournamentEventsQuery = Event::with(['venue', 'facility', 'participants', 'checkins', 'teams.team'])
             ->where($baseCondition)
-            ->where('is_tournament_game', true)
+            ->where('is_tournament_game', true);
+
+        // Apply date filter if provided
+        if ($requestedDate) {
+            $tournamentEventsQuery->whereDate('date', $requestedDate);
+        }
+
+        $tournamentEvents = $tournamentEventsQuery
             ->orderBy('date')
             ->orderBy('start_time')
             ->get();
