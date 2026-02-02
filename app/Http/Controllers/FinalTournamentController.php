@@ -669,11 +669,11 @@ class FinalTournamentController extends Controller
 
         // team vs team: return team-level registrations only (team_id but no user_id)
         // These are the registrations that should be approved, not individual member records
-        // Filter by approved/confirmed status
+        // For public viewing, only show approved/confirmed teams (exclude pending)
         $teamParticipantsQuery = $event->participants()
             ->whereNotNull('team_id')
             ->whereNull('user_id')
-            ->whereIn('status', ['approved', 'confirmed', 'pending']);
+            ->whereIn('status', ['approved', 'confirmed']);
 
         // Apply date filtering
         if ($dateFrom) {
