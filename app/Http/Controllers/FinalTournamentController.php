@@ -691,23 +691,52 @@ class FinalTournamentController extends Controller
 
         $teamParticipants = $teamParticipantsQuery->with(['team.members.user'])->get();
 
-        $teams = $teamParticipants->map(function($teamParticipant) {
+        $teams = $teamParticipants->map(function($teamParticipant) use ($event) {
             $team = $teamParticipant->team;
             
-            // Build members list from Team->members relationship for display
-            $members = $team->members->map(function($member) {
-                $u = $member->user;
-                return [
-                    'first_name' => $u->first_name ?? null,
-                    'last_name'  => $u->last_name ?? null,
-                    'position'   => $member->position ?? ($member->role ?? null) ?? ($u->position ?? null),
-                ];
-            })->values();
+            // Get team members who are EventParticipants for this specific event
+            // This ensures we show the actual participants, not just all team members
+            $eventTeamMembers = EventParticipant::where('event_id', $event->id)
+                ->where('team_id', $team->id)
+                ->whereNotNull('user_id')
+                ->with('user')
+                ->get();
+            
+            // Build members list from EventParticipants (preferred) or Team->members relationship (fallback)
+            $members = [];
+            if ($eventTeamMembers->isNotEmpty()) {
+                // Use EventParticipants - these are the actual participants for this event
+                $members = $eventTeamMembers->map(function($ep) {
+                    $u = $ep->user;
+                    return [
+                        'user_id' => $u->id ?? null,
+                        'username' => $u->username ?? null,
+                        'first_name' => $u->first_name ?? null,
+                        'last_name' => $u->last_name ?? null,
+                        'profile_photo' => $u->profile_photo ? Storage::url($u->profile_photo) : null,
+                        'position' => $ep->position ?? ($u->position ?? null),
+                    ];
+                })->values()->toArray();
+            } else if ($team && $team->members) {
+                // Fallback to team members if no EventParticipants found
+                $members = $team->members->map(function($member) {
+                    $u = $member->user;
+                    return [
+                        'user_id' => $u->id ?? null,
+                        'username' => $u->username ?? null,
+                        'first_name' => $u->first_name ?? null,
+                        'last_name' => $u->last_name ?? null,
+                        'profile_photo' => $u->profile_photo ? Storage::url($u->profile_photo) : null,
+                        'position' => $member->position ?? ($member->role ?? null) ?? ($u->position ?? null),
+                    ];
+                })->values()->toArray();
+            }
 
             $teamData = [
                 'id' => $teamParticipant->id,
                 'team_id' => $team->id ?? null,
                 'team_name' => $team->name ?? null,
+                'display_name' => $team->display_name ?? $team->name ?? null,
                 'status' => $teamParticipant->status ?? null,
                 'registration_datetime' => $teamParticipant->registration_datetime ? $teamParticipant->registration_datetime->format('Y-m-d H:i:s') : null,
                 'members' => $members,
