@@ -375,8 +375,9 @@ class EventController extends Controller
         $divide = $event->participants_count > 0 ? $totalCost / $event->participants_count : 0;
         $dividedpay = round($divide, 2);
 
-        // Get participants with user info
+        // Get participants with user info (filter out team-only records)
         $participants = EventParticipant::where('event_id', $event_id)
+            ->whereNotNull('user_id') // Only get participants with user_id
             ->with('user')
             ->get();
 
@@ -699,6 +700,25 @@ class EventController extends Controller
             // Check if current user has already rated players in this event
             $userHasRated = in_array($event->id, $userRatingsByEvent);
             
+            // Get user's team for this specific event (for team rating checks)
+            $userParticipant = $event->participants->where('user_id', $user->id)->first();
+            $userTeamIdForEvent = $userParticipant ? $userParticipant->team_id : null;
+            
+            // Check if user's team for this event has rated
+            $userTeamHasRated = false;
+            if ($userTeamIdForEvent && isset($teamRatingsByEvent[$event->id])) {
+                // Check if any rating in the array has rater_team_id matching user's team for this event
+                foreach ($teamRatingsByEvent[$event->id] as $rating) {
+                    if (isset($rating['rater_team_id']) && $rating['rater_team_id'] == $userTeamIdForEvent) {
+                        $userTeamHasRated = true;
+                        break;
+                    }
+                }
+            }
+            
+            // Check if user has joined this event (for hiding "Join with Team" button)
+            $userHasJoined = $event->participants->where('user_id', $user->id)->isNotEmpty();
+            
             // Calculate sort priority
             // 0 = Within 24 hours (if upcoming) - NEW
             // 1 = Today
@@ -743,8 +763,11 @@ class EventController extends Controller
                 'slots' => $event->slots,
                 'participants_count' => ($event->event_type === 'team vs team') 
                     ? $event->teams->count() 
-                    : $event->participants->count(),
+                    : $event->participants->whereNotNull('user_id')->count(), // Only count participants with user_id (exclude team-only records)
                 'teams_count' => ($event->event_type === 'team vs team') ? $event->teams->count() : null,
+                // Include tournament participant data for tournament games
+                'is_tournament_game' => $event->is_tournament_game ?? false,
+                'tournament_id' => $event->tournament_id ?? null,
                 'is_approved' => (bool) $event->is_approved,
                 'approval_status' => $event->is_approved ? 'approved' : 'pending',
                 'approved_at' => $event->approved_at,
@@ -756,6 +779,8 @@ class EventController extends Controller
                 'user_checkin_time' => $userCheckin ? $userCheckin->checkin_time : null,
                 // Indicate if user is the creator
                 'is_creator' => $event->created_by === $user->id,
+                // Indicate if user has joined this event
+                'user_has_joined' => $userHasJoined,
                 // Status fields
                 'is_past' => $isPast,
                 'is_today' => $isToday,
@@ -771,9 +796,10 @@ class EventController extends Controller
                 'hours_until_start' => $hoursUntilStart, // Hours until event start for "happening soon" display
                 // Team rating information for team vs team events
                 'team_ratings' => ($event->event_type === 'team vs team' && isset($teamRatingsByEvent[$event->id])) ? $teamRatingsByEvent[$event->id] : null,
-                'user_team_has_rated' => ($event->event_type === 'team vs team' && isset($teamRatingsByEvent[$event->id]) && !empty($teamRatingsByEvent[$event->id])) ? true : false,
-                'is_team_rating_pending' => ($event->event_type === 'team vs team' && $isPast && (!isset($teamRatingsByEvent[$event->id]) || empty($teamRatingsByEvent[$event->id]))) ? true : false,
+                'user_team_has_rated' => ($event->event_type === 'team vs team' && $userTeamHasRated) ? true : false,
+                'is_team_rating_pending' => ($event->event_type === 'team vs team' && $isPast && $userTeamIdForEvent && !$userTeamHasRated) ? true : false,
                 'user_team_ids' => ($event->event_type === 'team vs team') ? $userTeamIds : [],
+                'user_team_id_for_event' => ($event->event_type === 'team vs team') ? $userTeamIdForEvent : null, // Add this for frontend use
             ];
         })
         ->sortBy(function($event) {
@@ -1763,19 +1789,92 @@ class EventController extends Controller
             ],
         ];
 
+        // Check if this is a tournament game
+        $isTournamentGame = $event->is_tournament_game ?? false;
+        
         // Add team-specific information for team vs team events
         if ($event->event_type === 'team vs team') {
-            $eventData['teams'] = $event->teams->map(function($eventTeam) {
-                return [
-                    'team_id' => $eventTeam->team_id,
-                    'team_name' => $eventTeam->team ? ($eventTeam->team->name ?? 'Unknown Team') : 'Unknown Team',
-                    'group' => $eventTeam->group,
-                ];
-            });
+            // For tournament games, also include teams from event_participants with team_id
+            if ($isTournamentGame) {
+                // Get teams from event_participants where team_id is not null
+                $tournamentTeamParticipants = $event->participants->filter(function($participant) {
+                    return $participant->team_id !== null;
+                })->groupBy('team_id');
+                
+                $tournamentTeams = [];
+                foreach ($tournamentTeamParticipants as $teamId => $participants) {
+                    $firstParticipant = $participants->first();
+                    $team = $firstParticipant->team;
+                    if ($team) {
+                        // Get team members (participants with user_id for this team)
+                        $teamMembers = $participants->filter(function($p) {
+                            return $p->user_id !== null;
+                        })->map(function($p) {
+                            return [
+                                'user_id' => $p->user_id,
+                                'username' => $p->user ? ($p->user->username ?? 'Unknown User') : 'Unknown User',
+                                'profile_photo' => $p->user && $p->user->profile_photo ? Storage::url($p->user->profile_photo) : null,
+                            ];
+                        })->values();
+                        
+                        $tournamentTeams[] = [
+                            'team_id' => $teamId,
+                            'team_name' => $team->name ?? 'Unknown Team',
+                            'members' => $teamMembers->toArray(),
+                        ];
+                    }
+                }
+                
+                // Merge with EventTeam records if they exist
+                $eventTeams = $event->teams->map(function($eventTeam) {
+                    return [
+                        'team_id' => $eventTeam->team_id,
+                        'team_name' => $eventTeam->team ? ($eventTeam->team->name ?? 'Unknown Team') : 'Unknown Team',
+                        'group' => $eventTeam->group,
+                    ];
+                });
+                
+                // Combine and deduplicate teams
+                $allTeams = collect($tournamentTeams)->merge($eventTeams)->unique('team_id')->values();
+                $eventData['teams'] = $allTeams;
+            } else {
+                // Regular team vs team event - use EventTeam records
+                $eventData['teams'] = $event->teams->map(function($eventTeam) {
+                    // Get team members from participants
+                    $teamMembers = EventParticipant::where('event_id', $eventTeam->event_id)
+                        ->where('team_id', $eventTeam->team_id)
+                        ->whereNotNull('user_id')
+                        ->with('user')
+                        ->get()
+                        ->map(function($member) {
+                            return [
+                                'user_id' => $member->user_id,
+                                'username' => $member->user ? ($member->user->username ?? 'Unknown User') : 'Unknown User',
+                                'profile_photo' => $member->user && $member->user->profile_photo ? Storage::url($member->user->profile_photo) : null,
+                            ];
+                        })->values();
+                    
+                    return [
+                        'team_id' => $eventTeam->team_id,
+                        'team_name' => $eventTeam->team ? ($eventTeam->team->name ?? 'Unknown Team') : 'Unknown Team',
+                        'group' => $eventTeam->group,
+                        'members' => $teamMembers->toArray(),
+                    ];
+                });
+            }
         }
 
-        // Add participants with check-in status
-        $eventData['participants'] = $event->participants->map(function($participant) {
+        // Add participants with check-in status (filter out team-only records for display)
+        // For tournament team vs team events, we already handled teams above, so only show individual participants
+        // For regular events, show all participants with user_id
+        $eventData['participants'] = $event->participants->filter(function($participant) use ($isTournamentGame, $event) {
+            // For tournament team vs team events, only show participants without team_id (individual participants)
+            if ($isTournamentGame && $event->event_type === 'team vs team') {
+                return $participant->user_id !== null && $participant->team_id === null;
+            }
+            // For all other events, show participants with user_id
+            return $participant->user_id !== null;
+        })->map(function($participant) {
             $checkin = EventCheckin::where('event_id', $participant->event_id)
                 ->where('user_id', $participant->user_id)
                 ->first();
@@ -1788,7 +1887,11 @@ class EventController extends Controller
                 'checkin_time' => $checkin ? $checkin->checkin_time : null,
                 'team_id' => $participant->team_id,
                 ];
-            });
+            })->values();
+
+        // Check if current user has joined this event
+        $userHasJoined = $event->participants->where('user_id', $userId)->isNotEmpty();
+        $eventData['user_has_joined'] = $userHasJoined;
 
         return response()->json([
             'status' => 'success',
