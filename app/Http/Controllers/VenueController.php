@@ -1795,7 +1795,7 @@ class VenueController extends Controller
         $bookings = Booking::with([
                 'venue',
                 'event' => function ($query) {
-                    $query->with(['facility', 'creator'])
+                    $query->with(['facility', 'creator', 'teams'])
                           ->withCount('participants');
                 },
                 'user',
@@ -1835,8 +1835,10 @@ class VenueController extends Controller
                         'start_time' => $event->start_time,
                         'end_time' => $event->end_time,
                         'slots' => $event->slots,
-                        'expected_attendees' => $event->participants_count ?? 0,
-                        'host' => $event->creator?->username,
+                        'expected_attendees' => ($event->event_type === 'team vs team') 
+                            ? ($event->teams->count() ?? 0)
+                            : ($event->participants_count ?? 0),
+                        'host' => $event->creator?->username ?? 'Unknown User',
                         'facility' => $event->facility ? [
                             'id' => $event->facility->id,
                             'type' => $event->facility->type,

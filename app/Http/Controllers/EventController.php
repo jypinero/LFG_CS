@@ -181,7 +181,7 @@ class EventController extends Controller
                 'hours' => $hours,
                 'total_cost' => $totalCost,
                 'cost_per_slot' => $dividedpay,
-                'host' => User::find($event->created_by)->username,
+                'host' => User::find($event->created_by)?->username ?? 'Unknown User',
                 'event_type' => $event->event_type,
                 'is_approved' => (bool) $event->is_approved,
                 'approval_status' => $event->is_approved ? 'approved' : 'pending',
@@ -347,7 +347,7 @@ class EventController extends Controller
             'description' => $event->description,
             'date' => $event->date,
             'time' => $event->start_time . ' - ' . $event->end_time,
-            'creator' => User::find($event->created_by)->username,
+            'creator' => User::find($event->created_by)?->username ?? 'Unknown User',
             'venue' => [
                 'name' => $event->venue->name,
                 'address' => $event->venue->address,
@@ -702,7 +702,10 @@ class EventController extends Controller
                 'start_time' => $event->start_time,
                 'end_time' => $event->end_time,
                 'slots' => $event->slots,
-                'participants_count' => $event->participants->count(),
+                'participants_count' => ($event->event_type === 'team vs team') 
+                    ? $event->teams->count() 
+                    : $event->participants->count(),
+                'teams_count' => ($event->event_type === 'team vs team') ? $event->teams->count() : null,
                 'is_approved' => (bool) $event->is_approved,
                 'approval_status' => $event->is_approved ? 'approved' : 'pending',
                 'approved_at' => $event->approved_at,
@@ -790,7 +793,7 @@ class EventController extends Controller
         };
 
         // Get regular events (non-tournament)
-        $regularEvents = Event::with(['venue', 'facility', 'participants', 'checkins'])
+        $regularEvents = Event::with(['venue', 'facility', 'participants', 'checkins', 'teams.team'])
             ->where($baseCondition)
             ->where(function($q) {
                 $q->whereNull('is_tournament_game')
@@ -801,7 +804,7 @@ class EventController extends Controller
             ->get();
 
         // Get tournament events
-        $tournamentEvents = Event::with(['venue', 'facility', 'participants', 'checkins'])
+        $tournamentEvents = Event::with(['venue', 'facility', 'participants', 'checkins', 'teams.team'])
             ->where($baseCondition)
             ->where('is_tournament_game', true)
             ->orderBy('date')
@@ -1663,7 +1666,7 @@ class EventController extends Controller
             ] : null,
             'creator' => $event->creator ? [
                 'id' => $event->creator->id,
-                'username' => $event->creator->username,
+                'username' => $event->creator->username ?? 'Unknown User',
             ] : null,
             'costs' => [
                 'total_cost' => $totalCost,
