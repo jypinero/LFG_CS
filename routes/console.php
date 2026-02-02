@@ -17,7 +17,8 @@ Schedule::command('tournaments:close-registration')->everyMinute();
 Schedule::command('notify:players_to_rate')->dailyAt('08:00');
 Schedule::job(new \App\Jobs\NotifyParticipantsToRateJob)->hourly()->withoutOverlapping();
 
-// Event completion schedule
+// Event status management schedules
+Schedule::job(new \App\Jobs\StartOngoingEventsJob)->everyMinute()->withoutOverlapping();
 Schedule::job(new \App\Jobs\CompletePastEventsJob)->everyMinute()->withoutOverlapping();
 
 // Cleanup schedules
