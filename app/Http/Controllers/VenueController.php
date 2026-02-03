@@ -972,6 +972,21 @@ class VenueController extends Controller
             'reason' => 'nullable|string|max:255',
         ]);
 
+        // Prevent closing if there are bookings today or in the future for this venue
+        $today = Carbon::today()->toDateString();
+        $hasBookings = Booking::where('venue_id', $venueId)
+            ->whereIn('status', ['pending', 'approved'])
+            ->whereHas('event', function ($q) use ($today) {
+                $q->whereDate('date', '>=', $today);
+            })->exists();
+
+        if ($hasBookings) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot close venue: there are bookings today or in the future.'
+            ], 422);
+        }
+
         $venue->update([
             'is_closed' => true,
             'closed_at' => now(),
@@ -1033,6 +1048,22 @@ class VenueController extends Controller
         $validated = $request->validate([
             'reason' => 'nullable|string|max:255',
         ]);
+
+        // Prevent closing if there are bookings today or in the future for this facility
+        $today = Carbon::today()->toDateString();
+        $hasBookings = Booking::where('venue_id', $venueId)
+            ->whereIn('status', ['pending', 'approved'])
+            ->whereHas('event', function ($q) use ($facilityId, $today) {
+                $q->where('facility_id', $facilityId)
+                ->whereDate('date', '>=', $today);
+            })->exists();
+
+        if ($hasBookings) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot close facility: there are bookings today or in the future.'
+            ], 422);
+        }
 
         $facility->update([
             'is_closed' => true,

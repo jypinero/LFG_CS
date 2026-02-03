@@ -763,6 +763,26 @@ class TeamController extends Controller
             return response()->json(['status' => 'error', 'message' => 'Owner cannot remove themselves. Transfer ownership first.'], 403);
         }
 
+        // Require removal reason
+        $validated = $request->validate([
+            'reason' => 'required|string|max:500',
+        ]);
+
+        // Prevent removal if member is participant in events today or in the future
+        $today = \Carbon\Carbon::today()->toDateString();
+        $hasFutureParticipation = EventParticipant::where('team_id', $team->id)
+            ->where('user_id', $member->user_id)
+            ->whereHas('event', function ($q) use ($today) {
+                $q->whereDate('date', '>=', $today);
+            })->exists();
+
+        if ($hasFutureParticipation) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Cannot remove member: user is registered/participant in events today or in the future.'
+            ], 422);
+        }
+
         DB::beginTransaction();
         try {
             // Mark member as removed
@@ -771,7 +791,17 @@ class TeamController extends Controller
             $member->removed_at = now();
             $member->save();
 
-            // Send notification to the removed member
+            // Log removal reason
+            DB::table('team_member_removals')->insert([
+                'team_id'    => $team->id,
+                'user_id'    => $member->user_id,
+                'removed_by' => $user->id ?? null,
+                'reason'     => $validated['reason'],
+                'created_at' => now(),
+                'updated_at' => now(),
+            ]);
+
+            // Send notification to the removed member (include reason)
             $removedUser = User::find($member->user_id);
             if ($removedUser) {
                 $notification = Notification::create([
@@ -782,6 +812,7 @@ class TeamController extends Controller
                         'team_name' => $team->name,
                         'removed_by_user_id' => $user->id,
                         'removed_by_username' => $user->username,
+                        'reason' => $validated['reason'],
                     ],
                     'created_by' => $user->id,
                 ]);
@@ -796,45 +827,38 @@ class TeamController extends Controller
                 ]);
             }
 
-            // Clean up event participants for this user/team combination
-            // Regular events (non-tournament)
+            // Clean up event participants for this user/team combination (past/future safe because we already blocked future)
             $eventParticipants = EventParticipant::where('team_id', $team->id)
                 ->where('user_id', $member->user_id)
-                ->whereNull('tournament_id')
                 ->with('event')
                 ->get();
 
             foreach ($eventParticipants as $participant) {
                 $event = $participant->event;
-                
-                // For team vs team events, check if this is the last team member in the event
+
                 if ($event && $event->event_type === 'team vs team') {
                     $remainingTeamMembers = EventParticipant::where('event_id', $event->id)
                         ->where('team_id', $team->id)
                         ->where('user_id', '!=', $member->user_id)
                         ->count();
 
-                    // If this is the last member, remove the team from the event entirely
                     if ($remainingTeamMembers === 0) {
                         EventTeam::where('event_id', $event->id)
                             ->where('team_id', $team->id)
                             ->delete();
                     }
                 }
-                
-                // Remove this participant
+
                 $participant->delete();
             }
 
-            // Tournament events - remove EventParticipants for tournaments
-            // Note: Tournament participants are managed separately, but EventParticipants for tournaments should also be cleaned
+            // Tournament-related EventParticipants cleanup
             EventParticipant::where('team_id', $team->id)
                 ->where('user_id', $member->user_id)
-                ->whereNotNull('tournament_id')
                 ->delete();
 
             DB::commit();
-            
+
             return response()->json([
                 'status'=>'success',
                 'message'=>'Member removed and cleaned up from events',
